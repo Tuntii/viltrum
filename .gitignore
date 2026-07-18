@@ -1,0 +1,29 @@
+# V
+*.exe
+*.so
+*.dylib
+*.dll
+*.tmp.c
+*.tmp.js
+*.tmp.v
+vn
+vls.log
+
+# Binaries
+/viltrum
+/examples/hello/hello
+/examples/hello/hello.exe
+/benches/*
+!/benches/.gitkeep
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local
+.env
+out/
+target/

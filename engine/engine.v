@@ -1,8 +1,9 @@
 module engine
 
-// TCP accept + HTTP/1.1 message framing (multi-read, body, keep-alive).
+// TCP accept + HTTP/1.1 framing. v0.3: graceful shutdown, idle timeout.
 
 import net
+import os
 import time
 import viltrum.http
 
@@ -15,8 +16,8 @@ pub:
 	max_body_bytes   int           = 1 * 1024 * 1024
 	read_timeout     time.Duration = 30 * time.second
 	write_timeout    time.Duration = 30 * time.second
-	// require Host on HTTP/1.1 (RFC 7230)
-	require_host bool = true
+	idle_timeout     time.Duration = 60 * time.second
+	require_host     bool          = true
 }
 
 pub fn listen_and_serve(addr string, handler Handler) ! {
@@ -25,17 +26,46 @@ pub fn listen_and_serve(addr string, handler Handler) ! {
 
 pub fn listen_and_serve_opt(addr string, handler Handler, opts ServerOptions) ! {
 	mut listener := net.listen_tcp(.ip, addr)!
+	shared stopping := false
+
+	// SIGINT / SIGTERM close the listener so accept() unblocks
+	os.signal_opt(.int, fn [shared stopping, mut listener] () {
+		lock stopping {
+			stopping = true
+		}
+		eprintln('[viltrum] shutting down (SIGINT)')
+		listener.close() or {}
+	}) or {}
+	os.signal_opt(.term, fn [shared stopping, mut listener] () {
+		lock stopping {
+			stopping = true
+		}
+		eprintln('[viltrum] shutting down (SIGTERM)')
+		listener.close() or {}
+	}) or {}
+
 	defer {
 		listener.close() or {}
 	}
 	eprintln('[viltrum] listening on http://${addr}')
 	for {
+		rlock stopping {
+			if stopping {
+				break
+			}
+		}
 		mut conn := listener.accept() or {
+			rlock stopping {
+				if stopping {
+					break
+				}
+			}
 			eprintln('[viltrum] accept error: ${err}')
 			continue
 		}
 		spawn handle_conn(mut conn, handler, opts)
 	}
+	eprintln('[viltrum] stopped')
 }
 
 fn handle_conn(mut conn net.TcpConn, handler Handler, opts ServerOptions) {
@@ -46,9 +76,14 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, opts ServerOptions) {
 	conn.set_write_timeout(opts.write_timeout)
 
 	mut leftover := []u8{}
+	mut first := true
 	for {
+		if !first {
+			conn.set_read_timeout(opts.idle_timeout)
+		}
+		first = false
+
 		raw := read_message(mut conn, mut leftover, opts) or {
-			// framing errors that warrant an HTTP response + close
 			msg := err.msg()
 			if msg == 'payload too large' || msg == 'headers too large' || msg == 'message too large' {
 				mut resp := http.Response.text(413, msg)
@@ -61,6 +96,8 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, opts ServerOptions) {
 			}
 			return
 		}
+
+		conn.set_read_timeout(opts.read_timeout)
 
 		req := http.parse_request(raw) or {
 			mut resp := http.Response.bad_request(err.msg())

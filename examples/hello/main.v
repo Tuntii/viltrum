@@ -20,6 +20,7 @@ fn health(_req viltrum.Request) viltrum.Response {
 
 fn main() {
 	mut app := viltrum.new()
+	app.use(viltrum.recover)
 	app.use(viltrum.logger)
 	app.get('/', hello)
 	app.get('/health', health)

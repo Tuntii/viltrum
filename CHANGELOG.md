@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 — 2026-07-18
+
+- Graceful shutdown on SIGINT / SIGTERM (listener close)
+- Keep-alive idle timeout (`ServerOptions.idle_timeout`)
+- `viltrum.recover` middleware (response hardening)
+- Logger prints duration ms
+- `benches/run.sh` throughput smoke
+
 ## 0.2.1 — 2026-07-18
 
 Polish release on top of v0.2 framing.

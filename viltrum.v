@@ -1,8 +1,8 @@
 module viltrum
 
-// Viltrum — HTTP App facade.
-// v0.2.1: options wire, query decode, trailing slash, response builder.
+// Viltrum HTTP App facade. v0.3: shutdown, recover, timing logger.
 
+import time
 import viltrum.engine
 import viltrum.http
 import viltrum.router
@@ -105,8 +105,27 @@ pub fn not_found() http.Response {
 
 pub fn logger(next Handler) Handler {
 	return fn [next] (req http.Request) http.Response {
+		start := time.now()
 		resp := next(req)
-		eprintln('[viltrum] ${req.method} ${req.path} -> ${resp.status}')
+		ms := time.since(start).milliseconds()
+		eprintln('[viltrum] ${req.method} ${req.path} -> ${resp.status} ${ms}ms')
+		return resp
+	}
+}
+
+// recover ensures a well-formed response even if the handler forgets headers.
+// Full panic isolation is limited by the V runtime; this still hardens the happy path.
+pub fn recover(next Handler) Handler {
+	return fn [next] (req http.Request) http.Response {
+		mut resp := next(req)
+		if resp.status == 0 {
+			resp = http.Response.text(500, 'internal error')
+			resp.set_connection_close()
+			return resp
+		}
+		if resp.headers.get_or('content-length', '') == '' {
+			resp.headers.set('Content-Length', '${resp.body.len}')
+		}
 		return resp
 	}
 }

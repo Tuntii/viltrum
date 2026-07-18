@@ -1,52 +1,33 @@
 # Viltrum
 
-HTTP framework for [V](https://vlang.io) — small surface, own engine, single binary.
+HTTP framework for [V](https://vlang.io). Small surface, own engine, single binary.
 
 [![ci](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml/badge.svg)](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml)
 
 ```
-request → multi-read frame → parse → route → middleware → response
-         (keep-alive loop)
+request -> multi-read frame -> parse -> route -> middleware -> response
+           (keep-alive, idle timeout, graceful shutdown)
 ```
 
-Viltrum owns the TCP accept loop and HTTP/1.1 framing. You write handlers.
+## Features (v0.3)
 
-## Features (v0.2.1)
-
-- HTTP/1.1 multi-read until headers complete + `Content-Length` body
-- Keep-alive (HTTP/1.1 default); `Connection: close` honored
-- Body / header size limits via `App.options(ServerOptions{...})`
-- Router with `:param` → `req.param('id')`; trailing slashes normalized
-- Query decode → `req.query_param('q')` (`%XX`, `+`)
-- Middleware chain (logger)
-- Response builder → `resp.header('X-Foo', 'bar')`
-- Optional `app.set_ctx` / `shared` capture for state
-- `text` / `json` / `empty` helpers
+- Own TCP accept loop and HTTP/1.1 framing (not a wrapper around another stack)
+- Keep-alive + idle timeout between requests
+- Graceful shutdown on SIGINT / SIGTERM
+- Router with `:param`, trailing slash normalize, query decode
+- Middleware: `logger`, `recover`
+- `App.options(ServerOptions{...})` for limits and timeouts
+- `text` / `json` / `empty` helpers, `resp.header(...)`
 - Zero external deps beyond V stdlib
 
 ## Quick start
 
-**1. Install V** — https://github.com/vlang/v#installing-v-from-source
-
-**2. Link the module**
-
 ```bash
 git clone https://github.com/Tuntii/viltrum.git
 cd viltrum
-mkdir -p ~/.vmodules
-ln -sfn "$(pwd)" ~/.vmodules/viltrum
+mkdir -p ~/.vmodules && ln -sfn "$(pwd)" ~/.vmodules/viltrum
+v run examples/hello
 ```
-
-**3. Run examples**
-
-```bash
-v run examples/hello   # :8080
-v run examples/rest    # :8081  JSON todos
-```
-
-See [examples/README.md](examples/README.md) for curl recipes.
-
-## Example
 
 ```v
 module main
@@ -55,31 +36,40 @@ import viltrum
 
 fn hello(req viltrum.Request) viltrum.Response {
 	name := req.param('name') or { 'world' }
-	mut resp := viltrum.json(200, '{"message":"hello, ${name}"}')
-	return resp.header('X-Powered-By', 'viltrum')
+	return viltrum.json(200, '{"message":"hello, ${name}"}')
 }
 
 fn main() {
 	mut app := viltrum.new()
-	app.options(viltrum.ServerOptions{
-		max_body_bytes: 512 * 1024
-	})
+	app.use(viltrum.recover)
 	app.use(viltrum.logger)
 	app.get('/hi/:name', hello)
 	app.listen('127.0.0.1:8080') or { panic(err) }
 }
 ```
 
+Ctrl+C stops the listener cleanly.
+
+## Examples
+
+See [examples/README.md](examples/README.md).
+
+```bash
+v run examples/hello   # :8080
+v run examples/rest    # :8081
+bash benches/run.sh    # rough throughput smoke
+```
+
 ## Layout
 
 | Path | Role |
 |------|------|
-| `engine/` | TCP listen, multi-read framing, keep-alive |
-| `http/` | `Request` / `Response`, parse & serialize |
-| `router/` | Method + path routing, params |
-| `service/` | Shared middleware helpers |
-| `viltrum.v` | Public `App` API |
-| `examples/` | hello + rest |
+| `engine/` | TCP, framing, shutdown, idle timeout |
+| `http/` | Request / Response, parse |
+| `router/` | Routes and params |
+| `viltrum.v` | App facade |
+| `examples/` | hello, rest |
+| `benches/` | throughput script |
 
 ## Tests
 
@@ -89,17 +79,10 @@ v test http/
 
 ## Status
 
-**v0.2.1** — framing + keep-alive + polish. Fine for experiments; not production-hardened.
+**v0.3.0** usable for experiments and small tools. Not a claim of production hardening.
 
 See [CHANGELOG.md](CHANGELOG.md).
 
-| Next (v0.3) | Out of scope for now |
-|-------------|----------------------|
-| Benchmarks (`oha`) | HTTP/2 |
-| Graceful shutdown | TLS (use a reverse proxy) |
-| Recover middleware | WebSocket |
-| | Body streaming |
-
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT

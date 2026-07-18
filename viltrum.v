@@ -1,7 +1,7 @@
 module viltrum
 
-// Viltrum — HTTP App facade. Engine + parse + router live in submodules.
-// v0.2: keep-alive framing, params, optional app ctx.
+// Viltrum — HTTP App facade.
+// v0.2.1: options wire, query decode, trailing slash, response builder.
 
 import viltrum.engine
 import viltrum.http
@@ -11,24 +11,30 @@ pub type Request = http.Request
 pub type Response = http.Response
 pub type Handler = fn (req http.Request) http.Response
 pub type Middleware = fn (next Handler) Handler
+pub type ServerOptions = engine.ServerOptions
 
 pub struct App {
 mut:
 	router      router.Router
 	middlewares []Middleware
 	ctx         voidptr
+	opts        engine.ServerOptions
 }
 
 pub fn new() App {
 	return App{
 		router: router.Router.new()
 		ctx:    unsafe { nil }
+		opts:   engine.ServerOptions{}
 	}
 }
 
-// set_ctx attaches a heap pointer available on every Request as req.ctx.
 pub fn (mut app App) set_ctx(ptr voidptr) {
 	app.ctx = ptr
+}
+
+pub fn (mut app App) options(opts engine.ServerOptions) {
+	app.opts = opts
 }
 
 pub fn (mut app App) get(pattern string, handler Handler) {
@@ -47,6 +53,10 @@ pub fn (mut app App) delete(pattern string, handler Handler) {
 	app.router.delete(pattern, handler)
 }
 
+pub fn (mut app App) route(method string, pattern string, handler Handler) {
+	app.router.add(method, pattern, handler)
+}
+
 pub fn (mut app App) use(mw Middleware) {
 	app.middlewares << mw
 }
@@ -55,6 +65,7 @@ pub fn (mut app App) listen(addr string) ! {
 	r := app.router
 	mws := app.middlewares.clone()
 	app_ctx := app.ctx
+	opts := app.opts
 
 	inner := fn [r] (req http.Request) http.Response {
 		return r.handle(req)
@@ -68,12 +79,12 @@ pub fn (mut app App) listen(addr string) ! {
 	}
 
 	engine_handler := fn [handler, app_ctx] (req http.Request) http.Response {
-		mut r := req
-		r.ctx = app_ctx
-		return handler(r)
+		mut rq := req
+		rq.ctx = app_ctx
+		return handler(rq)
 	}
 
-	engine.listen_and_serve(addr, engine_handler)!
+	engine.listen_and_serve_opt(addr, engine_handler, opts)!
 }
 
 pub fn text(status int, body string) http.Response {
@@ -90,11 +101,6 @@ pub fn empty(status int) http.Response {
 
 pub fn not_found() http.Response {
 	return http.Response.not_found()
-}
-
-// param reads a path :param (prefer req.param — kept for compatibility).
-pub fn param(req http.Request, name string) ?string {
-	return req.param(name)
 }
 
 pub fn logger(next Handler) Handler {

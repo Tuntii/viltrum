@@ -1,6 +1,6 @@
 module router
 
-// Method + path router with :param segments.
+// Method + path router with :param segments. Trailing slashes normalized.
 
 import viltrum.http
 
@@ -23,10 +23,11 @@ pub fn Router.new() Router {
 }
 
 pub fn (mut r Router) add(method string, pattern string, handler HandlerFn) {
-	parts := pattern.trim_right('/').split('/').filter(it.len > 0)
+	norm := http.normalize_path(pattern)
+	parts := norm.trim_right('/').split('/').filter(it.len > 0)
 	r.routes << Route{
 		method:  method.to_upper()
-		pattern: pattern
+		pattern: norm
 		parts:   parts
 		handler: handler
 	}
@@ -49,7 +50,8 @@ pub fn (mut r Router) delete(pattern string, handler HandlerFn) {
 }
 
 pub fn (r &Router) handle(req http.Request) http.Response {
-	path_parts := req.path.trim_right('/').split('/').filter(it.len > 0)
+	path := http.normalize_path(req.path)
+	path_parts := path.trim_right('/').split('/').filter(it.len > 0)
 	mut method_matched := false
 
 	for route in r.routes {
@@ -61,8 +63,17 @@ pub fn (r &Router) handle(req http.Request) http.Response {
 			method_matched = true
 			continue
 		}
-		mut enriched := req
-		enriched.params = params.clone()
+		mut enriched := http.Request{
+			method:  req.method
+			target:  req.target
+			path:    path
+			query:   req.query
+			version: req.version
+			headers: req.headers
+			body:    req.body
+			params:  params.clone()
+			ctx:     req.ctx
+		}
 		return route.handler(enriched)
 	}
 

@@ -2,6 +2,8 @@
 
 HTTP framework for [V](https://vlang.io) — small surface, own engine, single binary.
 
+[![ci](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml/badge.svg)](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml)
+
 ```
 request → multi-read frame → parse → route → middleware → response
          (keep-alive loop)
@@ -9,15 +11,16 @@ request → multi-read frame → parse → route → middleware → response
 
 Viltrum owns the TCP accept loop and HTTP/1.1 framing. You write handlers.
 
-## Features (v0.2)
+## Features (v0.2.1)
 
 - HTTP/1.1 multi-read until headers complete + `Content-Length` body
 - Keep-alive (HTTP/1.1 default); `Connection: close` honored
-- Body / header size limits
-- Router with method match and `:param` → `req.param('id')`
-- Query helper → `req.query_param('q')`
+- Body / header size limits via `App.options(ServerOptions{...})`
+- Router with `:param` → `req.param('id')`; trailing slashes normalized
+- Query decode → `req.query_param('q')` (`%XX`, `+`)
 - Middleware chain (logger)
-- Optional `app.set_ctx` voidptr (or capture `shared` state in closures)
+- Response builder → `resp.header('X-Foo', 'bar')`
+- Optional `app.set_ctx` / `shared` capture for state
 - `text` / `json` / `empty` helpers
 - Zero external deps beyond V stdlib
 
@@ -41,11 +44,7 @@ v run examples/hello   # :8080
 v run examples/rest    # :8081  JSON todos
 ```
 
-```text
-GET  http://127.0.0.1:8080/hi/tunay
-GET  http://127.0.0.1:8081/todos
-POST http://127.0.0.1:8081/todos  {"title":"ship"}
-```
+See [examples/README.md](examples/README.md) for curl recipes.
 
 ## Example
 
@@ -56,11 +55,15 @@ import viltrum
 
 fn hello(req viltrum.Request) viltrum.Response {
 	name := req.param('name') or { 'world' }
-	return viltrum.json(200, '{"message":"hello, ${name}"}')
+	mut resp := viltrum.json(200, '{"message":"hello, ${name}"}')
+	return resp.header('X-Powered-By', 'viltrum')
 }
 
 fn main() {
 	mut app := viltrum.new()
+	app.options(viltrum.ServerOptions{
+		max_body_bytes: 512 * 1024
+	})
 	app.use(viltrum.logger)
 	app.get('/hi/:name', hello)
 	app.listen('127.0.0.1:8080') or { panic(err) }
@@ -76,8 +79,7 @@ fn main() {
 | `router/` | Method + path routing, params |
 | `service/` | Shared middleware helpers |
 | `viltrum.v` | Public `App` API |
-| `examples/hello/` | Minimal server |
-| `examples/rest/` | In-memory TODO JSON API |
+| `examples/` | hello + rest |
 
 ## Tests
 
@@ -87,14 +89,16 @@ v test http/
 
 ## Status
 
-**v0.2** — real HTTP/1.1 framing + keep-alive. Fine for experiments; not production-hardened.
+**v0.2.1** — framing + keep-alive + polish. Fine for experiments; not production-hardened.
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 | Next (v0.3) | Out of scope for now |
 |-------------|----------------------|
 | Benchmarks (`oha`) | HTTP/2 |
-| More parse edge-case tests | TLS (use a reverse proxy) |
-| Graceful shutdown | WebSocket |
-| Query map helpers polish | Body streaming |
+| Graceful shutdown | TLS (use a reverse proxy) |
+| Recover middleware | WebSocket |
+| | Body streaming |
 
 ## License
 

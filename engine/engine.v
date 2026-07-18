@@ -1,7 +1,6 @@
 module engine
 
 // TCP accept + HTTP/1.1 message framing (multi-read, body, keep-alive).
-// Parsing/types live in viltrum.http.
 
 import net
 import time
@@ -16,6 +15,8 @@ pub:
 	max_body_bytes   int           = 1 * 1024 * 1024
 	read_timeout     time.Duration = 30 * time.second
 	write_timeout    time.Duration = 30 * time.second
+	// require Host on HTTP/1.1 (RFC 7230)
+	require_host bool = true
 }
 
 pub fn listen_and_serve(addr string, handler Handler) ! {
@@ -46,32 +47,67 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, opts ServerOptions) {
 
 	mut leftover := []u8{}
 	for {
-		raw := read_message(mut conn, mut leftover, opts) or { return }
-		req := http.parse_request(raw) or {
-			resp := http.Response.bad_request(err.msg())
-			conn.write(resp.to_bytes()) or {}
-			return
-		}
-		if req.body.len > opts.max_body_bytes {
-			resp := http.Response.text(413, 'payload too large')
-			conn.write(resp.to_bytes()) or {}
-			return
-		}
-		mut resp := handler(req)
-		// keep-alive needs Content-Length; helpers already set it
-		close_after := http.should_close(req, resp)
-		if !close_after {
-			// ensure keep-alive advertised when we intend to reuse
-			if resp.headers.get_or('connection', '') == '' {
-				resp.headers.set('Connection', 'keep-alive')
+		raw := read_message(mut conn, mut leftover, opts) or {
+			// framing errors that warrant an HTTP response + close
+			msg := err.msg()
+			if msg == 'payload too large' || msg == 'headers too large' || msg == 'message too large' {
+				mut resp := http.Response.text(413, msg)
+				resp.set_connection_close()
+				write_all(mut conn, resp.to_bytes()) or {}
+			} else if msg !in ['eof', 'eof during headers', 'eof during body'] {
+				mut resp := http.Response.bad_request(msg)
+				resp.set_connection_close()
+				write_all(mut conn, resp.to_bytes()) or {}
 			}
-		} else {
-			resp.headers.set('Connection', 'close')
+			return
 		}
-		conn.write(resp.to_bytes()) or { return }
+
+		req := http.parse_request(raw) or {
+			mut resp := http.Response.bad_request(err.msg())
+			resp.set_connection_close()
+			write_all(mut conn, resp.to_bytes()) or {}
+			return
+		}
+
+		if opts.require_host && req.version.starts_with('HTTP/1.1') {
+			if req.headers.get_or('host', '') == '' {
+				mut resp := http.Response.bad_request('missing host header')
+				resp.set_connection_close()
+				write_all(mut conn, resp.to_bytes()) or {}
+				return
+			}
+		}
+
+		if req.body.len > opts.max_body_bytes {
+			mut resp := http.Response.text(413, 'payload too large')
+			resp.set_connection_close()
+			write_all(mut conn, resp.to_bytes()) or {}
+			return
+		}
+
+		mut resp := handler(req)
+		close_after := http.should_close(req, resp)
+		if close_after {
+			resp.headers.set('Connection', 'close')
+		} else if resp.headers.get_or('connection', '') == '' {
+			resp.headers.set('Connection', 'keep-alive')
+		}
+
+		write_all(mut conn, resp.to_bytes()) or { return }
 		if close_after {
 			return
 		}
+	}
+}
+
+fn write_all(mut conn net.TcpConn, data []u8) ! {
+	mut off := 0
+	for off < data.len {
+		n := conn.write(data[off..]) or { return err }
+		if n <= 0 {
+			return error('short write')
+		}
+		off += n
 	}
 }
 
@@ -84,7 +120,6 @@ fn read_message(mut conn net.TcpConn, mut leftover []u8, opts ServerOptions) ![]
 		if hdr_end := index_of_double_crlf(buf) {
 			body_start := hdr_end + 4
 			cl := content_length_from_headers(buf[..hdr_end]) or {
-				// no Content-Length → empty body
 				return finish_message(mut leftover, buf, body_start, 0)
 			}
 			if cl < 0 {
@@ -135,7 +170,6 @@ fn index_of_double_crlf(buf []u8) ?int {
 	if buf.len < 4 {
 		return none
 	}
-	// scan for \r\n\r\n
 	limit := buf.len - 3
 	for i in 0 .. limit {
 		if buf[i] == `\r` && buf[i + 1] == `\n` && buf[i + 2] == `\r` && buf[i + 3] == `\n` {

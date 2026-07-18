@@ -17,6 +17,16 @@ pub fn (mut h HeaderMap) set(name string, value string) {
 	h.values[name.to_lower()] = value
 }
 
+// add appends with comma if the header already exists (RFC 7230 combine).
+pub fn (mut h HeaderMap) add(name string, value string) {
+	key := name.to_lower()
+	if key in h.values {
+		h.values[key] = h.values[key] + ', ' + value
+	} else {
+		h.values[key] = value
+	}
+}
+
 pub fn (h &HeaderMap) get(name string) ?string {
 	key := name.to_lower()
 	if key in h.values {
@@ -39,10 +49,8 @@ pub:
 	headers HeaderMap
 	body    []u8
 pub mut:
-	// route :params (set by router)
 	params map[string]string
-	// app-level context pointer (optional)
-	ctx voidptr
+	ctx    voidptr
 }
 
 pub fn (r &Request) param(name string) ?string {
@@ -61,14 +69,15 @@ pub fn (r &Request) query_param(name string) ?string {
 			continue
 		}
 		eq := part.index('=') or {
-			if part == name {
+			k := url_decode(part) or { part }
+			if k == name {
 				return ''
 			}
 			continue
 		}
-		k := part[..eq]
+		k := url_decode(part[..eq]) or { part[..eq] }
 		if k == name {
-			return part[eq + 1..]
+			return url_decode(part[eq + 1..]) or { part[eq + 1..] }
 		}
 	}
 	return none
@@ -136,6 +145,11 @@ pub fn Response.bad_request(msg string) Response {
 	return Response.text(400, msg)
 }
 
+pub fn (mut r Response) header(name string, value string) Response {
+	r.headers.set(name, value)
+	return r
+}
+
 pub fn (mut r Response) set_connection_close() {
 	r.headers.set('Connection', 'close')
 }
@@ -153,7 +167,6 @@ pub fn (r &Response) to_bytes() []u8 {
 	return bytes
 }
 
-// should_close decides if the TCP connection must drop after this response.
 pub fn should_close(req Request, resp Response) bool {
 	resp_conn := resp.headers.get_or('connection', '').to_lower()
 	if resp_conn == 'close' {
@@ -163,11 +176,9 @@ pub fn should_close(req Request, resp Response) bool {
 	if req_conn == 'close' {
 		return true
 	}
-	// HTTP/1.0 defaults to close unless keep-alive requested
 	if req.version.starts_with('HTTP/1.0') {
 		return req_conn != 'keep-alive'
 	}
-	// HTTP/1.1+ default keep-alive
 	return false
 }
 
@@ -180,14 +191,22 @@ pub fn parse_request(raw []u8) !Request {
 	if lines.len == 0 || lines[0].len == 0 {
 		return error('empty request')
 	}
+	// reject bare LF request lines (require CRLF framing already split)
 	parts := lines[0].split(' ')
-	if parts.len < 3 {
+	if parts.len != 3 {
 		return error('bad request line')
 	}
 	method := parts[0]
+	if method.len == 0 {
+		return error('empty method')
+	}
 	target := parts[1]
 	version := parts[2]
-	path, query := split_target(target)
+	if !version.starts_with('HTTP/') {
+		return error('bad version')
+	}
+	path_raw, query := split_target(target)
+	path := normalize_path(path_raw)
 
 	mut headers := HeaderMap.new()
 	for i in 1 .. lines.len {
@@ -197,8 +216,11 @@ pub fn parse_request(raw []u8) !Request {
 		}
 		colon := line.index(':') or { return error('bad header line') }
 		name := line[..colon].trim_space()
+		if name.len == 0 {
+			return error('empty header name')
+		}
 		value := line[colon + 1..].trim_space()
-		headers.set(name, value)
+		headers.add(name, value)
 	}
 
 	mut body := []u8{}
@@ -229,9 +251,53 @@ pub fn parse_request(raw []u8) !Request {
 	}
 }
 
+// normalize_path collapses trailing slashes except for root "/".
+pub fn normalize_path(path string) string {
+	if path.len <= 1 {
+		return if path.len == 0 { '/' } else { path }
+	}
+	return path.trim_right('/')
+}
+
 fn split_target(target string) (string, string) {
 	q := target.index('?') or { return target, '' }
 	return target[..q], target[q + 1..]
+}
+
+// url_decode decodes percent-encoding and '+' → space (query form).
+pub fn url_decode(s string) !string {
+	mut out := []u8{cap: s.len}
+	mut i := 0
+	for i < s.len {
+		c := s[i]
+		if c == `+` {
+			out << ` `
+			i++
+			continue
+		}
+		if c == `%` {
+			if i + 2 >= s.len {
+				return error('truncated escape')
+			}
+			hi := hex_nibble(s[i + 1]) or { return error('bad escape') }
+			lo := hex_nibble(s[i + 2]) or { return error('bad escape') }
+			out << u8((u8(hi) << 4) | u8(lo))
+			i += 3
+			continue
+		}
+		out << c
+		i++
+	}
+	return out.bytestr()
+}
+
+fn hex_nibble(c u8) ?u8 {
+	return match c {
+		`0`...`9` { u8(c - `0`) }
+		`a`...`f` { u8(c - `a` + 10) }
+		`A`...`F` { u8(c - `A` + 10) }
+		else { none }
+	}
 }
 
 fn status_text(code int) string {

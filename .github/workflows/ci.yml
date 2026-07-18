@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install V
+        run: |
+          git clone --depth 1 https://github.com/vlang/v /tmp/v
+          cd /tmp/v && make
+          echo /tmp/v >> "$GITHUB_PATH"
+          mkdir -p ~/.vmodules
+          ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
+
+      - name: Unit tests
+        run: v test http/
+
+      - name: Build examples
+        run: |
+          v -o /tmp/viltrum-hello examples/hello
+          v -o /tmp/viltrum-rest examples/rest

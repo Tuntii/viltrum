@@ -18,6 +18,8 @@ pub:
 	write_timeout    time.Duration = 30 * time.second
 	idle_timeout     time.Duration = 60 * time.second
 	require_host     bool          = true
+	// handle_signals installs SIGINT/SIGTERM shutdown (disable in embedded/bench).
+	handle_signals bool = true
 }
 
 pub fn listen_and_serve(addr string, handler Handler) ! {
@@ -28,37 +30,49 @@ pub fn listen_and_serve_opt(addr string, handler Handler, opts ServerOptions) ! 
 	mut listener := net.listen_tcp(.ip, addr)!
 	shared stopping := false
 
-	// SIGINT / SIGTERM close the listener so accept() unblocks
-	os.signal_opt(.int, fn [shared stopping, mut listener] () {
-		lock stopping {
-			stopping = true
-		}
-		eprintln('[viltrum] shutting down (SIGINT)')
-		listener.close() or {}
-	}) or {}
-	os.signal_opt(.term, fn [shared stopping, mut listener] () {
-		lock stopping {
-			stopping = true
-		}
-		eprintln('[viltrum] shutting down (SIGTERM)')
-		listener.close() or {}
-	}) or {}
+	if opts.handle_signals {
+		os.signal_opt(.int, fn [shared stopping, mut listener] () {
+			lock stopping {
+				stopping = true
+			}
+			eprintln('[viltrum] shutting down (SIGINT)')
+			listener.close() or {}
+		}) or {}
+		os.signal_opt(.term, fn [shared stopping, mut listener] () {
+			lock stopping {
+				stopping = true
+			}
+			eprintln('[viltrum] shutting down (SIGTERM)')
+			listener.close() or {}
+		}) or {}
+	}
 
 	defer {
 		listener.close() or {}
 	}
 	eprintln('[viltrum] listening on http://${addr}')
 	for {
-		rlock stopping {
-			if stopping {
-				break
-			}
-		}
-		mut conn := listener.accept() or {
+		if opts.handle_signals {
 			rlock stopping {
 				if stopping {
 					break
 				}
+			}
+		}
+		mut conn := listener.accept() or {
+			if opts.handle_signals {
+				mut stop := false
+				rlock stopping {
+					stop = stopping
+				}
+				if stop {
+					break
+				}
+			}
+			// closed listener / interrupted accept ends the loop cleanly
+			msg := err.msg().to_lower()
+			if msg.contains('closed') || msg.contains('invalid') || msg.contains('bad file') {
+				break
 			}
 			eprintln('[viltrum] accept error: ${err}')
 			continue

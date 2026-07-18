@@ -5,83 +5,62 @@ HTTP framework for [V](https://vlang.io). Small surface, own engine, single bina
 [![ci](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml/badge.svg)](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml)
 
 ```
-request -> multi-read frame -> parse -> route -> middleware -> response
-           (keep-alive, idle timeout, graceful shutdown)
+request -> frame -> parse -> route/mount -> middleware -> response
 ```
 
-## Features (v0.3)
+## Features (v0.3.1)
 
-- Own TCP accept loop and HTTP/1.1 framing (not a wrapper around another stack)
-- Keep-alive + idle timeout between requests
-- Graceful shutdown on SIGINT / SIGTERM
-- Router with `:param`, trailing slash normalize, query decode
-- Middleware: `logger`, `recover`
-- `App.options(ServerOptions{...})` for limits and timeouts
-- `text` / `json` / `empty` helpers, `resp.header(...)`
-- Zero external deps beyond V stdlib
+- Own TCP + HTTP/1.1 engine (keep-alive, idle timeout, optional graceful shutdown)
+- Router + **`app.mount` groups**
+- Middleware: `logger`, `recover`, **`cors`**, **`static_files`**
+- `App.options(ServerOptions{...})`
+- Path params, query decode, trailing slash normalize
+- Zero deps beyond V stdlib
+
+**Bench (honest, local laptop):** ~**27k req/s** plaintext `GET /` with oha `-n 10000 -c 100`. See [benches/RESULTS.md](benches/RESULTS.md).
 
 ## Quick start
 
 ```bash
-git clone https://github.com/Tuntii/viltrum.git
-cd viltrum
+git clone https://github.com/Tuntii/viltrum.git && cd viltrum
 mkdir -p ~/.vmodules && ln -sfn "$(pwd)" ~/.vmodules/viltrum
 v run examples/hello
 ```
 
 ```v
 module main
-
 import viltrum
-
-fn hello(req viltrum.Request) viltrum.Response {
-	name := req.param('name') or { 'world' }
-	return viltrum.json(200, '{"message":"hello, ${name}"}')
-}
 
 fn main() {
 	mut app := viltrum.new()
 	app.use(viltrum.recover)
-	app.use(viltrum.logger)
-	app.get('/hi/:name', hello)
+	app.use(viltrum.cors('*'))
+	app.use(viltrum.static_files('/static', './public'))
+	app.mount('/api', fn (mut m viltrum.Mount) {
+		m.get('/ping', fn (_ viltrum.Request) viltrum.Response {
+			return viltrum.json(200, '{"pong":true}')
+		})
+	})
 	app.listen('127.0.0.1:8080') or { panic(err) }
 }
 ```
 
-Ctrl+C stops the listener cleanly.
-
 ## Examples
 
-See [examples/README.md](examples/README.md).
-
-```bash
-v run examples/hello   # :8080
-v run examples/rest    # :8081
-bash benches/run.sh    # rough throughput smoke
-```
-
-## Layout
-
-| Path | Role |
-|------|------|
-| `engine/` | TCP, framing, shutdown, idle timeout |
-| `http/` | Request / Response, parse |
-| `router/` | Routes and params |
-| `viltrum.v` | App facade |
-| `examples/` | hello, rest |
-| `benches/` | throughput script |
-
-## Tests
+| Path | Port | What |
+|------|------|------|
+| `examples/hello` | 8080 | minimal |
+| `examples/rest` | 8081 | in-memory todos |
+| `examples/features` | 8082 | mount + cors + static |
 
 ```bash
 v test http/
+bash benches/run.sh   # needs oha
 ```
 
 ## Status
 
-**v0.3.0** usable for experiments and small tools. Not a claim of production hardening.
-
-See [CHANGELOG.md](CHANGELOG.md).
+**v0.3.1** — useful for tools and experiments. Not a production TLS terminator.
 
 ## License
 

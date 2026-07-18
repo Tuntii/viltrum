@@ -63,7 +63,7 @@ pub fn (r &Router) handle(req http.Request) http.Response {
 			method_matched = true
 			continue
 		}
-		mut enriched := http.Request{
+		enriched := http.Request{
 			method:  req.method
 			target:  req.target
 			path:    path

@@ -26,3 +26,4 @@ jobs:
         run: |
           v -o /tmp/viltrum-hello examples/hello
           v -o /tmp/viltrum-rest examples/rest
+          v -o /tmp/viltrum-features examples/features

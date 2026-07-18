@@ -1,11 +1,13 @@
 module viltrum
 
-// Viltrum HTTP App facade. v0.3: shutdown, recover, timing logger.
+// Viltrum HTTP App facade.
+// v0.3.1: mount groups, cors, static files.
 
 import time
 import viltrum.engine
 import viltrum.http
 import viltrum.router
+import viltrum.staticf
 
 pub type Request = http.Request
 pub type Response = http.Response
@@ -61,6 +63,51 @@ pub fn (mut app App) use(mw Middleware) {
 	app.middlewares << mw
 }
 
+// Mount is a prefixing route builder for App.mount.
+pub struct Mount {
+mut:
+	prefix string
+	r      &router.Router
+}
+
+// mount registers routes under a path prefix.
+// Example: app.mount('/api', fn (mut m viltrum.Mount) { m.get('/hi', hi) })
+pub fn (mut app App) mount(prefix string, setup fn (mut m Mount)) {
+	mut m := Mount{
+		prefix: http.normalize_path(prefix)
+		r:      &app.router
+	}
+	setup(mut m)
+}
+
+pub fn (mut m Mount) get(pattern string, handler Handler) {
+	m.r.get(join_mount(m.prefix, pattern), handler)
+}
+
+pub fn (mut m Mount) post(pattern string, handler Handler) {
+	m.r.post(join_mount(m.prefix, pattern), handler)
+}
+
+pub fn (mut m Mount) put(pattern string, handler Handler) {
+	m.r.put(join_mount(m.prefix, pattern), handler)
+}
+
+pub fn (mut m Mount) delete(pattern string, handler Handler) {
+	m.r.delete(join_mount(m.prefix, pattern), handler)
+}
+
+pub fn (mut m Mount) route(method string, pattern string, handler Handler) {
+	m.r.add(method, join_mount(m.prefix, pattern), handler)
+}
+
+fn join_mount(prefix string, pattern string) string {
+	if prefix.len == 0 || prefix == '/' {
+		return pattern
+	}
+	p := if pattern.starts_with('/') { pattern } else { '/' + pattern }
+	return prefix.trim_right('/') + p
+}
+
 pub fn (mut app App) listen(addr string) ! {
 	r := app.router
 	mws := app.middlewares.clone()
@@ -113,8 +160,6 @@ pub fn logger(next Handler) Handler {
 	}
 }
 
-// recover ensures a well-formed response even if the handler forgets headers.
-// Full panic isolation is limited by the V runtime; this still hardens the happy path.
 pub fn recover(next Handler) Handler {
 	return fn [next] (req http.Request) http.Response {
 		mut resp := next(req)
@@ -128,4 +173,64 @@ pub fn recover(next Handler) Handler {
 		}
 		return resp
 	}
+}
+
+// cors adds CORS headers. Handles OPTIONS preflight with 204.
+pub fn cors(allow_origin string) Middleware {
+	origin := allow_origin
+	return fn [origin] (next Handler) Handler {
+		return fn [next, origin] (req http.Request) http.Response {
+			if req.method == 'OPTIONS' {
+				mut resp := http.Response.empty(204)
+				resp.headers.set('Access-Control-Allow-Origin', origin)
+				resp.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+				resp.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+				resp.headers.set('Access-Control-Max-Age', '86400')
+				return resp
+			}
+			mut resp := next(req)
+			resp.headers.set('Access-Control-Allow-Origin', origin)
+			return resp
+		}
+	}
+}
+
+// static_files serves GET/HEAD files from root under url_prefix; otherwise calls next.
+pub fn static_files(url_prefix string, root string) Middleware {
+	prefix := http.normalize_path(url_prefix)
+	root_path := root
+	return fn [prefix, root_path] (next Handler) Handler {
+		return fn [next, prefix, root_path] (req http.Request) http.Response {
+			if req.method != 'GET' && req.method != 'HEAD' {
+				return next(req)
+			}
+			path := http.normalize_path(req.path)
+			if prefix != '/' {
+				if path != prefix && !path.starts_with(prefix + '/') {
+					return next(req)
+				}
+			}
+			rel := if prefix == '/' {
+				path
+			} else if path == prefix {
+				'/'
+			} else {
+				path[prefix.len..]
+			}
+			if resp := staticf.file_response(root_path, rel) {
+				if req.method == 'HEAD' {
+					mut h := resp
+					h.body = []u8{}
+					// keep Content-Length of original
+					return h
+				}
+				return resp
+			}
+			return next(req)
+		}
+	}
+}
+
+pub fn serve_file(root string, rel string) ?http.Response {
+	return staticf.file_response(root, rel)
 }

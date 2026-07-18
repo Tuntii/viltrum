@@ -15,6 +15,8 @@ vls.log
 /examples/hello/hello.exe
 /benches/*
 !/benches/.gitkeep
+!/benches/run.sh
+!/benches/RESULTS.md
 
 # OS / IDE
 .DS_Store

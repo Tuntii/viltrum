@@ -1,6 +1,6 @@
 module service
 
-// Handler + middleware chain (Tower-inspired, deliberately simple).
+// Handler + middleware chain helpers.
 
 import viltrum.http
 

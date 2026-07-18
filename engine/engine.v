@@ -1,6 +1,6 @@
 module engine
 
-// TCP accept loop + per-connection read. No veb. HTTP parse is in viltrum.http.
+// TCP accept loop + per-connection read. HTTP parse lives in viltrum.http.
 
 import net
 import time

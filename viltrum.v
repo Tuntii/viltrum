@@ -1,7 +1,7 @@
 module viltrum
 
-// Viltrum — Axum-style HTTP facade for V with its own engine.
-// Non-goals v0.1: HTTP/2, TLS, WebSocket, veb compatibility.
+// Viltrum — HTTP App facade. Engine + parse + router live in submodules.
+// v0.1 non-goals: HTTP/2, TLS, WebSocket.
 
 import viltrum.engine
 import viltrum.http

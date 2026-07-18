@@ -1,6 +1,6 @@
 module main
 
-// Hello Viltrum — minimal API server (own engine, no veb).
+// Hello Viltrum — minimal API server.
 
 import viltrum
 

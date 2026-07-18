@@ -1,54 +1,47 @@
 # Viltrum
 
-**Axum-style HTTP framework for [V](https://vlang.io) with its own engine.**
-
-Not a veb wrapper. Not related to RustAPI. TCP accept → HTTP/1.1 parse → router → middleware → response, all in-tree.
+HTTP framework for [V](https://vlang.io) — small surface, own engine, single binary.
 
 ```
-engine/    TCP accept + read
-http/      Request/Response + parse
-service/   middleware helpers (optional)
-router/    method + :param routes
-viltrum.v  facade (App)
+request → parse → route → middleware → response
 ```
 
-## Status
+Viltrum owns the TCP accept loop and HTTP/1.1 parsing. You write handlers; the rest stays in-tree.
 
-**v0.1.0 — engine PoC**
+## Features (v0.1)
 
-| Done | Not yet |
-|------|---------|
-| HTTP/1.1 parse (request-line, headers, Content-Length body) | HTTP/2, TLS, WebSocket |
-| TCP server + per-conn tasks | keep-alive pipelining |
-| Router (`GET/POST` + `:param`) | typed extractors |
-| Middleware chain (logger) | graceful shutdown API |
-| `text` / `json` responses | body streaming |
+- HTTP/1.1 request parsing (method, path, query, headers, `Content-Length` body)
+- Router with method match and `:param` segments
+- Middleware chain (e.g. request logger)
+- `text` / `json` helpers
+- Zero external dependencies beyond the V standard library
 
-## Requirements
+## Quick start
 
-- V 0.4+ (`v version`)
-- Linux/macOS (Windows untested)
+**1. Install V** — https://github.com/vlang/v#installing-v-from-source
 
-Install V: https://github.com/vlang/v#installing-v-from-source
-
-## Setup (local module)
+**2. Link the module**
 
 ```bash
-# from this repo root
+git clone https://github.com/Tuntii/viltrum.git
+cd viltrum
 mkdir -p ~/.vmodules
 ln -sfn "$(pwd)" ~/.vmodules/viltrum
 ```
 
-## Hello
+**3. Run the example**
 
 ```bash
 v run examples/hello
-# GET http://127.0.0.1:8080/
-# GET http://127.0.0.1:8080/health
-# GET http://127.0.0.1:8080/hi/tunay
 ```
 
-## App sketch
+```text
+GET  http://127.0.0.1:8080/
+GET  http://127.0.0.1:8080/health
+GET  http://127.0.0.1:8080/hi/tunay
+```
+
+## Example
 
 ```v
 module main
@@ -56,17 +49,28 @@ module main
 import viltrum
 
 fn hello(req viltrum.Request) viltrum.Response {
-    name := viltrum.param(req, 'name') or { 'world' }
-    return viltrum.json(200, '{"hi":"${name}"}')
+	name := viltrum.param(req, 'name') or { 'world' }
+	return viltrum.json(200, '{"message":"hello, ${name}"}')
 }
 
 fn main() {
-    mut app := viltrum.new()
-    app.use(viltrum.logger)
-    app.get('/hi/:name', hello)
-    app.listen('127.0.0.1:8080') or { panic(err) }
+	mut app := viltrum.new()
+	app.use(viltrum.logger)
+	app.get('/hi/:name', hello)
+	app.listen('127.0.0.1:8080') or { panic(err) }
 }
 ```
+
+## Layout
+
+| Path | Role |
+|------|------|
+| `engine/` | TCP listen, accept, per-connection read/write |
+| `http/` | `Request` / `Response`, parse & serialize |
+| `router/` | Method + path routing, params |
+| `service/` | Shared middleware helpers |
+| `viltrum.v` | Public `App` API |
+| `examples/hello/` | Minimal server |
 
 ## Tests
 
@@ -74,19 +78,17 @@ fn main() {
 v test http/
 ```
 
-## Roadmap (short)
+## Status
 
-1. keep-alive + multi-read until `\r\n\r\n`
-2. shared app state
-3. honest benchmarks vs veb (`oha`)
-4. `vpm` publish when stable
+Early **v0.1** — usable for experiments and learning the stack. Not production-hardened.
 
-## Non-goals (v0.x)
-
-- Replacing veb for HTML apps
-- Feature parity with Axum/Tower
-- Production TLS termination (use a reverse proxy for now)
+| In scope soon | Out of scope for now |
+|---------------|----------------------|
+| Keep-alive / full header read loop | HTTP/2 |
+| Shared application state | TLS (put a reverse proxy in front) |
+| Cleaner param API | WebSocket |
+| Benchmarks | Body streaming |
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

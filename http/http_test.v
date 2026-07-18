@@ -10,6 +10,7 @@ fn test_parse_get() {
 	assert req.path == '/hi/tunay'
 	assert req.query == 'x=1'
 	assert req.headers.get('host')? == 'localhost'
+	assert req.query_param('x')? == '1'
 }
 
 fn test_parse_post_body() {
@@ -20,6 +21,7 @@ fn test_parse_post_body() {
 	}
 	assert req.method == 'POST'
 	assert req.body.bytestr() == 'hello'
+	assert req.text() == 'hello'
 }
 
 fn test_response_bytes_contain_status() {
@@ -27,5 +29,33 @@ fn test_response_bytes_contain_status() {
 	s := r.to_bytes().bytestr()
 	assert s.starts_with('HTTP/1.1 200 OK')
 	assert s.contains('Content-Length: 2')
+	assert s.contains('Connection: keep-alive')
 	assert s.ends_with('ok')
+}
+
+fn test_should_close_http11_default_keepalive() {
+	req := parse_request('GET / HTTP/1.1\r\nHost: x\r\n\r\n'.bytes()) or {
+		assert false
+		return
+	}
+	resp := Response.text(200, 'ok')
+	assert should_close(req, resp) == false
+}
+
+fn test_should_close_when_request_says_close() {
+	req := parse_request('GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'.bytes()) or {
+		assert false
+		return
+	}
+	resp := Response.text(200, 'ok')
+	assert should_close(req, resp) == true
+}
+
+fn test_param_on_request() {
+	mut req := parse_request('GET / HTTP/1.1\r\nHost: x\r\n\r\n'.bytes()) or {
+		assert false
+		return
+	}
+	req.params['name'] = 'tunay'
+	assert req.param('name')? == 'tunay'
 }

@@ -1,11 +1,9 @@
 module http
 
-// Minimal HTTP/1.1 types + parse/serialize for Viltrum engine.
-// Scope v0.1: request-line + headers + optional body (Content-Length only).
+// HTTP/1.1 types + parse/serialize for Viltrum.
 
 pub struct HeaderMap {
 mut:
-	// lower-case name -> joined values
 	values map[string]string
 }
 
@@ -19,7 +17,7 @@ pub fn (mut h HeaderMap) set(name string, value string) {
 	h.values[name.to_lower()] = value
 }
 
-pub fn (h HeaderMap) get(name string) ?string {
+pub fn (h &HeaderMap) get(name string) ?string {
 	key := name.to_lower()
 	if key in h.values {
 		return h.values[key]
@@ -27,19 +25,57 @@ pub fn (h HeaderMap) get(name string) ?string {
 	return none
 }
 
-pub fn (h HeaderMap) get_or(name string, default_value string) string {
+pub fn (h &HeaderMap) get_or(name string, default_value string) string {
 	return h.get(name) or { default_value }
 }
 
 pub struct Request {
 pub:
 	method  string
-	target  string // raw request-target (path + optional query)
+	target  string
 	path    string
 	query   string
 	version string
 	headers HeaderMap
 	body    []u8
+pub mut:
+	// route :params (set by router)
+	params map[string]string
+	// app-level context pointer (optional)
+	ctx voidptr
+}
+
+pub fn (r &Request) param(name string) ?string {
+	if name in r.params {
+		return r.params[name]
+	}
+	return none
+}
+
+pub fn (r &Request) query_param(name string) ?string {
+	if r.query.len == 0 {
+		return none
+	}
+	for part in r.query.split('&') {
+		if part.len == 0 {
+			continue
+		}
+		eq := part.index('=') or {
+			if part == name {
+				return ''
+			}
+			continue
+		}
+		k := part[..eq]
+		if k == name {
+			return part[eq + 1..]
+		}
+	}
+	return none
+}
+
+pub fn (r &Request) text() string {
+	return r.body.bytestr()
 }
 
 pub struct Response {
@@ -59,7 +95,7 @@ pub fn Response.text(status int, body string) Response {
 	}
 	r.headers.set('Content-Type', 'text/plain; charset=utf-8')
 	r.headers.set('Content-Length', '${r.body.len}')
-	r.headers.set('Connection', 'close')
+	r.headers.set('Connection', 'keep-alive')
 	return r
 }
 
@@ -72,7 +108,19 @@ pub fn Response.json(status int, body string) Response {
 	}
 	r.headers.set('Content-Type', 'application/json; charset=utf-8')
 	r.headers.set('Content-Length', '${r.body.len}')
-	r.headers.set('Connection', 'close')
+	r.headers.set('Connection', 'keep-alive')
+	return r
+}
+
+pub fn Response.empty(status int) Response {
+	mut r := Response{
+		status:  status
+		reason:  status_text(status)
+		headers: HeaderMap.new()
+		body:    []u8{}
+	}
+	r.headers.set('Content-Length', '0')
+	r.headers.set('Connection', 'keep-alive')
 	return r
 }
 
@@ -88,10 +136,13 @@ pub fn Response.bad_request(msg string) Response {
 	return Response.text(400, msg)
 }
 
-pub fn (r Response) to_bytes() []u8 {
+pub fn (mut r Response) set_connection_close() {
+	r.headers.set('Connection', 'close')
+}
+
+pub fn (r &Response) to_bytes() []u8 {
 	mut out := 'HTTP/1.1 ${r.status} ${r.reason}\r\n'
 	for k, v in r.headers.values {
-		// restore common casing-ish: content-type -> Content-Type is skipped for v0.1
 		out += '${canonicalize_header_name(k)}: ${v}\r\n'
 	}
 	out += '\r\n'
@@ -102,14 +153,27 @@ pub fn (r Response) to_bytes() []u8 {
 	return bytes
 }
 
-// parse_request parses a single HTTP/1.1 message from a raw buffer.
-// Returns error on malformed request-line / truncated headers.
-pub fn parse_request(raw []u8) !Request {
-	// Find header/body split
-	text := raw.bytestr()
-	sep := text.index('\r\n\r\n') or {
-		return error('incomplete headers')
+// should_close decides if the TCP connection must drop after this response.
+pub fn should_close(req Request, resp Response) bool {
+	resp_conn := resp.headers.get_or('connection', '').to_lower()
+	if resp_conn == 'close' {
+		return true
 	}
+	req_conn := req.headers.get_or('connection', '').to_lower()
+	if req_conn == 'close' {
+		return true
+	}
+	// HTTP/1.0 defaults to close unless keep-alive requested
+	if req.version.starts_with('HTTP/1.0') {
+		return req_conn != 'keep-alive'
+	}
+	// HTTP/1.1+ default keep-alive
+	return false
+}
+
+pub fn parse_request(raw []u8) !Request {
+	text := raw.bytestr()
+	sep := text.index('\r\n\r\n') or { return error('incomplete headers') }
 	head := text[..sep]
 	body_start := sep + 4
 	lines := head.split('\r\n')
@@ -123,7 +187,6 @@ pub fn parse_request(raw []u8) !Request {
 	method := parts[0]
 	target := parts[1]
 	version := parts[2]
-
 	path, query := split_target(target)
 
 	mut headers := HeaderMap.new()
@@ -132,9 +195,7 @@ pub fn parse_request(raw []u8) !Request {
 		if line.len == 0 {
 			continue
 		}
-		colon := line.index(':') or {
-			return error('bad header line')
-		}
+		colon := line.index(':') or { return error('bad header line') }
 		name := line[..colon].trim_space()
 		value := line[colon + 1..].trim_space()
 		headers.set(name, value)
@@ -148,10 +209,11 @@ pub fn parse_request(raw []u8) !Request {
 		}
 		available := raw.len - body_start
 		if available < n {
-			// v0.1: single read — incomplete body
 			return error('incomplete body')
 		}
-		body = raw[body_start..body_start + n].clone()
+		if n > 0 {
+			body = raw[body_start..body_start + n].clone()
+		}
 	}
 
 	return Request{
@@ -162,13 +224,13 @@ pub fn parse_request(raw []u8) !Request {
 		version: version
 		headers: headers
 		body:    body
+		params:  map[string]string{}
+		ctx:     unsafe { nil }
 	}
 }
 
 fn split_target(target string) (string, string) {
-	q := target.index('?') or {
-		return target, ''
-	}
+	q := target.index('?') or { return target, '' }
 	return target[..q], target[q + 1..]
 }
 
@@ -187,7 +249,6 @@ fn status_text(code int) string {
 }
 
 fn canonicalize_header_name(name string) string {
-	// minimal: split on '-' and title-case
 	parts := name.split('-')
 	mut out := []string{cap: parts.len}
 	for p in parts {

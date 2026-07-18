@@ -61,19 +61,8 @@ pub fn (r &Router) handle(req http.Request) http.Response {
 			method_matched = true
 			continue
 		}
-		mut headers := req.headers
-		for k, v in params {
-			headers.set('x-viltrum-param-${k}', v)
-		}
-		enriched := http.Request{
-			method:  req.method
-			target:  req.target
-			path:    req.path
-			query:   req.query
-			version: req.version
-			headers: headers
-			body:    req.body
-		}
+		mut enriched := req
+		enriched.params = params.clone()
 		return route.handler(enriched)
 	}
 
@@ -98,8 +87,4 @@ fn match_parts(pattern []string, path []string) (map[string]string, bool) {
 		}
 	}
 	return params, true
-}
-
-pub fn param(req http.Request, name string) ?string {
-	return req.headers.get('x-viltrum-param-${name}')
 }

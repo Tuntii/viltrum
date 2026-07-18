@@ -3,18 +3,23 @@
 HTTP framework for [V](https://vlang.io) — small surface, own engine, single binary.
 
 ```
-request → parse → route → middleware → response
+request → multi-read frame → parse → route → middleware → response
+         (keep-alive loop)
 ```
 
-Viltrum owns the TCP accept loop and HTTP/1.1 parsing. You write handlers; the rest stays in-tree.
+Viltrum owns the TCP accept loop and HTTP/1.1 framing. You write handlers.
 
-## Features (v0.1)
+## Features (v0.2)
 
-- HTTP/1.1 request parsing (method, path, query, headers, `Content-Length` body)
-- Router with method match and `:param` segments
-- Middleware chain (e.g. request logger)
-- `text` / `json` helpers
-- Zero external dependencies beyond the V standard library
+- HTTP/1.1 multi-read until headers complete + `Content-Length` body
+- Keep-alive (HTTP/1.1 default); `Connection: close` honored
+- Body / header size limits
+- Router with method match and `:param` → `req.param('id')`
+- Query helper → `req.query_param('q')`
+- Middleware chain (logger)
+- Optional `app.set_ctx` voidptr (or capture `shared` state in closures)
+- `text` / `json` / `empty` helpers
+- Zero external deps beyond V stdlib
 
 ## Quick start
 
@@ -29,16 +34,17 @@ mkdir -p ~/.vmodules
 ln -sfn "$(pwd)" ~/.vmodules/viltrum
 ```
 
-**3. Run the example**
+**3. Run examples**
 
 ```bash
-v run examples/hello
+v run examples/hello   # :8080
+v run examples/rest    # :8081  JSON todos
 ```
 
 ```text
-GET  http://127.0.0.1:8080/
-GET  http://127.0.0.1:8080/health
 GET  http://127.0.0.1:8080/hi/tunay
+GET  http://127.0.0.1:8081/todos
+POST http://127.0.0.1:8081/todos  {"title":"ship"}
 ```
 
 ## Example
@@ -49,7 +55,7 @@ module main
 import viltrum
 
 fn hello(req viltrum.Request) viltrum.Response {
-	name := viltrum.param(req, 'name') or { 'world' }
+	name := req.param('name') or { 'world' }
 	return viltrum.json(200, '{"message":"hello, ${name}"}')
 }
 
@@ -65,12 +71,13 @@ fn main() {
 
 | Path | Role |
 |------|------|
-| `engine/` | TCP listen, accept, per-connection read/write |
+| `engine/` | TCP listen, multi-read framing, keep-alive |
 | `http/` | `Request` / `Response`, parse & serialize |
 | `router/` | Method + path routing, params |
 | `service/` | Shared middleware helpers |
 | `viltrum.v` | Public `App` API |
 | `examples/hello/` | Minimal server |
+| `examples/rest/` | In-memory TODO JSON API |
 
 ## Tests
 
@@ -80,14 +87,14 @@ v test http/
 
 ## Status
 
-Early **v0.1** — usable for experiments and learning the stack. Not production-hardened.
+**v0.2** — real HTTP/1.1 framing + keep-alive. Fine for experiments; not production-hardened.
 
-| In scope soon | Out of scope for now |
-|---------------|----------------------|
-| Keep-alive / full header read loop | HTTP/2 |
-| Shared application state | TLS (put a reverse proxy in front) |
-| Cleaner param API | WebSocket |
-| Benchmarks | Body streaming |
+| Next (v0.3) | Out of scope for now |
+|-------------|----------------------|
+| Benchmarks (`oha`) | HTTP/2 |
+| More parse edge-case tests | TLS (use a reverse proxy) |
+| Graceful shutdown | WebSocket |
+| Query map helpers polish | Body streaming |
 
 ## License
 

@@ -1,7 +1,7 @@
 module viltrum
 
 // Viltrum HTTP App facade.
-// v0.3.1: mount groups, cors, static files.
+// v0.3.2: wildcards, JSON field helpers, chain(), mount middleware.
 
 import time
 import viltrum.engine
@@ -63,41 +63,61 @@ pub fn (mut app App) use(mw Middleware) {
 	app.middlewares << mw
 }
 
+// chain applies route-level middleware (first = outermost), then handler.
+pub fn chain(mws []Middleware, handler Handler) Handler {
+	mut h := handler
+	for i := mws.len - 1; i >= 0; i-- {
+		h = mws[i](h)
+	}
+	return h
+}
+
 // Mount is a prefixing route builder for App.mount.
 pub struct Mount {
 mut:
 	prefix string
 	r      &router.Router
+	mws    []Middleware
 }
 
-// mount registers routes under a path prefix.
-// Example: app.mount('/api', fn (mut m viltrum.Mount) { m.get('/hi', hi) })
 pub fn (mut app App) mount(prefix string, setup fn (mut m Mount)) {
 	mut m := Mount{
 		prefix: http.normalize_path(prefix)
 		r:      &app.router
+		mws:    []Middleware{}
 	}
 	setup(mut m)
 }
 
+pub fn (mut m Mount) use(mw Middleware) {
+	m.mws << mw
+}
+
 pub fn (mut m Mount) get(pattern string, handler Handler) {
-	m.r.get(join_mount(m.prefix, pattern), handler)
+	m.r.get(join_mount(m.prefix, pattern), m.wrap(handler))
 }
 
 pub fn (mut m Mount) post(pattern string, handler Handler) {
-	m.r.post(join_mount(m.prefix, pattern), handler)
+	m.r.post(join_mount(m.prefix, pattern), m.wrap(handler))
 }
 
 pub fn (mut m Mount) put(pattern string, handler Handler) {
-	m.r.put(join_mount(m.prefix, pattern), handler)
+	m.r.put(join_mount(m.prefix, pattern), m.wrap(handler))
 }
 
 pub fn (mut m Mount) delete(pattern string, handler Handler) {
-	m.r.delete(join_mount(m.prefix, pattern), handler)
+	m.r.delete(join_mount(m.prefix, pattern), m.wrap(handler))
 }
 
 pub fn (mut m Mount) route(method string, pattern string, handler Handler) {
-	m.r.add(method, join_mount(m.prefix, pattern), handler)
+	m.r.add(method, join_mount(m.prefix, pattern), m.wrap(handler))
+}
+
+fn (m &Mount) wrap(handler Handler) Handler {
+	if m.mws.len == 0 {
+		return handler
+	}
+	return chain(m.mws, handler)
 }
 
 fn join_mount(prefix string, pattern string) string {
@@ -175,7 +195,6 @@ pub fn recover(next Handler) Handler {
 	}
 }
 
-// cors adds CORS headers. Handles OPTIONS preflight with 204.
 pub fn cors(allow_origin string) Middleware {
 	origin := allow_origin
 	return fn [origin] (next Handler) Handler {
@@ -195,7 +214,6 @@ pub fn cors(allow_origin string) Middleware {
 	}
 }
 
-// static_files serves GET/HEAD files from root under url_prefix; otherwise calls next.
 pub fn static_files(url_prefix string, root string) Middleware {
 	prefix := http.normalize_path(url_prefix)
 	root_path := root
@@ -221,7 +239,6 @@ pub fn static_files(url_prefix string, root string) Middleware {
 				if req.method == 'HEAD' {
 					mut h := resp
 					h.body = []u8{}
-					// keep Content-Length of original
 					return h
 				}
 				return resp

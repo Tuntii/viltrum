@@ -87,6 +87,34 @@ pub fn (r &Request) text() string {
 	return r.body.bytestr()
 }
 
+// json_string extracts a top-level JSON string field ("key":"value"). Minimal, not a full parser.
+pub fn (r &Request) json_string(key string) ?string {
+	return json_extract_string(r.text(), key)
+}
+
+// json_int extracts a top-level JSON number field ("key":123).
+pub fn (r &Request) json_int(key string) ?int {
+	s := json_extract_raw(r.text(), key) or { return none }
+	if s.len == 0 {
+		return none
+	}
+	// reject quoted strings for int path
+	if s.starts_with('"') {
+		return none
+	}
+	return s.int()
+}
+
+// json_bool extracts true/false.
+pub fn (r &Request) json_bool(key string) ?bool {
+	s := json_extract_raw(r.text(), key) or { return none }
+	return match s {
+		'true' { true }
+		'false' { false }
+		else { none }
+	}
+}
+
 pub struct Response {
 pub mut:
 	status  int
@@ -298,6 +326,66 @@ fn hex_nibble(c u8) ?u8 {
 		`A`...`F` { u8(c - `A` + 10) }
 		else { none }
 	}
+}
+
+fn json_extract_string(raw string, key string) ?string {
+	needle := '"${key}"'
+	idx := raw.index(needle) or { return none }
+	rest := raw[idx + needle.len..].trim_space()
+	if !rest.starts_with(':') {
+		return none
+	}
+	after := rest[1..].trim_space()
+	if !after.starts_with('"') {
+		return none
+	}
+	mut i := 1
+	mut out := ''
+	for i < after.len {
+		c := after[i]
+		if c == `\\` && i + 1 < after.len {
+			out += after[i + 1].ascii_str()
+			i += 2
+			continue
+		}
+		if c == `"` {
+			return out
+		}
+		out += c.ascii_str()
+		i++
+	}
+	return none
+}
+
+fn json_extract_raw(raw string, key string) ?string {
+	needle := '"${key}"'
+	idx := raw.index(needle) or { return none }
+	rest := raw[idx + needle.len..].trim_space()
+	if !rest.starts_with(':') {
+		return none
+	}
+	after := rest[1..].trim_space()
+	if after.len == 0 {
+		return none
+	}
+	if after.starts_with('"') {
+		// return including quotes for int path rejection; string path uses json_extract_string
+		s := json_extract_string(raw, key) or { return none }
+		return '"${s}"'
+	}
+	// number, bool, null until delimiter
+	mut i := 0
+	for i < after.len {
+		c := after[i]
+		if c in [` `, `	`, `\n`, `\r`, `,`, `}`, `]`] {
+			break
+		}
+		i++
+	}
+	if i == 0 {
+		return none
+	}
+	return after[..i]
 }
 
 fn status_text(code int) string {

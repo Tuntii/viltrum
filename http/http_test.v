@@ -209,3 +209,17 @@ fn test_http10_should_close_default() {
 	resp := Response.text(200, 'ok')
 	assert should_close(req, resp) == true
 }
+
+fn test_json_string_int_bool() {
+	raw := 'POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 45\r\n\r\n{"title":"hi","n":42,"ok":true}'.bytes()
+	// fix content-length
+	body := '{"title":"hi","n":42,"ok":true}'
+	msg := 'POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.len}\r\n\r\n${body}'
+	req := parse_request(msg.bytes()) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.json_string('title')? == 'hi'
+	assert req.json_int('n')? == 42
+	assert req.json_bool('ok')? == true
+}

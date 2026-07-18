@@ -1,6 +1,6 @@
 module router
 
-// Method + path router with :param segments. Trailing slashes normalized.
+// Method + path router: :param and *wildcard, trailing slashes normalized.
 
 import viltrum.http
 
@@ -23,8 +23,9 @@ pub fn Router.new() Router {
 }
 
 pub fn (mut r Router) add(method string, pattern string, handler HandlerFn) {
-	norm := http.normalize_path(pattern)
-	parts := norm.trim_right('/').split('/').filter(it.len > 0)
+	// keep *wildcards; only normalize slashes (do not strip *)
+	norm := normalize_pattern(pattern)
+	parts := split_pattern(norm)
 	r.routes << Route{
 		method:  method.to_upper()
 		pattern: norm
@@ -83,19 +84,52 @@ pub fn (r &Router) handle(req http.Request) http.Response {
 	return http.Response.not_found()
 }
 
-fn match_parts(pattern []string, path []string) (map[string]string, bool) {
-	if pattern.len != path.len {
-		return map[string]string{}, false
+fn normalize_pattern(pattern string) string {
+	if pattern.len == 0 {
+		return '/'
 	}
+	mut p := pattern
+	if !p.starts_with('/') {
+		p = '/' + p
+	}
+	// collapse trailing slash except root; keep /*name
+	if p.len > 1 && p.ends_with('/') {
+		p = p.trim_right('/')
+	}
+	return p
+}
+
+fn split_pattern(pattern string) []string {
+	return pattern.trim_right('/').split('/').filter(it.len > 0)
+}
+
+// match_parts supports :id params and a trailing *rest wildcard.
+fn match_parts(pattern []string, path []string) (map[string]string, bool) {
 	mut params := map[string]string{}
-	for i, p in pattern {
-		if p.starts_with(':') {
-			params[p[1..]] = path[i]
-			continue
+	mut i := 0
+	for pi, p in pattern {
+		if p.starts_with('*') {
+			// must be last segment
+			if pi != pattern.len - 1 {
+				return map[string]string{}, false
+			}
+			name := p[1..]
+			if name.len == 0 {
+				return map[string]string{}, false
+			}
+			rest := if i < path.len { path[i..].join('/') } else { '' }
+			params[name] = rest
+			return params, true
 		}
-		if p != path[i] {
+		if i >= path.len {
 			return map[string]string{}, false
 		}
+		if p.starts_with(':') {
+			params[p[1..]] = path[i]
+		} else if p != path[i] {
+			return map[string]string{}, false
+		}
+		i++
 	}
-	return params, true
+	return params, i == path.len
 }

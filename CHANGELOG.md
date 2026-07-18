@@ -1,32 +1,26 @@
 # Changelog
 
+## 0.3.2 — 2026-07-18
+
+- Trailing wildcard routes: `/files/*path`
+- JSON field helpers: `req.json_string` / `json_int` / `json_bool` (minimal)
+- Route middleware: `viltrum.chain([...], handler)` and `Mount.use`
+- `scripts/install.sh` for `~/.vmodules` link
+- Heavier bench notes (JSON body + higher concurrency)
+- features example: wildcard, chain, mount header, json echo
+
 ## 0.3.1 — 2026-07-18
 
-- Route groups via `app.mount('/api', fn (mut m Mount) { ... })`
-- `viltrum.cors(origin)` middleware (OPTIONS preflight)
-- `viltrum.static_files(prefix, root)` middleware + path traversal guard
-- Parse fuzz / edge-case tests expanded
-- Honest bench notes (`benches/RESULTS.md`, oha ~27k req/s plaintext GET)
-- `ServerOptions.handle_signals` (disable in embedded/bench)
+- `app.mount`, cors, static_files, parse fuzz, honest oha bench, GitHub Release
 
 ## 0.3.0 — 2026-07-18
 
-- Graceful shutdown on SIGINT / SIGTERM (listener close)
-- Keep-alive idle timeout (`ServerOptions.idle_timeout`)
-- `viltrum.recover` middleware (response hardening)
-- Logger prints duration ms
-- `benches/run.sh` throughput smoke
+- Graceful shutdown, idle timeout, recover, timed logger
 
-## 0.2.1 — 2026-07-18
+## 0.2.x — 2026-07-18
 
-- `App.options(ServerOptions)`
-- Query decode, trailing slash normalize, header combine
-- Response `.header()`, Host check, write_all, CI
-
-## 0.2.0 — 2026-07-18
-
-- Multi-read framing, keep-alive, params, rest example
+- Framing, keep-alive, polish
 
 ## 0.1.0 — 2026-07-18
 
-- Initial engine PoC
+- Initial PoC

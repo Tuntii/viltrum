@@ -20,7 +20,9 @@ jobs:
           ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
 
       - name: Unit tests
-        run: v test http/
+        run: |
+          v test http/
+          v test router/
 
       - name: Build examples
         run: |

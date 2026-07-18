@@ -1,6 +1,6 @@
 module main
 
-// In-memory TODO JSON API — keep-alive, params, body, shared state.
+// In-memory TODO JSON API: keep-alive, params, json_string helper, shared state.
 
 import viltrum
 
@@ -22,33 +22,6 @@ fn todo_json(t Todo) string {
 	return '{"id":${t.id},"title":"${title}","done":${done}}'
 }
 
-fn extract_title(raw string) ?string {
-	key := '"title"'
-	idx := raw.index(key) or { return none }
-	rest := raw[idx + key.len..]
-	colon := rest.index(':') or { return none }
-	after := rest[colon + 1..].trim_space()
-	if !after.starts_with('"') {
-		return none
-	}
-	mut i := 1
-	mut out := ''
-	for i < after.len {
-		c := after[i]
-		if c == `\\` && i + 1 < after.len {
-			out += after[i + 1].ascii_str()
-			i += 2
-			continue
-		}
-		if c == `"` {
-			return out
-		}
-		out += c.ascii_str()
-		i++
-	}
-	return none
-}
-
 fn main() {
 	shared store := Store{}
 
@@ -66,7 +39,7 @@ fn main() {
 	})
 
 	app.post('/todos', fn [shared store] (req viltrum.Request) viltrum.Response {
-		title := extract_title(req.text()) or {
+		title := req.json_string('title') or {
 			return viltrum.text(400, 'expected {"title":"..."}')
 		}
 		if title.len == 0 {
@@ -110,7 +83,7 @@ fn main() {
 	})
 
 	addr := '127.0.0.1:8081'
-	println('Viltrum REST → http://${addr}')
+	println('Viltrum REST -> http://${addr}')
 	println('  GET    /todos')
 	println('  POST   /todos   {"title":"..."}')
 	println('  GET    /todos/:id')

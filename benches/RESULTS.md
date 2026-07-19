@@ -2,92 +2,86 @@
 
 | | |
 |--|--|
-| **Version** | Viltrum **v0.4.0** (`-prod` binary) |
+| **Version** | Viltrum **v0.5.0** (`-prod` binary) |
 | **Date** | 2026-07-19 |
 | **Machine** | local CachyOS Linux (developer laptop), not a dedicated lab |
 | **CPU** | AMD Ryzen 7 4800H (16 threads), ~14 GiB RAM |
-| **Tool** | [oha](https://github.com/hatoo/oha) **1.15.0** |
+| **Tools** | [oha](https://github.com/hatoo/oha) **1.15.0** (HTTP); Python 3 raw RFC 6455 client (WS) |
 
-Handler profile: `recover` on, **logging off**, `handle_signals: false`, cleartext HTTP/1.1 keep-alive.
+Handler profile: `recover` on (HTTP), **logging off**, `handle_signals: false`, cleartext only.
 
 Reproduce:
 
 ```bash
-bash benches/run.sh
+bash benches/run.sh      # HTTP
+bash benches/run_ws.sh   # WebSocket echo
 ```
 
 ---
 
-## A) Plaintext GET / — `n=10000` `c=100`
+## HTTP engine
 
-`GET /` → `ok` (2 B)
+### Fixed-n (oha)
 
-```text
-Success rate:  100%
-Requests/sec:  ~36210
-Average:       2.65 ms
-p50 / p99:     1.55 ms / 9.52 ms
-```
+| Scenario | n | c | req/s | Success | Notes |
+|----------|--:|--:|------:|--------:|-------|
+| A GET `/` | 10k | 100 | **~52k** | 100% | short burst |
+| B GET `/` | 10k | 500 | **~7.8k** | 100% | dial storm; p99 large |
+| C POST `/echo` JSON | 5k | 100 | **~63k** | 100% | warm process |
+| D GET `/` longer | 50k | 50 | **~95k** | 100% | best fixed-n on this run |
 
-## B) Higher concurrency GET / — `n=10000` `c=500`
+### Sustained duration (oha `-z`)
 
-Same handler.
+| Scenario | duration | c | req/s | Success |
+|----------|----------|--:|------:|--------:|
+| E GET `/` | 10s | 50 | **~85k** | 100% |
+| F GET `/` | 10s | 100 | **~64k** | 100% |
+| G GET `/` | 5s | 200 | **~59k** | 100% |
 
-```text
-Success rate:  100%
-Requests/sec:  ~7912
-Average:       34.9 ms
-p50 / p99:     3.4 ms / ~1.24 s
-```
+**Headline (honest):** on this laptop, cleartext `GET /` sustains **~60–85k req/s** depending on concurrency; short low-`c` bursts can touch **~95k**. Not a lab guarantee.
 
-Note: dial/connect spikes dominate at high `c` on a laptop. Still 100% 200 — not a correctness failure.
-
-## C) POST JSON body — `n=5000` `c=100`
-
-`POST /echo` with `{"title":"bench"}` → small JSON via `json_string`.
+Snippet from E (10s, c=50):
 
 ```text
 Success rate:  100%
-Requests/sec:  ~55154
-Average:       1.58 ms
-p50 / p99:     0.98 ms / 15.8 ms
+Requests/sec:  ~85150
+Average:       0.58 ms
+p50 / p99:     0.43 ms / 2.12 ms
 ```
-
-Run after A/B (warm process / CPU). Treat as same-session smoke, not isolated peak.
-
-## D) Longer GET / — `n=50000` `c=50`
-
-```text
-Success rate:  100%
-Requests/sec:  ~83752
-Average:       0.59 ms
-p50 / p99:     0.46 ms / 3.03 ms
-```
-
-Lower concurrency + longer run often looks better than A on this stack (less dial storm, warmer caches).
 
 ---
 
-## Summary table
+## WebSocket (`ws://` echo)
 
-| Scenario | n | c | req/s (approx) | Success |
-|----------|--:|--:|---------------:|--------:|
-| A GET / | 10k | 100 | **~36k** | 100% |
-| B GET / | 10k | 500 | **~7.9k** | 100% |
-| C POST JSON | 5k | 100 | **~55k** | 100% |
-| D GET / long | 50k | 50 | **~84k** | 100% |
+Server: `app.ws` echo text/binary. Client: Python threads, masked frames, TCP_NODELAY.
 
-Headline comparable to previous README “~27k” claim: **scenario A ~36k** on this run (v0.4.0 `-prod`, same class of test). Numbers move with load and thermals.
+| Scenario | Shape | Result | Success |
+|----------|-------|--------|--------:|
+| A single conn | 20k × 64 B text echo | **~11.3k msg/s** | 100% |
+| B concurrent | 32 conn × 5k × 64 B | **~23.0k msg/s** aggregate | 100% |
+| C concurrent | 100 conn × 1k × 64 B | **~18.7k msg/s** aggregate | 100% |
+| D single large | 5k × 1 KiB text echo | **~5.2k msg/s** (~10.7 MiB/s rx+tx) | 100% |
+
+Correctness smoke (same binary): handshake 101 + Accept, text/binary echo, auto-pong, unmasked client → close **1002**.
+
+**Headline (honest):** multi-conn echo sits in the **~15–25k msg/s** band on this laptop for small payloads; single-conn ~**11k msg/s**. Client is Python (not a C loadgen), so these are **lower bounds** on server capacity, not a pure server-only ceiling.
 
 ---
 
 ## What this is not
 
-- Not TechEmpower
-- Not TLS / HTTP/2 / large payloads / multi-node
-- Not a guarantee of multi-hundred-k RPS on every machine
-- Raw oha dumps from last run: `/tmp/viltrum-bench/` (local)
+- Not TechEmpower / not multi-node
+- Not TLS / `wss://` / HTTP/2
+- Not large-payload or slowloris stress
+- Not a promise of multi-hundred-k RPS on every machine
+- WS numbers include a Python client; HTTP uses oha (faster client)
 
-## Previous note (v0.3.x era, 2026-07-18)
+Raw dumps: `/tmp/viltrum-bench/` (local).
 
-Same laptop class, oha, GET `/` c=100: **~27k req/s**. Kept for history only; re-run `benches/run.sh` after engine changes.
+## History
+
+| Era | Headline HTTP (class of test) |
+|-----|-------------------------------|
+| v0.3.x | ~27k GET c=100 |
+| v0.4.0 | ~36k GET c=100; ~84k long c=50 |
+| **v0.5.0** | **~52k** GET c=100; **~85k** sustained 10s c=50; **~95k** n=50k c=50 |

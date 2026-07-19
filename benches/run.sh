@@ -96,5 +96,13 @@ echo "== D) GET /  n=50000 c=50 (longer) =="
 oha -n 50000 -c 50 --no-tui "http://${ADDR}/" | tee "$OUT_DIR/d_get_long.txt"
 
 echo
+echo "== E) GET /  -z 10s c=50 (sustained) =="
+oha -z 10s -c 50 --no-tui "http://${ADDR}/" | tee "$OUT_DIR/e_get_10s_c50.txt"
+
+echo
+echo "== F) GET /  -z 10s c=100 (sustained) =="
+oha -z 10s -c 100 --no-tui "http://${ADDR}/" | tee "$OUT_DIR/f_get_10s_c100.txt"
+
+echo
 echo "Raw oha output: $OUT_DIR/"
 echo "done"

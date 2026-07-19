@@ -2,7 +2,7 @@
 
 Viltrum ships a **first-party** RFC 6455 server on the v0.4 Conn / `app.upgrade` path. Not a wrapper around another stack.
 
-**Status:** v0.5 (cleartext). `wss://` is v0.6 (TLS + same WS code).
+**Status:** v0.5.0 (cleartext). `wss://` is v0.6 (TLS + same WS code).
 
 ## Quick start
 
@@ -98,6 +98,30 @@ Same Conn abstraction as custom `app.upgrade` protocols. Future TLS wraps Conn; 
 
 Reverse proxy must forward `Upgrade` and `Connection` hop-by-hop headers and long-lived connections. See [deploy.md](./deploy.md).
 
+## Production readiness (honest)
+
+**Good for:** tools, dashboards, internal services, small multiplayer/demo servers, cleartext behind Caddy/nginx TLS.
+
+**Ship bar met for v0.5:** own framing, limits always on, mask/version checks, close + auto-pong, concurrent echo stress green, message size caps.
+
+| Do | Don't assume |
+|----|----------------|
+| Put TLS at the reverse proxy until v0.6 | In-process `wss://` |
+| Raise `read_timeout` / `write_timeout` for idle sockets (defaults are HTTP-oriented, often 30s) | Silent “forever idle” without pings |
+| Set `check_origin` for browser clients | Origin protection by default |
+| Keep messages under `max_message_bytes` (default 1 MiB) | Unbounded frames |
+| Use single-frame messages | Fragmented frames (rejected with close 1002) |
+
+**Known limitations (not bugs of the happy path, but not full RFC completeness):**
+
+- No UTF-8 validation on text payloads (invalid UTF-8 is not auto-closed with 1007)
+- No permessage-deflate / extensions
+- Close path is best-effort (send close + TCP close; no long half-open drain)
+- One OS thread per connection (same model as HTTP) — fine for thousands of quiet sockets, not a free ticket to millions without tuning
+- Not multi-year production soak-tested; treat as a solid **0.5** server, not a mature edge platform
+
 ## Performance / DX
 
-Framing is first-party and allocation-conscious (tight encode/decode). Handlers stay ergonomic: no unsafe buffers required. Engine-level HTTP throughput work (0.4.5+) must not force a second “fast WS API”; improvements stay under this surface.
+Framing is first-party and allocation-conscious (tight encode/decode). Handlers stay ergonomic: no unsafe buffers required.
+
+Laptop echo numbers (v0.5.0 `-prod`, Python client — lower bound): single-conn ~**11k msg/s** (64 B); 32 concurrent ~**23k msg/s** aggregate. See [benches/RESULTS.md](../benches/RESULTS.md).

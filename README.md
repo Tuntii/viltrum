@@ -29,7 +29,7 @@ Requires [V](https://github.com/vlang/v) on PATH.
 - Optional `send_date` / `server_header` on responses
 - Zero deps beyond V stdlib
 
-**Bench (honest, local laptop, oha, v0.4.0 `-prod`):** ~**36k req/s** plaintext `GET /` (`n=10k` `c=100`). See [benches/RESULTS.md](benches/RESULTS.md).
+**Bench (honest, local laptop, v0.5.0 `-prod`):** HTTP `GET /` sustains ~**60–85k req/s** (oha, 10s); short low-concurrency bursts ~**95k**. WebSocket echo ~**11–23k msg/s** (Python client, lower bound). See [benches/RESULTS.md](benches/RESULTS.md).
 
 ## Example
 

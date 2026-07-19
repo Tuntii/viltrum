@@ -142,7 +142,7 @@ app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
 - [x] Design note: `docs/upgrade.md`
 - [x] Example: `examples/upgrade_echo`
 - [x] 0.4.0 polish (Date/Server, 503, peer_ip, tests)
-- [ ] Tag **v0.4.0** when this lands on main
+- [x] Tag **v0.4.0** (https://github.com/Tuntii/viltrum/releases/tag/v0.4.0)
 
 ---
 

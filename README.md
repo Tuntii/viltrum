@@ -23,34 +23,48 @@ More detail: [docs/getting-started.md](docs/getting-started.md).
 
 ## Quick start
 
+Prefer a **selective import** so handlers stay short:
+
 ```v
 module main
 
-import viltrum
+import viltrum {
+	new
+	recover
+	text
+	json
+	Request
+	Response
+}
 
 fn main() {
-	mut app := viltrum.new()
-	app.use(viltrum.recover)
+	mut app := new()
+	app.use(recover)
 
-	app.get('/', fn (req viltrum.Request) viltrum.Response {
-		return viltrum.text(200, 'ok\n')
+	app.get('/', fn (req Request) Response {
+		return text(200, 'ok\n')
 	})
 
-	app.get('/hi/:name', fn (req viltrum.Request) viltrum.Response {
+	app.get('/hi/:name', fn (req Request) Response {
 		name := req.param('name') or { 'world' }
-		return viltrum.json(200, '{"hi":"${name}"}')
+		return json(200, '{"hi":"${name}"}')
 	})
 
 	app.listen('127.0.0.1:8080') or { panic(err) }
 }
 ```
 
+`import viltrum` alone works too (`viltrum.new()`, `viltrum.Request`, …). Docs use the selective form by default.
+
 ### WebSocket
 
 Cleartext `ws://` on the same engine (RFC 6455). TLS at the reverse proxy until in-process TLS lands.
 
 ```v
-app.ws('/ws', fn (mut s viltrum.WsSocket) {
+import viltrum { new, WsSocket }
+
+mut app := new()
+app.ws('/ws', fn (mut s WsSocket) {
 	for {
 		msg := s.read_message() or { break }
 		if msg.is_text() {
@@ -71,8 +85,11 @@ v run examples/ws_echo
 ### Connection upgrade
 
 ```v
-app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
-	c.write_all(viltrum.switching_protocols('echo').to_bytes()) or { return }
+import viltrum { new, Conn, Request, switching_protocols }
+
+mut app := new()
+app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
+	c.write_all(switching_protocols('echo').to_bytes()) or { return }
 	// own the stream…
 	c.close() or {}
 })
@@ -87,8 +104,8 @@ app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
 | HTTP/1.1 | Keep-alive, Host check, limits, graceful listener stop |
 | Router | `:param`, trailing `*wildcard`, HEAD→GET |
 | App | `mount`, `chain`, `cors`, `static_files`, `logger`, `recover` |
-| Upgrade | `engine.Conn` + `app.upgrade` |
-| WebSocket | `app.ws` / `viltrum.ws` (`ws://`) |
+| Upgrade | `Conn` + `app.upgrade` |
+| WebSocket | `app.ws` / `WsSocket` (`ws://`) |
 | Bodies | `Content-Length` only (chunked / TE → 400) |
 
 ## Documentation
@@ -96,7 +113,7 @@ app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
 | Doc | Topic |
 |-----|--------|
 | [docs/README.md](docs/README.md) | Index |
-| [docs/getting-started.md](docs/getting-started.md) | Install and first server |
+| [docs/getting-started.md](docs/getting-started.md) | Install, import style, first server |
 | [docs/request-response.md](docs/request-response.md) | Request, Response, middleware |
 | [docs/connection.md](docs/connection.md) | Connection lifecycle |
 | [docs/upgrade.md](docs/upgrade.md) | Hijack / leftover ownership |

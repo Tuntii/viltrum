@@ -44,4 +44,6 @@ TCP accept
        └─ upgrade / app.ws → Conn (or WsSocket) owns the stream
 ```
 
-One public app surface (`viltrum.App`). Engine modules (`engine`, `http`, `router`, `ws`) stay importable for advanced use.
+One public app surface (`App` via `import viltrum { new, … }`). Engine modules (`engine`, `http`, `router`, `ws`) stay importable for advanced use.
+
+Import style: [getting-started.md#import-style](./getting-started.md#import-style).

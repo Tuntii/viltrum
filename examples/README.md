@@ -58,13 +58,15 @@ See [docs/ws.md](../docs/ws.md).
 ## Server options sketch
 
 ```v
-mut app := viltrum.new()
-app.server_options(viltrum.ServerOptions{
-    max_body_bytes: 256 * 1024
-    max_conns:      1024
-    send_date:      true
-    server_header:  'viltrum'
-    require_host:   true
+import viltrum { new, ServerOptions }
+
+mut app := new()
+app.server_options(ServerOptions{
+	max_body_bytes: 256 * 1024
+	max_conns:      1024
+	send_date:      true
+	server_header:  'viltrum'
+	require_host:   true
 })
 ```
 

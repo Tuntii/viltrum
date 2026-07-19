@@ -21,6 +21,35 @@ To point at another checkout later:
 ln -sfn /path/to/viltrum ~/.vmodules/viltrum
 ```
 
+## Import style
+
+Docs and examples prefer a **selective import** (ergonomic handlers):
+
+```v
+import viltrum {
+	new
+	recover
+	text
+	json
+	Request
+	Response
+	// add: Conn, WsSocket, WsOptions, ServerOptions, chain, cors, Mount, …
+}
+```
+
+Then write `new()`, `Request`, `text(...)` without a module prefix.
+
+Fully qualified still works:
+
+```v
+import viltrum
+
+mut app := viltrum.new()
+// viltrum.Request, viltrum.text, …
+```
+
+Short alias is fine in larger apps: `import viltrum as v`.
+
 ## Hello
 
 ```bash
@@ -33,12 +62,17 @@ Minimal program:
 ```v
 module main
 
-import viltrum
+import viltrum {
+	new
+	text
+	Request
+	Response
+}
 
 fn main() {
-	mut app := viltrum.new()
-	app.get('/', fn (req viltrum.Request) viltrum.Response {
-		return viltrum.text(200, 'hello\n')
+	mut app := new()
+	app.get('/', fn (req Request) Response {
+		return text(200, 'hello\n')
 	})
 	app.listen('127.0.0.1:8080') or { panic(err) }
 }
@@ -60,10 +94,10 @@ fn main() {
 
 ```v
 import time
-import viltrum
+import viltrum { new, ServerOptions }
 
-mut app := viltrum.new()
-app.server_options(viltrum.ServerOptions{
+mut app := new()
+app.server_options(ServerOptions{
 	max_body_bytes:  1 << 20
 	max_conns:       1024
 	read_timeout:    30 * time.second

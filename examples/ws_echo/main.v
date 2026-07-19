@@ -5,19 +5,26 @@ module main
 //   v run examples/ws_echo
 //   websocat ws://127.0.0.1:8084/ws
 
-import viltrum
+import viltrum {
+	new
+	text
+	Request
+	Response
+	ServerOptions
+	WsSocket
+}
 
 fn main() {
-	mut app := viltrum.new()
-	app.server_options(viltrum.ServerOptions{
+	mut app := new()
+	app.server_options(ServerOptions{
 		handle_signals: true
 	})
 
-	app.get('/', fn (req viltrum.Request) viltrum.Response {
-		return viltrum.text(200, 'ws_echo: connect ws://127.0.0.1:8084/ws\n')
+	app.get('/', fn (req Request) Response {
+		return text(200, 'ws_echo: connect ws://127.0.0.1:8084/ws\n')
 	})
 
-	app.ws('/ws', fn (mut s viltrum.WsSocket) {
+	app.ws('/ws', fn (mut s WsSocket) {
 		for {
 			msg := s.read_message() or { break }
 			if msg.is_text() {

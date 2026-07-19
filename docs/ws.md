@@ -7,11 +7,11 @@ Viltrum ships a **first-party** RFC 6455 server on the v0.4 Conn / `app.upgrade`
 ## Quick start
 
 ```v
-import viltrum
+import viltrum { new, WsSocket }
 
 fn main() {
-	mut app := viltrum.new()
-	app.ws('/ws', fn (mut s viltrum.WsSocket) {
+	mut app := new()
+	app.ws('/ws', fn (mut s WsSocket) {
 		for {
 			msg := s.read_message() or { break }
 			if msg.is_text() {
@@ -48,7 +48,9 @@ Built on **`app.upgrade`**: middleware does **not** run for WS routes (same as o
 ## Options
 
 ```v
-app.ws_opts('/ws', viltrum.WsOptions{
+import viltrum { WsOptions }
+
+app.ws_opts('/ws', WsOptions{
 	max_message_bytes: 1 << 20 // default 1 MiB
 	max_frame_bytes:   1 << 20
 	auto_pong:         true    // default: reply to ping

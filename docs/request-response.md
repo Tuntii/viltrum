@@ -2,6 +2,23 @@
 
 Stable notes for the public HTTP types re-exported by `viltrum` (`viltrum.http`).
 
+## Import
+
+```v
+import viltrum {
+	Request
+	Response
+	text
+	json
+	empty
+	not_found
+	chain
+	// Handler, Middleware if you type them yourself
+}
+```
+
+Then use `Request`, `Response`, `text(...)` without a `viltrum.` prefix. Fully qualified (`viltrum.Request`) remains valid.
+
 ## Request
 
 | Field / API | Meaning |
@@ -30,7 +47,7 @@ Each request is handled on one conn task. **`ctx` is shared across requests** if
 | `headers` | Written as-is (canonicalized names on serialize). |
 | `body` | Entity body. For **HEAD**, the engine omits body bytes on the wire but keeps headers (including `Content-Length`). |
 
-Constructors: `Response.text`, `.json`, `.empty`, `.not_found`, `.method_not_allowed`, `.bad_request`, `.switching_protocols`. Builder: `.header`, `.set_connection_close`. Facade aliases: `viltrum.text`, `.json`, `.empty`, `.not_found`, `.switching_protocols`.
+Constructors: `Response.text`, `.json`, `.empty`, `.not_found`, `.method_not_allowed`, `.bad_request`, `.switching_protocols`. Builder: `.header`, `.set_connection_close`. Facade helpers (import selectively): `text`, `json`, `empty`, `not_found`, `switching_protocols`.
 
 Default helpers set `Content-Type`, `Content-Length`, and `Connection: keep-alive`. Override with `.header` / `set_connection_close` as needed.
 
@@ -41,8 +58,8 @@ Via `ServerOptions` (default off / empty):
 - `send_date: true` → `Date` (HTTP-date, UTC) if the handler did not set `Date`
 - `server_header: "viltrum"` → `Server` if the handler did not set `Server`
 
-Handler values always win. Helper: `viltrum.http_date(time.utc())` for manual dates.
+Handler values always win. Helper: `http_date(time.utc())` after `import viltrum { http_date }`.
 
 ## Middleware
 
-`Middleware` is `fn (next Handler) Handler`. Global: `app.use`. Route-level: `viltrum.chain([...], handler)` or `Mount.use` before mount routes. Order: first registered = outermost.
+`Middleware` is `fn (next Handler) Handler`. Global: `app.use`. Route-level: `chain([...], handler)` or `Mount.use` before mount routes. Order: first registered = outermost.

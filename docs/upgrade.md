@@ -9,11 +9,13 @@ This is the foundation for **WebSocket (`ws://`)** ([ws.md](./ws.md)) and later 
 ## One path
 
 ```v
-app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
-    resp := viltrum.switching_protocols('echo')
-    c.write_all(resp.to_bytes()) or { return }
-    // ... custom protocol on c ...
-    c.close() or {}
+import viltrum { Conn, Request, switching_protocols }
+
+app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
+	resp := switching_protocols('echo')
+	c.write_all(resp.to_bytes()) or { return }
+	// ... custom protocol on c ...
+	c.close() or {}
 })
 ```
 
@@ -55,7 +57,7 @@ After a match:
 
 ## `Conn` and leftover ownership
 
-`viltrum.Conn` (`engine.Conn`) is the stream API:
+`Conn` (type alias of `engine.Conn`; import with `import viltrum { Conn, … }`) is the stream API:
 
 | Method | Role |
 |--------|------|

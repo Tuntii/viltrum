@@ -127,10 +127,12 @@ TLS/WSS remain planned after WS. Order: hijack-ready conn model → WS framing o
 ### Public API (shipped)
 
 ```v
-app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
-    c.write_all(viltrum.switching_protocols('echo').to_bytes()) or { return }
-    // custom protocol …
-    c.close() or {}
+import viltrum { Conn, Request, switching_protocols }
+
+app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
+	c.write_all(switching_protocols('echo').to_bytes()) or { return }
+	// custom protocol …
+	c.close() or {}
 })
 ```
 

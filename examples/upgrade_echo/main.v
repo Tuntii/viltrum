@@ -5,20 +5,28 @@ module main
 //   v run examples/upgrade_echo
 //   printf 'GET /echo HTTP/1.1\r\nHost: localhost\r\n\r\nhello\n' | nc 127.0.0.1 8083
 
-import viltrum
+import viltrum {
+	new
+	text
+	Request
+	Response
+	ServerOptions
+	Conn
+	switching_protocols
+}
 
 fn main() {
-	mut app := viltrum.new()
-	app.server_options(viltrum.ServerOptions{
+	mut app := new()
+	app.server_options(ServerOptions{
 		handle_signals: true
 	})
 
-	app.get('/', fn (req viltrum.Request) viltrum.Response {
-		return viltrum.text(200, 'upgrade demo: GET /echo\n')
+	app.get('/', fn (req Request) Response {
+		return text(200, 'upgrade demo: GET /echo\n')
 	})
 
-	app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
-		resp := viltrum.switching_protocols('echo')
+	app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
+		resp := switching_protocols('echo')
 		c.write_all(resp.to_bytes()) or {
 			eprintln('write 101: ${err}')
 			return

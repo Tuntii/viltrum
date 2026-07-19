@@ -1,27 +1,35 @@
 module main
 
-// Hello Viltrum — minimal API server (v0.2).
+// Hello Viltrum — minimal API server.
 
-import viltrum
-
-fn hello(_req viltrum.Request) viltrum.Response {
-	return viltrum.text(200, 'hello from viltrum\n')
+import viltrum {
+	new
+	recover
+	logger
+	text
+	json
+	Request
+	Response
 }
 
-fn greet(req viltrum.Request) viltrum.Response {
+fn hello(_req Request) Response {
+	return text(200, 'hello from viltrum\n')
+}
+
+fn greet(req Request) Response {
 	name := req.param('name') or { 'world' }
 	body := '{"message":"hello, ${name}"}'
-	return viltrum.json(200, body)
+	return json(200, body)
 }
 
-fn health(_req viltrum.Request) viltrum.Response {
-	return viltrum.json(200, '{"status":"ok"}')
+fn health(_req Request) Response {
+	return json(200, '{"status":"ok"}')
 }
 
 fn main() {
-	mut app := viltrum.new()
-	app.use(viltrum.recover)
-	app.use(viltrum.logger)
+	mut app := new()
+	app.use(recover)
+	app.use(logger)
 	app.get('/', hello)
 	app.get('/health', health)
 	app.get('/hi/:name', greet)

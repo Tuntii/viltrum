@@ -3,27 +3,40 @@ module main
 // Demo: mount + mount middleware + cors + static + wildcard.
 
 import os
-import viltrum
-
-fn ping(_req viltrum.Request) viltrum.Response {
-	return viltrum.json(200, '{"pong":true}')
+import viltrum {
+	new
+	recover
+	cors
+	static_files
+	logger
+	chain
+	text
+	json
+	Request
+	Response
+	Handler
+	Mount
 }
 
-fn hi(req viltrum.Request) viltrum.Response {
+fn ping(_req Request) Response {
+	return json(200, '{"pong":true}')
+}
+
+fn hi(req Request) Response {
 	name := req.param('name') or { 'world' }
-	return viltrum.json(200, '{"hi":"${name}"}')
+	return json(200, '{"hi":"${name}"}')
 }
 
-fn echo_title(req viltrum.Request) viltrum.Response {
+fn echo_title(req Request) Response {
 	title := req.json_string('title') or {
-		return viltrum.text(400, 'need {"title":"..."}')
+		return text(400, 'need {"title":"..."}')
 	}
-	return viltrum.json(200, '{"title":"${title}"}')
+	return json(200, '{"title":"${title}"}')
 }
 
-fn catch_all(req viltrum.Request) viltrum.Response {
+fn catch_all(req Request) Response {
 	rest := req.param('path') or { '' }
-	return viltrum.json(200, '{"rest":"${rest}"}')
+	return json(200, '{"rest":"${rest}"}')
 }
 
 fn main() {
@@ -36,25 +49,25 @@ fn main() {
 	os.write_file(os.join_path(dir, 'index.html'), '<h1>viltrum static</h1>\n') or {}
 	os.write_file(os.join_path(dir, 'hello.txt'), 'hello from disk\n') or {}
 
-	mut app := viltrum.new()
+	mut app := new()
 	// Interactive Ctrl+C shutdown works with default handle_signals=true.
-	app.use(viltrum.recover)
-	app.use(viltrum.cors('*'))
-	app.use(viltrum.static_files('/static', dir))
-	app.use(viltrum.logger)
+	app.use(recover)
+	app.use(cors('*'))
+	app.use(static_files('/static', dir))
+	app.use(logger)
 
-	app.get('/health', fn (_ viltrum.Request) viltrum.Response {
-		return viltrum.json(200, '{"status":"ok"}')
+	app.get('/health', fn (_ Request) Response {
+		return json(200, '{"status":"ok"}')
 	})
 
 	// route-level middleware via chain
-	app.get('/chain', viltrum.chain([viltrum.logger], fn (_ viltrum.Request) viltrum.Response {
-		return viltrum.text(200, 'chained\n')
+	app.get('/chain', chain([logger], fn (_ Request) Response {
+		return text(200, 'chained\n')
 	}))
 
-	app.mount('/api', fn (mut m viltrum.Mount) {
-		m.use(fn (next viltrum.Handler) viltrum.Handler {
-			return fn [next] (req viltrum.Request) viltrum.Response {
+	app.mount('/api', fn (mut m Mount) {
+		m.use(fn (next Handler) Handler {
+			return fn [next] (req Request) Response {
 				mut resp := next(req)
 				resp.headers.set('X-Mount', 'api')
 				return resp

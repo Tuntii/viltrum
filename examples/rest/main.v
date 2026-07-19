@@ -2,7 +2,16 @@ module main
 
 // In-memory TODO JSON API: keep-alive, params, json_string helper, shared state.
 
-import viltrum
+import viltrum {
+	new
+	logger
+	text
+	json
+	empty
+	not_found
+	Request
+	Response
+}
 
 struct Todo {
 	id    int
@@ -25,25 +34,25 @@ fn todo_json(t Todo) string {
 fn main() {
 	shared store := Store{}
 
-	mut app := viltrum.new()
-	app.use(viltrum.logger)
+	mut app := new()
+	app.use(logger)
 
-	app.get('/todos', fn [shared store] (_req viltrum.Request) viltrum.Response {
+	app.get('/todos', fn [shared store] (_req Request) Response {
 		mut parts := []string{}
 		rlock store {
 			for _, t in store.items {
 				parts << todo_json(t)
 			}
 		}
-		return viltrum.json(200, '[${parts.join(',')}]')
+		return json(200, '[${parts.join(',')}]')
 	})
 
-	app.post('/todos', fn [shared store] (req viltrum.Request) viltrum.Response {
+	app.post('/todos', fn [shared store] (req Request) Response {
 		title := req.json_string('title') or {
-			return viltrum.text(400, 'expected {"title":"..."}')
+			return text(400, 'expected {"title":"..."}')
 		}
 		if title.len == 0 {
-			return viltrum.text(400, 'empty title')
+			return text(400, 'empty title')
 		}
 		mut t := Todo{}
 		lock store {
@@ -56,30 +65,30 @@ fn main() {
 			}
 			store.items[id] = t
 		}
-		return viltrum.json(201, todo_json(t))
+		return json(201, todo_json(t))
 	})
 
-	app.get('/todos/:id', fn [shared store] (req viltrum.Request) viltrum.Response {
-		id_str := req.param('id') or { return viltrum.not_found() }
+	app.get('/todos/:id', fn [shared store] (req Request) Response {
+		id_str := req.param('id') or { return not_found() }
 		id := id_str.int()
 		rlock store {
 			if id in store.items {
-				return viltrum.json(200, todo_json(store.items[id]))
+				return json(200, todo_json(store.items[id]))
 			}
 		}
-		return viltrum.not_found()
+		return not_found()
 	})
 
-	app.delete('/todos/:id', fn [shared store] (req viltrum.Request) viltrum.Response {
-		id_str := req.param('id') or { return viltrum.not_found() }
+	app.delete('/todos/:id', fn [shared store] (req Request) Response {
+		id_str := req.param('id') or { return not_found() }
 		id := id_str.int()
 		lock store {
 			if id in store.items {
 				store.items.delete(id)
-				return viltrum.empty(204)
+				return empty(204)
 			}
 		}
-		return viltrum.not_found()
+		return not_found()
 	})
 
 	addr := '127.0.0.1:8081'

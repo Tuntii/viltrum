@@ -50,18 +50,60 @@ pub fn (mut r Router) delete(pattern string, handler HandlerFn) {
 	r.add('DELETE', pattern, handler)
 }
 
+pub fn (mut r Router) patch(pattern string, handler HandlerFn) {
+	r.add('PATCH', pattern, handler)
+}
+
+pub fn (mut r Router) options(pattern string, handler HandlerFn) {
+	r.add('OPTIONS', pattern, handler)
+}
+
+pub fn (mut r Router) head(pattern string, handler HandlerFn) {
+	r.add('HEAD', pattern, handler)
+}
+
 pub fn (r &Router) handle(req http.Request) http.Response {
-	path := http.normalize_path(req.path)
-	path_parts := path.trim_right('/').split('/').filter(it.len > 0)
+	// OPTIONS * is not path-routed; apps handle via middleware (e.g. cors) or explicit route.
+	path := if req.path == '*' { '*' } else { http.normalize_path(req.path) }
+	path_parts := if path == '*' {
+		['*']
+	} else {
+		path.trim_right('/').split('/').filter(it.len > 0)
+	}
+	method := req.method.to_upper()
 	mut method_matched := false
 
+	// Prefer exact method match; HEAD may fall back to GET (RFC 9110).
+	if resp := r.dispatch(method, path, path_parts, req) {
+		return resp
+	}
+	if method == 'HEAD' {
+		if resp := r.dispatch('GET', path, path_parts, req) {
+			return resp
+		}
+	}
+
+	// Distinguish 405 vs 404: path matched any method?
 	for route in r.routes {
-		params, ok := match_parts(route.parts, path_parts)
-		if !ok {
+		_, ok := match_parts(route.parts, path_parts)
+		if ok {
+			method_matched = true
+			break
+		}
+	}
+	if method_matched {
+		return http.Response.method_not_allowed()
+	}
+	return http.Response.not_found()
+}
+
+fn (r &Router) dispatch(method string, path string, path_parts []string, req http.Request) ?http.Response {
+	for route in r.routes {
+		if route.method != method {
 			continue
 		}
-		if route.method != req.method.to_upper() {
-			method_matched = true
+		params, ok := match_parts(route.parts, path_parts)
+		if !ok {
 			continue
 		}
 		enriched := http.Request{
@@ -77,11 +119,7 @@ pub fn (r &Router) handle(req http.Request) http.Response {
 		}
 		return route.handler(enriched)
 	}
-
-	if method_matched {
-		return http.Response.method_not_allowed()
-	}
-	return http.Response.not_found()
+	return none
 }
 
 fn normalize_pattern(pattern string) string {

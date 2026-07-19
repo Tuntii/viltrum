@@ -1,5 +1,7 @@
 module http
 
+import time
+
 fn test_parse_get() {
 	raw := 'GET /hi/tunay?x=1 HTTP/1.1\r\nHost: localhost\r\nUser-Agent: test\r\n\r\n'.bytes()
 	req := parse_request(raw) or {
@@ -222,4 +224,112 @@ fn test_json_string_int_bool() {
 	assert req.json_string('title')? == 'hi'
 	assert req.json_int('n')? == 42
 	assert req.json_bool('ok')? == true
+}
+
+// --- v0.3.x correctness ---
+
+fn test_reject_transfer_encoding_chunked() {
+	raw := 'POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n'.bytes()
+	parse_request(raw) or {
+		assert err.msg().contains('transfer-encoding')
+		return
+	}
+	assert false, 'expected transfer-encoding rejection'
+}
+
+fn test_reject_transfer_encoding_and_content_length_conflict() {
+	raw := 'POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello'.bytes()
+	parse_request(raw) or {
+		assert err.msg().contains('conflict')
+		return
+	}
+	assert false, 'expected TE+CL conflict'
+}
+
+fn test_reject_transfer_encoding_gzip() {
+	// TE without CL
+	raw := 'POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n'.bytes()
+	parse_request(raw) or {
+		assert err.msg().contains('transfer-encoding')
+		return
+	}
+	assert false, 'expected transfer-encoding rejection'
+}
+
+fn test_switching_protocols_bytes() {
+	r := Response.switching_protocols('websocket')
+	s := r.to_bytes().bytestr()
+	assert s.starts_with('HTTP/1.1 101 Switching Protocols')
+	assert s.contains('Connection: Upgrade')
+	assert s.contains('Upgrade: websocket')
+	assert !s.contains('Content-Length')
+}
+
+fn test_http_date_shape() {
+	t := time.unix(1579099200) // 2020-01-15 …
+	d := http_date(t)
+	assert d.ends_with(' GMT')
+	assert d.contains('2020')
+	assert d.contains('Jan')
+	assert d.count(',') == 1
+	parts := d.split(' ')
+	assert parts.len == 6 // ddd, DD MMM YYYY HH:mm:ss GMT
+	assert parts[0].ends_with(',')
+}
+
+fn test_status_503_reason() {
+	r := Response.text(503, 'busy')
+	assert r.reason == 'Service Unavailable'
+	assert r.to_bytes().bytestr().contains('503 Service Unavailable')
+}
+
+fn test_head_omits_body_keeps_content_length() {
+	r := Response.text(200, 'hello')
+	s := r.to_bytes_for_method('HEAD').bytestr()
+	assert s.contains('Content-Length: 5')
+	assert s.contains('HTTP/1.1 200 OK')
+	assert !s.ends_with('hello')
+	// body after headers must be empty
+	sep := s.index('\r\n\r\n') or {
+		assert false
+		return
+	}
+	assert s[sep + 4..].len == 0
+}
+
+fn test_get_still_includes_body() {
+	r := Response.text(200, 'hello')
+	s := r.to_bytes_for_method('GET').bytestr()
+	assert s.ends_with('hello')
+}
+
+fn test_absolute_form_target() {
+	raw := 'GET http://example.com/api/hi?x=1 HTTP/1.1\r\nHost: example.com\r\n\r\n'.bytes()
+	req := parse_request(raw) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.path == '/api/hi'
+	assert req.query == 'x=1'
+	assert req.query_param('x')? == '1'
+}
+
+fn test_absolute_form_root_no_path() {
+	raw := 'GET http://example.com HTTP/1.1\r\nHost: example.com\r\n\r\n'.bytes()
+	req := parse_request(raw) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.path == '/'
+}
+
+fn test_options_asterisk_form() {
+	raw := 'OPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n'.bytes()
+	req := parse_request(raw) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.method == 'OPTIONS'
+	assert req.path == '*'
+	assert req.target == '*'
 }

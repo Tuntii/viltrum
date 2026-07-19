@@ -1,7 +1,7 @@
 module viltrum
 
 // Viltrum HTTP App facade.
-// v0.3.2: wildcards, JSON field helpers, chain(), mount middleware.
+// v0.4: connection hijack / upgrade on engine.Conn (pre-WS foundation).
 
 import time
 import viltrum.engine
@@ -14,20 +14,26 @@ pub type Response = http.Response
 pub type Handler = fn (req http.Request) http.Response
 pub type Middleware = fn (next Handler) Handler
 pub type ServerOptions = engine.ServerOptions
+// Conn is the upgrade/hijack stream (engine.Conn). Use this in UpgradeFn handlers.
+pub type Conn = engine.Conn
+// UpgradeFn takes over the connection after a matched app.upgrade route.
+pub type UpgradeFn = fn (mut c Conn, req Request)
 
 pub struct App {
 mut:
 	router      router.Router
 	middlewares []Middleware
+	upgrades    []engine.UpgradeRoute
 	ctx         voidptr
 	opts        engine.ServerOptions
 }
 
 pub fn new() App {
 	return App{
-		router: router.Router.new()
-		ctx:    unsafe { nil }
-		opts:   engine.ServerOptions{}
+		router:   router.Router.new()
+		upgrades: []engine.UpgradeRoute{}
+		ctx:      unsafe { nil }
+		opts:     engine.ServerOptions{}
 	}
 }
 
@@ -35,7 +41,8 @@ pub fn (mut app App) set_ctx(ptr voidptr) {
 	app.ctx = ptr
 }
 
-pub fn (mut app App) options(opts engine.ServerOptions) {
+// server_options sets engine limits/timeouts (not the HTTP OPTIONS method).
+pub fn (mut app App) server_options(opts engine.ServerOptions) {
 	app.opts = opts
 }
 
@@ -55,12 +62,40 @@ pub fn (mut app App) delete(pattern string, handler Handler) {
 	app.router.delete(pattern, handler)
 }
 
+pub fn (mut app App) patch(pattern string, handler Handler) {
+	app.router.patch(pattern, handler)
+}
+
+// options registers an HTTP OPTIONS route (use cors() for simple preflight).
+pub fn (mut app App) options(pattern string, handler Handler) {
+	app.router.options(pattern, handler)
+}
+
+pub fn (mut app App) head(pattern string, handler Handler) {
+	app.router.head(pattern, handler)
+}
+
 pub fn (mut app App) route(method string, pattern string, handler Handler) {
 	app.router.add(method, pattern, handler)
 }
 
 pub fn (mut app App) use(mw Middleware) {
 	app.middlewares << mw
+}
+
+// upgrade registers a connection take-over handler for method + path pattern.
+// When matched, the HTTP keep-alive loop stops and `handler` owns the Conn.
+// Global middleware does not run on upgrade routes. See docs/upgrade.md.
+pub fn (mut app App) upgrade(method string, pattern string, handler UpgradeFn) {
+	// Adapt viltrum.UpgradeFn → engine.UpgradeFn (same shape, distinct aliases in V).
+	h := handler
+	app.upgrades << engine.UpgradeRoute{
+		method:  method.to_upper()
+		pattern: pattern
+		handler: fn [h] (mut c engine.Conn, req http.Request) {
+			h(mut c, req)
+		}
+	}
 }
 
 // chain applies route-level middleware (first = outermost), then handler.
@@ -109,6 +144,18 @@ pub fn (mut m Mount) delete(pattern string, handler Handler) {
 	m.r.delete(join_mount(m.prefix, pattern), m.wrap(handler))
 }
 
+pub fn (mut m Mount) patch(pattern string, handler Handler) {
+	m.r.patch(join_mount(m.prefix, pattern), m.wrap(handler))
+}
+
+pub fn (mut m Mount) options(pattern string, handler Handler) {
+	m.r.options(join_mount(m.prefix, pattern), m.wrap(handler))
+}
+
+pub fn (mut m Mount) head(pattern string, handler Handler) {
+	m.r.head(join_mount(m.prefix, pattern), m.wrap(handler))
+}
+
 pub fn (mut m Mount) route(method string, pattern string, handler Handler) {
 	m.r.add(method, join_mount(m.prefix, pattern), m.wrap(handler))
 }
@@ -133,6 +180,7 @@ pub fn (mut app App) listen(addr string) ! {
 	mws := app.middlewares.clone()
 	app_ctx := app.ctx
 	opts := app.opts
+	upgrades_in := app.upgrades.clone()
 
 	inner := fn [r] (req http.Request) http.Response {
 		return r.handle(req)
@@ -151,7 +199,32 @@ pub fn (mut app App) listen(addr string) ! {
 		return handler(rq)
 	}
 
-	engine.listen_and_serve_opt(addr, engine_handler, opts)!
+	// Inject app ctx into upgrade requests (same contract as HTTP handlers).
+	mut upgrades := []engine.UpgradeRoute{cap: upgrades_in.len}
+	for u in upgrades_in {
+		base := u.handler
+		upgrades << engine.UpgradeRoute{
+			method:  u.method
+			pattern: u.pattern
+			handler: fn [base, app_ctx] (mut c engine.Conn, req http.Request) {
+				mut rq := req
+				rq.ctx = app_ctx
+				base(mut c, rq)
+			}
+		}
+	}
+
+	engine.listen_and_serve_full(addr, engine_handler, upgrades, opts)!
+}
+
+// switching_protocols is a convenience for upgrade handlers (101 + Upgrade header).
+pub fn switching_protocols(upgrade_proto string) http.Response {
+	return http.Response.switching_protocols(upgrade_proto)
+}
+
+// http_date formats a time as HTTP-date (IMF-fixdate, GMT). Prefer time.utc().
+pub fn http_date(t time.Time) string {
+	return http.http_date(t)
 }
 
 pub fn text(status int, body string) http.Response {

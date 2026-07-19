@@ -2,6 +2,8 @@ module http
 
 // HTTP/1.1 types + parse/serialize for Viltrum.
 
+import time
+
 pub struct HeaderMap {
 mut:
 	values map[string]string
@@ -173,6 +175,22 @@ pub fn Response.bad_request(msg string) Response {
 	return Response.text(400, msg)
 }
 
+// switching_protocols builds a bare 101 response (no Content-Length).
+// Used by upgrade handlers before taking over the byte stream.
+pub fn Response.switching_protocols(upgrade_proto string) Response {
+	mut r := Response{
+		status:  101
+		reason:  'Switching Protocols'
+		headers: HeaderMap.new()
+		body:    []u8{}
+	}
+	r.headers.set('Connection', 'Upgrade')
+	if upgrade_proto.len > 0 {
+		r.headers.set('Upgrade', upgrade_proto)
+	}
+	return r
+}
+
 pub fn (mut r Response) header(name string, value string) Response {
 	r.headers.set(name, value)
 	return r
@@ -183,13 +201,19 @@ pub fn (mut r Response) set_connection_close() {
 }
 
 pub fn (r &Response) to_bytes() []u8 {
+	return r.to_bytes_for_method('')
+}
+
+// to_bytes_for_method serializes the response. For HEAD, headers are kept (including
+// Content-Length) but the body octets are omitted (RFC 9110 §9.3.2).
+pub fn (r &Response) to_bytes_for_method(method string) []u8 {
 	mut out := 'HTTP/1.1 ${r.status} ${r.reason}\r\n'
 	for k, v in r.headers.values {
 		out += '${canonicalize_header_name(k)}: ${v}\r\n'
 	}
 	out += '\r\n'
 	mut bytes := out.bytes()
-	if r.body.len > 0 {
+	if r.body.len > 0 && method.to_upper() != 'HEAD' {
 		bytes << r.body
 	}
 	return bytes
@@ -234,7 +258,8 @@ pub fn parse_request(raw []u8) !Request {
 		return error('bad version')
 	}
 	path_raw, query := split_target(target)
-	path := normalize_path(path_raw)
+	// OPTIONS * keeps asterisk path; absolute-form is reduced in split_target
+	path := if path_raw == '*' { '*' } else { normalize_path(path_raw) }
 
 	mut headers := HeaderMap.new()
 	for i in 1 .. lines.len {
@@ -249,6 +274,16 @@ pub fn parse_request(raw []u8) !Request {
 		}
 		value := line[colon + 1..].trim_space()
 		headers.add(name, value)
+	}
+
+	// TE + Content-Length together is invalid (RFC 9112). TE alone (e.g. chunked) is unsupported.
+	te := headers.get('transfer-encoding') or { '' }
+	cl_hdr := headers.get('content-length') or { '' }
+	if te.len > 0 && cl_hdr.len > 0 {
+		return error('transfer-encoding and content-length conflict')
+	}
+	if te.len > 0 {
+		return error('transfer-encoding not supported')
 	}
 
 	mut body := []u8{}
@@ -287,9 +322,29 @@ pub fn normalize_path(path string) string {
 	return path.trim_right('/')
 }
 
+// split_target returns path and query. Absolute-form
+// (http://host/path?q or https://...) is reduced to path + query.
+// Asterisk-form (*) is returned as path "*" with empty query.
 fn split_target(target string) (string, string) {
-	q := target.index('?') or { return target, '' }
-	return target[..q], target[q + 1..]
+	if target == '*' {
+		return '*', ''
+	}
+	mut t := target
+	lower := t.to_lower()
+	if lower.starts_with('http://') || lower.starts_with('https://') {
+		// strip scheme://
+		scheme_end := t.index('://') or { 0 }
+		rest := t[scheme_end + 3..]
+		// authority ends at first /
+		slash := rest.index('/') or {
+			// http://host or http://host?q → path /
+			qonly := rest.index('?') or { return '/', '' }
+			return '/', rest[qonly + 1..]
+		}
+		t = rest[slash..]
+	}
+	q := t.index('?') or { return t, '' }
+	return t[..q], t[q + 1..]
 }
 
 // url_decode decodes percent-encoding and '+' → space (query form).
@@ -390,16 +445,27 @@ fn json_extract_raw(raw string, key string) ?string {
 
 fn status_text(code int) string {
 	return match code {
+		100 { 'Continue' }
+		101 { 'Switching Protocols' }
 		200 { 'OK' }
 		201 { 'Created' }
 		204 { 'No Content' }
 		400 { 'Bad Request' }
 		404 { 'Not Found' }
 		405 { 'Method Not Allowed' }
+		411 { 'Length Required' }
 		413 { 'Payload Too Large' }
 		500 { 'Internal Server Error' }
+		503 { 'Service Unavailable' }
 		else { 'OK' }
 	}
+}
+
+// http_date formats t as RFC 9110 IMF-fixdate (HTTP-date), always GMT.
+// Pass time.utc() (or any UTC Time) for correct wire values.
+pub fn http_date(t time.Time) string {
+	// ddd, DD MMM YYYY HH:mm:ss GMT
+	return t.custom_format('ddd, DD MMM YYYY HH:mm:ss') + ' GMT'
 }
 
 fn canonicalize_header_name(name string) string {

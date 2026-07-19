@@ -424,6 +424,48 @@ fn test_upgrade_peer_ip_available() {
 	assert hdr.contains('127.0.0.1')
 }
 
+// Regression for #11: `if shared_bool` inside rlock was always true in V, so the
+// accept loop exited immediately when handle_signals was on (default).
+fn test_handle_signals_true_stays_listening() {
+	addr := free_addr()
+	opts := ServerOptions{
+		handle_signals: true
+		idle_timeout:   2 * time.second
+		read_timeout:   2 * time.second
+		write_timeout:  2 * time.second
+	}
+	spawn fn [opts, addr] () {
+		listen_and_serve_full(addr, fn (req http.Request) http.Response {
+			return http.Response.text(200, 'up')
+		}, []UpgradeRoute{}, opts) or {}
+	}()
+	wait_listen()
+
+	// Two sequential requests: server must not have exited after the first accept.
+	for i in 0 .. 2 {
+		mut client := net.dial_tcp(addr) or {
+			assert false, 'dial ${i}: ${err}'
+			return
+		}
+		client.set_read_timeout(2 * time.second)
+		client.write('GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n'.bytes()) or {
+			client.close() or {}
+			assert false, 'write ${i}'
+			return
+		}
+		mut buf := []u8{len: 512}
+		n := client.read(mut buf) or {
+			client.close() or {}
+			assert false, 'read ${i}: ${err}'
+			return
+		}
+		client.close() or {}
+		body := buf[..n].bytestr()
+		assert body.contains('200'), 'resp ${i}: ${body}'
+		assert body.contains('up'), 'resp ${i}: ${body}'
+	}
+}
+
 fn read_until_double_crlf(mut conn net.TcpConn) !string {
 	mut buf := []u8{}
 	mut tmp := []u8{len: 1024}

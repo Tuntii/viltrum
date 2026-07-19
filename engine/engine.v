@@ -68,24 +68,42 @@ pub fn listen_and_serve_opt(addr string, handler Handler, opts ServerOptions) ! 
 	listen_and_serve_full(addr, handler, []UpgradeRoute{}, opts)!
 }
 
+// SignalStop is a shared flag for graceful listener shutdown.
+// Note: V's `if shared_bool` inside rlock is unreliable (treats as always true).
+// Always copy the field to a local before branching.
+struct SignalStop {
+mut:
+	stop bool
+}
+
+fn signal_stop_set(shared s SignalStop) {
+	lock s {
+		s.stop = true
+	}
+}
+
+fn signal_stop_get(shared s SignalStop) bool {
+	mut v := false
+	rlock s {
+		v = s.stop
+	}
+	return v
+}
+
 // listen_and_serve_full is the full server entry: HTTP handler + optional upgrade routes.
 pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRoute, opts ServerOptions) ! {
 	mut listener := net.listen_tcp(.ip, addr)!
-	shared stopping := false
+	shared stopping := SignalStop{}
 	mut active := &ActiveConns{}
 
 	if opts.handle_signals {
 		os.signal_opt(.int, fn [shared stopping, mut listener] () {
-			lock stopping {
-				stopping = true
-			}
+			signal_stop_set(shared stopping)
 			eprintln('[viltrum] shutting down (SIGINT)')
 			listener.close() or {}
 		}) or {}
 		os.signal_opt(.term, fn [shared stopping, mut listener] () {
-			lock stopping {
-				stopping = true
-			}
+			signal_stop_set(shared stopping)
 			eprintln('[viltrum] shutting down (SIGTERM)')
 			listener.close() or {}
 		}) or {}
@@ -96,22 +114,13 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 	}
 	eprintln('[viltrum] listening on http://${addr}')
 	for {
-		if opts.handle_signals {
-			rlock stopping {
-				if stopping {
-					break
-				}
-			}
+		// handle_signals: poll stop flag without using `if shared_bool` (V pitfall).
+		if opts.handle_signals && signal_stop_get(shared stopping) {
+			break
 		}
 		mut conn := listener.accept() or {
-			if opts.handle_signals {
-				mut stop := false
-				rlock stopping {
-					stop = stopping
-				}
-				if stop {
-					break
-				}
+			if opts.handle_signals && signal_stop_get(shared stopping) {
+				break
 			}
 			msg := err.msg().to_lower()
 			if msg.contains('closed') || msg.contains('invalid') || msg.contains('bad file') {

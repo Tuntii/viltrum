@@ -1,53 +1,100 @@
 #!/usr/bin/env bash
-# Honest throughput smoke via oha (or curl fallback).
+# Honest throughput smoke via oha. Prints results; does not claim lab numbers.
 set -euo pipefail
-export PATH="${HOME}/.local/bin:${PATH}"
+export PATH="${HOME}/.local/bin:/tmp/v:${PATH}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ln -sfn "$ROOT" "${HOME}/.vmodules/viltrum"
+
 ADDR="127.0.0.1:18099"
 BIN="/tmp/viltrum-bench-bin"
+OUT_DIR="/tmp/viltrum-bench"
+mkdir -p "$OUT_DIR"
+
+if ! command -v oha >/dev/null 2>&1; then
+	echo "oha missing; install from https://github.com/hatoo/oha/releases" >&2
+	exit 2
+fi
+if ! command -v v >/dev/null 2>&1; then
+	echo "v not on PATH" >&2
+	exit 2
+fi
 
 cat > /tmp/viltrum-bench-main.v <<'V'
 module main
+
 import viltrum
-fn ok(_ viltrum.Request) viltrum.Response { return viltrum.text(200, 'ok') }
+
+fn ok(_ viltrum.Request) viltrum.Response {
+	return viltrum.text(200, 'ok')
+}
+
+fn echo(req viltrum.Request) viltrum.Response {
+	title := req.json_string('title') or { '' }
+	return viltrum.json(200, '{"t":"${title}"}')
+}
+
 fn main() {
 	mut app := viltrum.new()
-	app.options(viltrum.ServerOptions{ handle_signals: false })
+	app.server_options(viltrum.ServerOptions{
+		handle_signals: false
+	})
 	app.use(viltrum.recover)
 	app.get('/', ok)
+	app.post('/echo', echo)
 	app.listen('127.0.0.1:18099') or { panic(err) }
 }
 V
-v -o "$BIN" /tmp/viltrum-bench-main.v
 
-python3 - <<'PY'
-import os, signal, subprocess, time, pathlib
-env = os.environ.copy()
-env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + env.get("PATH", "")
-subprocess.run(["fuser", "-k", "18099/tcp"], capture_output=True)
-srv = subprocess.Popen([os.environ.get("BIN", "/tmp/viltrum-bench-bin")], start_new_session=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-try:
-    for _ in range(80):
-        if subprocess.run(["curl", "-sf", "http://127.0.0.1:18099/"], capture_output=True).returncode == 0:
-            break
-        time.sleep(0.05)
-    else:
-        raise SystemExit("server failed to start")
-    print("== Viltrum bench ==")
-    if subprocess.run(["bash", "-lc", "command -v oha"], capture_output=True).returncode == 0:
-        p = subprocess.run(["oha", "-n", "10000", "-c", "100", "--no-tui", "http://127.0.0.1:18099/"],
-                           capture_output=True, text=True, env=env)
-        print(p.stdout)
-        pathlib.Path("/tmp/viltrum-bench-out.txt").write_text(p.stdout)
-    else:
-        print("oha missing; install from https://github.com/hatoo/oha/releases")
-        raise SystemExit(2)
-finally:
-    try:
-        os.killpg(srv.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-print("done")
-PY
+echo "== build =="
+# -prod if available; fall back to default
+if v -prod -o "$BIN" /tmp/viltrum-bench-main.v 2>/tmp/viltrum-bench-build.err; then
+	echo "built with -prod → $BIN"
+else
+	echo "(-prod failed, using default build)"
+	v -o "$BIN" /tmp/viltrum-bench-main.v
+fi
+
+fuser -k 18099/tcp 2>/dev/null || true
+"$BIN" >/tmp/viltrum-bench-srv.log 2>&1 &
+SRV_PID=$!
+cleanup() {
+	kill "$SRV_PID" 2>/dev/null || true
+	wait "$SRV_PID" 2>/dev/null || true
+	fuser -k 18099/tcp 2>/dev/null || true
+}
+trap cleanup EXIT
+
+for _ in $(seq 1 100); do
+	if curl -sf "http://${ADDR}/" >/dev/null 2>&1; then
+		break
+	fi
+	sleep 0.05
+done
+curl -sf "http://${ADDR}/" >/dev/null || {
+	echo "server failed to start; log:" >&2
+	cat /tmp/viltrum-bench-srv.log >&2 || true
+	exit 1
+}
+
+echo
+echo "== A) GET /  n=10000 c=100 =="
+oha -n 10000 -c 100 --no-tui "http://${ADDR}/" | tee "$OUT_DIR/a_get_c100.txt"
+
+echo
+echo "== B) GET /  n=10000 c=500 =="
+oha -n 10000 -c 500 --no-tui "http://${ADDR}/" | tee "$OUT_DIR/b_get_c500.txt"
+
+echo
+echo "== C) POST /echo JSON  n=5000 c=100 =="
+oha -n 5000 -c 100 -m POST \
+	-H 'Content-Type: application/json' \
+	-d '{"title":"bench"}' \
+	--no-tui "http://${ADDR}/echo" | tee "$OUT_DIR/c_post_json.txt"
+
+echo
+echo "== D) GET /  n=50000 c=50 (longer) =="
+oha -n 50000 -c 50 --no-tui "http://${ADDR}/" | tee "$OUT_DIR/d_get_long.txt"
+
+echo
+echo "Raw oha output: $OUT_DIR/"
+echo "done"

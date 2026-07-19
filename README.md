@@ -28,7 +28,7 @@ Requires [V](https://github.com/vlang/v) on PATH.
 - Optional `send_date` / `server_header` on responses
 - Zero deps beyond V stdlib
 
-**Bench (honest, local laptop, oha):** ~**27k req/s** plaintext `GET /`. See [benches/RESULTS.md](benches/RESULTS.md).
+**Bench (honest, local laptop, oha, v0.4.0 `-prod`):** ~**36k req/s** plaintext `GET /` (`n=10k` `c=100`). See [benches/RESULTS.md](benches/RESULTS.md).
 
 ## Example
 

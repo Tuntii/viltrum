@@ -29,3 +29,6 @@ vls.log
 .env
 out/
 target/
+
+# Local-only design specs (not shipped in git)
+/docs/local/

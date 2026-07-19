@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1](https://github.com/Tuntii/viltrum/compare/v0.5.0...v0.5.1) (2026-07-19)
+
+### Bug Fixes
+
+* keep accept loop alive when handle_signals is on ([2a3b3dc](https://github.com/Tuntii/viltrum/commit/2a3b3dc6af30a9a4a532cea1704e96b4d00f5745)), closes [#11](https://github.com/Tuntii/viltrum/issues/11)
+
 From **v0.6.0** onward, entries are produced by [semantic-release](docs/releasing.md) from conventional commits on `main`. Earlier versions were written by hand.
 
 ## 0.5.0 — 2026-07-19

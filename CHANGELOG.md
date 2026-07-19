@@ -1,5 +1,7 @@
 # Changelog
 
+From **v0.6.0** onward, entries are produced by [semantic-release](docs/releasing.md) from conventional commits on `main`. Earlier versions were written by hand.
+
 ## 0.5.0 — 2026-07-19
 
 ### WebSocket (`ws://`) — first-party engine

@@ -77,5 +77,7 @@ Viltrum does **not** interpret `X-Forwarded-*` for security decisions. If you bu
 
 ## Related
 
+- Docs index: [README.md](./README.md)
 - Connection lifecycle: [connection.md](./connection.md)
+- WebSocket: [ws.md](./ws.md)
 - Product plan: [../ROADMAP.md](../ROADMAP.md)

@@ -33,3 +33,6 @@ target/
 
 # Local-only design specs (not shipped in git)
 /docs/local/
+
+# Release tooling (Node)
+node_modules/

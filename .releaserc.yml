@@ -1,0 +1,49 @@
+# Semantic Release — conventional commits → version + tag + GitHub release
+# https://semantic-release.gitbook.io/
+branches:
+  - main
+
+tagFormat: "v${version}"
+
+plugins:
+  - - "@semantic-release/commit-analyzer"
+    - preset: conventionalcommits
+      releaseRules:
+        - type: feat
+          release: minor
+        - type: fix
+          release: patch
+        - type: perf
+          release: patch
+        - type: refactor
+          release: patch
+        - type: docs
+          release: false
+        - type: chore
+          release: false
+        - type: test
+          release: false
+        - type: ci
+          release: false
+        - type: build
+          release: false
+        - type: style
+          release: false
+        - breaking: true
+          release: major
+  - - "@semantic-release/release-notes-generator"
+    - preset: conventionalcommits
+  - - "@semantic-release/changelog"
+    - changelogFile: CHANGELOG.md
+      changelogTitle: "# Changelog"
+  - - "@semantic-release/exec"
+    - prepareCmd: "bash scripts/bump-version.sh ${nextRelease.version}"
+  - - "@semantic-release/git"
+    - assets:
+        - CHANGELOG.md
+        - v.mod
+        - package.json
+      message: "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+  - - "@semantic-release/github"
+    - successComment: false
+      failTitle: false

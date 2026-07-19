@@ -96,7 +96,7 @@ Same Conn abstraction as custom `app.upgrade` protocols. Future TLS wraps Conn; 
 
 ## Proxy notes
 
-Reverse proxy must forward `Upgrade` and `Connection` hop-by-hop headers and long-lived connections. See [deploy.md](./deploy.md).
+Reverse proxy must forward `Upgrade` and `Connection` hop-by-hop headers and long-lived connections. See [deploy.md](./deploy.md). Docs index: [README.md](./README.md).
 
 ## Production readiness (honest)
 

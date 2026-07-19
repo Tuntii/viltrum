@@ -1,10 +1,11 @@
 # Examples
 
-Link the module first (from repo root):
+Docs index: [../docs/README.md](../docs/README.md). Link the module first (from repo root):
 
 ```bash
-mkdir -p ~/.vmodules
-ln -sfn "$(pwd)" ~/.vmodules/viltrum
+bash scripts/install.sh
+# or:
+mkdir -p ~/.vmodules && ln -sfn "$(pwd)" ~/.vmodules/viltrum
 ```
 
 ## hello — `:8080`

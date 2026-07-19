@@ -24,6 +24,7 @@ jobs:
           v test http/
           v test router/
           v test engine/
+          v test ws/
 
       - name: Build examples
         run: |
@@ -31,3 +32,4 @@ jobs:
           v -o /tmp/viltrum-rest examples/rest
           v -o /tmp/viltrum-features examples/features
           v -o /tmp/viltrum-upgrade examples/upgrade_echo
+          v -o /tmp/viltrum-ws-echo examples/ws_echo

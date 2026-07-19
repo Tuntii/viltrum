@@ -14,10 +14,11 @@ v run examples/hello
 
 Requires [V](https://github.com/vlang/v) on PATH.
 
-## Features (v0.4)
+## Features (v0.5)
 
 - Own TCP + HTTP/1.1 engine (keep-alive, idle timeout, graceful shutdown)
-- **`app.upgrade` + `Conn`** — connection hijack for custom protocols (WS foundation)
+- **`app.upgrade` + `Conn`** — connection hijack for custom protocols
+- **`app.ws` / first-party WebSocket** — RFC 6455 cleartext `ws://` on the same Conn path (`viltrum.ws`)
 - Router: `:param`, trailing `*wildcard`, slash normalize; HEAD falls back to GET
 - `app.mount` groups + `Mount.use` middleware
 - `viltrum.chain` for route-level middleware
@@ -53,6 +54,24 @@ fn main() {
 }
 ```
 
+## WebSocket (`ws://`)
+
+First-party RFC 6455 server on the same engine as HTTP — not a wrapper.
+
+```v
+app.ws('/ws', fn (mut s viltrum.WsSocket) {
+	for {
+		msg := s.read_message() or { break }
+		if msg.is_text() {
+			s.write_text(msg.text()) or { break }
+		}
+	}
+	s.close_quiet()
+})
+```
+
+Details: [docs/ws.md](./docs/ws.md). Demo: `examples/ws_echo` (`websocat ws://127.0.0.1:8084/ws`).
+
 ## Upgrade (hijack)
 
 ```v
@@ -78,19 +97,23 @@ Details: [docs/upgrade.md](./docs/upgrade.md). Demo: `examples/upgrade_echo`.
 | `examples/rest` | 8081 |
 | `examples/features` | 8082 |
 | `examples/upgrade_echo` | 8083 |
+| `examples/ws_echo` | 8084 |
 
 ```bash
 v test http/
 v test router/
 v test engine/
+v test ws/
 bash benches/run.sh
 ```
 
 ## Status
 
-**v0.4.0** for tools and experiments. Cleartext HTTP/1.1 + connection upgrade; reverse proxy for TLS is fine today. **No WebSocket framing yet** (that is v0.5).
+**v0.5.0** — first-party cleartext WebSocket (`ws://`) on the same Conn path as HTTP. Own engine end to end: TCP → HTTP/1.1 → Conn → WS frames. Reverse proxy for TLS is fine today; in-process TLS / `wss://` is v0.6.
 
-Full plan: **[ROADMAP.md](./ROADMAP.md)**. Next: **WebSocket (`ws://`)**, then **in-process TLS / WSS**.
+**North star:** when people say Viltrum, they mean a first-party engine — performance and ergonomics both non-negotiable.
+
+Full plan: **[ROADMAP.md](./ROADMAP.md)**.
 
 ### Non-goals (standing)
 
@@ -98,12 +121,13 @@ Full plan: **[ROADMAP.md](./ROADMAP.md)**. Next: **WebSocket (`ws://`)**, then *
 - Application platform: sessions, auth providers, templates, ORM
 - Edge TLS terminator / multi-tenant gateway
 - Full RFC surface “for completeness”
+- Trading DX for bench numbers
 
 ### Later
 
 | Track | Status |
 |-------|--------|
-| WebSocket `ws://` | **next** (0.5) — [interest](https://github.com/Tuntii/viltrum/labels/interest%3Awebsocket) |
+| WebSocket `ws://` | **done** (0.5) — [docs/ws.md](./docs/ws.md) |
 | In-process TLS / `wss://` | planned 0.6 — [interest](https://github.com/Tuntii/viltrum/labels/interest%3Atls) |
 | Reverse proxy + cleartext | **first-class forever** — [docs/deploy.md](./docs/deploy.md) |
 
@@ -113,6 +137,7 @@ Full plan: **[ROADMAP.md](./ROADMAP.md)**. Next: **WebSocket (`ws://`)**, then *
 |-----|--------|
 | [docs/connection.md](./docs/connection.md) | Accept → read → handler / upgrade → close |
 | [docs/upgrade.md](./docs/upgrade.md) | Hijack contract, leftover ownership, 101 |
+| [docs/ws.md](./docs/ws.md) | First-party WebSocket API + limits |
 | [docs/deploy.md](./docs/deploy.md) | Caddy/nginx, Host, timeouts |
 | [docs/request-response.md](./docs/request-response.md) | Request/Response, `ctx` |
 | [ROADMAP.md](./ROADMAP.md) | Phases 0.3 → 0.7+ |

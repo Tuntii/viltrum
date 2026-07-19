@@ -45,6 +45,15 @@ printf 'GET /echo HTTP/1.1\r\nHost: localhost\r\n\r\nhello\n' | nc 127.0.0.1 808
 
 See [docs/upgrade.md](../docs/upgrade.md).
 
+## ws_echo — `:8084` first-party WebSocket
+
+```bash
+v run examples/ws_echo
+websocat ws://127.0.0.1:8084/ws
+```
+
+See [docs/ws.md](../docs/ws.md).
+
 ## Server options sketch
 
 ```v

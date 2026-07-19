@@ -1,13 +1,15 @@
 module viltrum
 
 // Viltrum HTTP App facade.
-// v0.4: connection hijack / upgrade on engine.Conn (pre-WS foundation).
+// v0.4: connection hijack / upgrade on engine.Conn.
+// v0.5: first-party WebSocket via app.ws on the same Conn path.
 
 import time
 import viltrum.engine
 import viltrum.http
 import viltrum.router
 import viltrum.staticf
+import viltrum.ws
 
 pub type Request = http.Request
 pub type Response = http.Response
@@ -18,6 +20,12 @@ pub type ServerOptions = engine.ServerOptions
 pub type Conn = engine.Conn
 // UpgradeFn takes over the connection after a matched app.upgrade route.
 pub type UpgradeFn = fn (mut c Conn, req Request)
+// WsSocket is the server-side WebSocket after 101.
+pub type WsSocket = ws.Socket
+// WsHandler runs after a successful WebSocket handshake.
+pub type WsHandler = fn (mut s WsSocket)
+// WsOptions configures limits, auto-pong, subprotocol, origin check.
+pub type WsOptions = ws.Options
 
 pub struct App {
 mut:
@@ -95,6 +103,27 @@ pub fn (mut app App) upgrade(method string, pattern string, handler UpgradeFn) {
 		handler: fn [h] (mut c engine.Conn, req http.Request) {
 			h(mut c, req)
 		}
+	}
+}
+
+// ws registers a cleartext WebSocket route (RFC 6455) on GET + pattern.
+// Handshake, framing, and limits live in viltrum.ws; built on app.upgrade.
+// See docs/ws.md.
+pub fn (mut app App) ws(pattern string, handler WsHandler) {
+	app.ws_opts(pattern, ws.Options{}, handler)
+}
+
+// ws_opts is ws with explicit Options (message limits, subprotocol, origin check).
+pub fn (mut app App) ws_opts(pattern string, opts WsOptions, handler WsHandler) {
+	h := handler
+	// Adapt viltrum.WsHandler → ws.Handler (same shape; V treats module aliases distinctly).
+	up := ws.make_upgrade(opts, fn [h] (mut s ws.Socket) {
+		h(mut s)
+	})
+	app.upgrades << engine.UpgradeRoute{
+		method:  'GET'
+		pattern: pattern
+		handler: up
 	}
 }
 

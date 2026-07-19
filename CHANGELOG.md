@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-07-19
+
+### WebSocket (`ws://`) — first-party engine
+
+- New module `viltrum.ws`: RFC 6455 server framing on `engine.Conn` (not a third-party wrapper)
+- `app.ws(pattern, handler)` / `app.ws_opts(pattern, opts, handler)` — handshake + `WsSocket` loop
+- Handshake: `Upgrade: websocket`, version 13, `Sec-WebSocket-Accept` (RFC golden vector tested)
+- Frames: text, binary, close, ping, pong; client mask required; server unmasked
+- Fragmented data rejected (close 1002); message/frame size limits (default 1 MiB)
+- Auto-pong (default on); optional `subprotocol` echo; optional `check_origin`
+- Example: `examples/ws_echo` · Docs: `docs/ws.md`
+- Tests: `v test ws/`
+
+North star: performance and ergonomics stay non-negotiable; WS sits on the same Conn story as HTTP upgrade. `wss://` is v0.6.
 
 ## 0.4.0 — 2026-07-19
 

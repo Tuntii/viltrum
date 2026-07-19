@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-07-19 · current release: **v0.4.0**
+Last updated: 2026-07-19 · current release: **v0.5.0**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP accept loop and HTTP/1.1 framing. Not a thin wrapper.
 
@@ -10,30 +10,35 @@ This document is the product plan. Dates are ordered phases, not calendar promis
 
 ## North star
 
-**Own the bytes on the wire for HTTP/1.1 tools and small services**, with a tiny public API, zero third-party deps, honest benches, and an upgrade path to optional TLS and WebSockets without becoming a full application platform.
+**When someone says “Viltrum,” they mean a first-party engine stack:** own TCP accept, own HTTP/1.1, own connection model, own WebSocket framing, later own TLS path — not a wrapper around another framework’s runtime.
+
+Own the bytes on the wire for tools and services. Tiny public API. Zero third-party deps. Honest benches. Optional `https://` / `wss://` on the **same** Conn story. Never become a full application platform (sessions, ORM, templates).
 
 Success looks like:
 
 - Clone → `bash scripts/install.sh` → `v run examples/*` in minutes
+- One mental model from Hello World → mounts → upgrade → `app.ws` → (later) TLS
 - Predictable connection lifecycle (keep-alive, idle, limits, graceful stop)
+- WebSocket that feels native: `app.ws('/path', handler)` on the hijack foundation, not a bolted-on library
+- Performance **and** ergonomics both non-negotiable (see Principles)
 - Docs that state what we will **not** do as clearly as what we do
-- Optional `https://` and `ws://` / `wss://` that sit on the same engine story
 
 ---
 
 ## Principles
 
 1. **Small surface** — every public symbol must earn its place.
-2. **Own engine** — framing and accept loop stay first-party; no silent swap to another stack.
-3. **Honest status** — benches local + method noted; “production” only with evidence.
-4. **Proxy-friendly first** — reverse proxy remains valid forever; in-process TLS is additive, not mandatory.
-5. **Security before checkboxes** — TLS/WSS land only with tests, limits, and clear failure modes.
-6. **No name-drop positioning** — product stands alone in public docs.
-7. **YAGNI between phases** — do not start N+1 while N is half-done.
+2. **Own engine, end to end** — accept loop, HTTP framing, Conn, WS frames, and future TLS wrap stay first-party. No silent swap to another stack. No protocol “helpers” that hide a foreign engine.
+3. **Performance without DX sacrifice** — speed is a goal; ergonomics and scalable DX are **constraints**. Internal fast paths (pools, codec, later reactor) may grow; the public happy path stays short (`new` → routes → `listen` / `ws`). Never ship “only the ugly path is fast” as the product story.
+4. **Honest status** — benches local + method noted; “production” only with evidence.
+5. **Proxy-friendly first** — reverse proxy remains valid forever; in-process TLS is additive, not mandatory.
+6. **Security before checkboxes** — TLS/WSS land only with tests, limits, and clear failure modes.
+7. **No name-drop positioning** — product stands alone in public docs.
+8. **YAGNI between phases** — do not start N+1 while N is half-done.
 
 ---
 
-## Current baseline (v0.4.0) — done
+## Current baseline (v0.5.0) — done
 
 | Area | Status |
 |------|--------|
@@ -44,10 +49,11 @@ Success looks like:
 | Router: method, `:param`, `*wildcard`, slash normalize, HEAD→GET | done |
 | App facade, mount, chain, cors, static, logger, recover | done |
 | **`engine.Conn` + `app.upgrade` hijack** | done (v0.4) |
+| **`app.ws` + `viltrum.ws` RFC 6455** (`ws://`) | done (v0.5) |
 | Minimal JSON field helpers | done |
-| Unit + integration tests (`http/`, `router/`, `engine/`), CI, examples | done |
+| Unit + integration tests (`http/`, `router/`, `engine/`, `ws/`), CI, examples | done |
 
-**Explicitly not yet:** WebSockets, in-process TLS, HTTP/2, full JSON codec, sessions, templates, ORM.
+**Explicitly not yet:** in-process TLS / `wss://`, HTTP/2, full JSON codec, sessions, templates, ORM.
 
 ---
 
@@ -55,8 +61,8 @@ Success looks like:
 
 ```
 v0.3.x  Harden + docs + DX           done
-v0.4    Conn + hijack / upgrade      done  ← you are here
-v0.5    WebSocket (cleartext ws://)  next
+v0.4    Conn + hijack / upgrade      done
+v0.5    WebSocket (cleartext ws://)  done
 v0.6    TLS (https://) then WSS
 v0.7+   Polish, multi-listener, ops  (only if demand)
 ```
@@ -146,30 +152,40 @@ app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
 
 ---
 
-## v0.5 — WebSockets (cleartext `ws://`)
+## v0.5 — WebSockets (cleartext `ws://`) — **done**
 
-**Goal:** Optional, minimal RFC 6455 server enough for tools and demos. **No TLS in this phase.**
+**Goal:** First-party RFC 6455 **server** on the v0.4 Conn/hijack path. Enough for tools, demos, and real small services. **No TLS in this phase.** Same quality bar as HTTP: own framing, limits, tests, ergonomic facade.
+
+**Non-negotiable for this phase (and forever):**
+
+- Own frame codec in-tree (`ws/`) — not a third-party WS package, not a wrapper
+- `app.ws` is one line of app code; advanced opts are opt-in
+- Message size limits always on; no unbounded buffering
+- Performance-minded codec (tight frame parse/write, reusable buffers) without forcing unsafe APIs on handlers
+- Does not regress HTTP path ergonomics or benches class without a labeled dual number
 
 ### In scope
 
-- [ ] Module e.g. `viltrum.ws` (or `websocket/`) — optional import
-- [ ] HTTP Upgrade handshake: `Connection: Upgrade`, `Upgrade: websocket`, `Sec-WebSocket-Version: 13`, `Sec-WebSocket-Key` → `Sec-WebSocket-Accept`
-- [ ] Frame parser/writer: text, binary, close, ping, pong
-- [ ] Client-to-server masking validation; server-to-client unmasked
-- [ ] Fragmentation: either support continuation **or** reject fragmented with close code (document choice; prefer simple reject-first, add later)
-- [ ] Message size limit (`WsOptions.max_message_bytes`)
-- [ ] Close handshake + idle/ping policy (app-level or simple option)
-- [ ] Facade: `app.ws('/path', handler)` built on v0.4 hijack
-- [ ] Example: `examples/ws_echo`
-- [ ] Tests: handshake golden vectors; frame round-trip; oversized message; bad mask
+- [x] Module `viltrum.ws` (`ws/`) — first-party; importable alone or via App facade
+- [x] HTTP Upgrade handshake: `Connection: Upgrade`, `Upgrade: websocket`, `Sec-WebSocket-Version: 13`, `Sec-WebSocket-Key` → `Sec-WebSocket-Accept` (RFC golden vector)
+- [x] Frame parser/writer: text, binary, close, ping, pong
+- [x] Client-to-server masking validation; server-to-client unmasked
+- [x] Fragmentation: **reject** fragmented data with close (document; add multi-frame later only if needed)
+- [x] Message size limit (`ws.Options.max_message_bytes`, default 1 MiB)
+- [x] Close handshake; automatic pong reply to ping (default on)
+- [x] Facade: `app.ws(pattern, handler)` / `app.ws_opts(pattern, opts, handler)` on v0.4 hijack
+- [x] Example: `examples/ws_echo`
+- [x] Docs: `docs/ws.md`
+- [x] Tests: handshake golden vectors; frame round-trip; oversized message; bad mask; unit echo path
 
 ### Out of scope for v0.5
 
 - permessage-deflate and all extensions
-- Subprotocol negotiation beyond optional echo of a single chosen protocol if trivial
+- Subprotocol negotiation beyond optional single `subprotocol` echo if client offered it
 - Browser full matrix / Socket.IO / rooms / pubsub framework
 - HTTP/2 WebSockets (RFC 8441)
 - `wss://` (→ v0.6)
+- Client-mode WebSocket (server only this phase)
 
 ### Security notes (document in module)
 
@@ -179,8 +195,9 @@ app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
 
 ### Exit
 
-- [ ] `v run examples/ws_echo` + browser or `websocat` smoke
-- [ ] Tag **v0.5.0** with “experimental WS” language OK if needed
+- [x] `v run examples/ws_echo` + raw client / `websocat` smoke
+- [x] `v test ws/` + existing suites green
+- [x] Tag **v0.5.0** (changelog + README status)
 
 ---
 
@@ -254,8 +271,8 @@ Unless this file is explicitly revised:
 1. ~~README + non-goals link + interest issues~~ **done**
 2. ~~v0.3.x correctness (chunked reject, HEAD, Expect, tests)~~ **done**
 3. ~~v0.4 conn + hijack + tests + `docs/upgrade.md`~~ **done**
-4. v0.5 `ws` echo + limits + tests ← **next**
-5. v0.6a TLS spike (48h max): stdlib fit? go / no-go
+4. ~~v0.5 `ws` echo + limits + tests + tag~~ **done**
+5. v0.6a TLS spike (48h max): stdlib fit? go / no-go ← **next**
 6. v0.6a HTTPS listen + example
 7. v0.6b WSS example (should be thin)
 

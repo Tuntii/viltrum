@@ -21,7 +21,7 @@ app.listen('127.0.0.1:8080')!
 | **Host** | Forward the original host (`Host` / `X-Forwarded-Host` as you prefer). Viltrum requires `Host` on HTTP/1.1 by default. |
 | **Timeouts** | Proxy idle/read timeouts should be ≥ app `idle_timeout` / `read_timeout` (defaults 60s / 30s) or intentionally shorter if you want the proxy to cut first. |
 | **Body size** | Proxy `client_max_body_size` (or equivalent) should match or sit under `max_body_bytes` (default 1 MiB) so errors are consistent. |
-| **WebSockets (later)** | When v0.5 lands, proxy must allow Upgrade / Connection hop-by-hop headers. Not applicable to 0.3.x. |
+| **WebSockets (`ws://`)** | Proxy must allow `Upgrade` / `Connection` hop-by-hop headers and long-lived connections. See [ws.md](./ws.md). |
 | **HTTP/2 at edge** | Fine. Proxy terminates H2 and talks HTTP/1.1 to Viltrum. |
 
 ## Caddy (sketch)
@@ -33,6 +33,8 @@ example.com {
 ```
 
 ## nginx (sketch)
+
+HTTP only:
 
 ```nginx
 server {
@@ -47,6 +49,19 @@ server {
 		proxy_set_header X-Forwarded-Proto $scheme;
 		proxy_read_timeout 60s;
 	}
+}
+```
+
+WebSocket path (same upstream; hop-by-hop upgrade headers required):
+
+```nginx
+location /ws {
+	proxy_pass http://127.0.0.1:8080;
+	proxy_http_version 1.1;
+	proxy_set_header Host $host;
+	proxy_set_header Upgrade $http_upgrade;
+	proxy_set_header Connection "upgrade";
+	proxy_read_timeout 3600s;
 }
 ```
 

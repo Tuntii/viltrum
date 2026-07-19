@@ -2,7 +2,7 @@
 
 How Viltrum leaves pure HTTP request/response and hands the byte stream to your code.
 
-This is the foundation for **WebSocket (`ws://`, v0.5)** and later **TLS-wrapped streams**. There is still **no** WebSocket framing module in 0.4.
+This is the foundation for **WebSocket (`ws://`)** ([ws.md](./ws.md)) and later **TLS-wrapped streams**.
 
 ---
 
@@ -154,10 +154,10 @@ This is intentional for v0.4 simplicity. A future “drain” mode may track and
 
 ## Non-goals (v0.4)
 
-- WebSocket framing / `app.ws`
+- ~~WebSocket framing / `app.ws`~~ → see [ws.md](./ws.md) (v0.5 on main)
 - TLS / WSS
 - Middleware chain on upgrade routes
 - Multiple hijack APIs
 - HTTP/2 connect/upgrade
 
-Next: **v0.5** builds `ws://` on this exact `app.upgrade` + `Conn` contract.
+**v0.5** builds `ws://` on this exact `app.upgrade` + `Conn` contract — see [ws.md](./ws.md).

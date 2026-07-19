@@ -197,7 +197,7 @@ app.upgrade('GET', '/echo', fn (mut c viltrum.Conn, req viltrum.Request) {
 
 - [x] `v run examples/ws_echo` + raw client / `websocat` smoke
 - [x] `v test ws/` + existing suites green
-- [x] Tag **v0.5.0** (changelog + README status)
+- [x] Tag **v0.5.0** (https://github.com/Tuntii/viltrum/releases/tag/v0.5.0)
 
 ---
 

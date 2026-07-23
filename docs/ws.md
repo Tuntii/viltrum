@@ -143,4 +143,4 @@ Handlers may call `c.set_read_timeout(...)` (or keep traffic with pings) for lon
 
 Framing is first-party and allocation-conscious (tight encode/decode). Handlers stay ergonomic: no unsafe buffers required.
 
-Laptop echo numbers (v0.5.0 `-prod`, Python client — lower bound): single-conn ~**11k msg/s** (64 B); 32 concurrent ~**23k msg/s** aggregate. See [benches/RESULTS.md](../benches/RESULTS.md).
+Laptop echo numbers (v0.5.x `-prod`, **V** load client): single-conn ~**10k msg/s** (64 B); 32 concurrent ~**37k msg/s** aggregate. Optional Python client is slower multi-conn. See [benches/RESULTS.md](../benches/RESULTS.md) (`bash benches/run_ws.sh`).

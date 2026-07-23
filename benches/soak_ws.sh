@@ -93,11 +93,22 @@ if ! kill -0 "$SRV_PID" 2>/dev/null; then
 	exit 1
 fi
 
-# Quick HTTP health
-if ! curl -fsS "http://127.0.0.1:${PORT}/health" | grep -q ok; then
-	echo "health check failed" >&2
-	exit 1
-fi
+# Quick HTTP health (python; no curl required)
+python3 - <<PY
+import socket, sys
+s = socket.create_connection(("127.0.0.1", int("${PORT}")), timeout=3)
+s.sendall(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+data = b""
+while True:
+    c = s.recv(4096)
+    if not c:
+        break
+    data += c
+s.close()
+if b"200" not in data or b"ok" not in data:
+    sys.stderr.write(f"health check failed: {data[:200]!r}\n")
+    sys.exit(1)
+PY
 
 export PORT CLIENTS MSGS CLOSE_ROUNDS SOAK_SECONDS PAYLOAD_SIZE
 python3 - <<'PY' | tee "$OUT_DIR/ws_soak.json"

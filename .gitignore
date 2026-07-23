@@ -18,6 +18,7 @@ vls.log
 !/benches/run.sh
 !/benches/run_ws.sh
 !/benches/soak_ws.sh
+!/benches/ws_load_client.v
 !/benches/RESULTS.md
 
 # OS / IDE

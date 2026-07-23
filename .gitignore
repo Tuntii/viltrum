@@ -20,6 +20,7 @@ vls.log
 !/benches/soak_ws.sh
 !/benches/ws_load_client.v
 !/benches/RESULTS.md
+!/benches/HTTP_PROFILE.md
 
 # OS / IDE
 .DS_Store

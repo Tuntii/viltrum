@@ -17,6 +17,7 @@ vls.log
 !/benches/.gitkeep
 !/benches/run.sh
 !/benches/run_ws.sh
+!/benches/soak_ws.sh
 !/benches/RESULTS.md
 
 # OS / IDE

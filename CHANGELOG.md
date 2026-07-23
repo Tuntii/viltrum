@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.1](https://github.com/Tuntii/viltrum/compare/v0.6.0...v0.6.1) (2026-07-23)
+
+### Performance Improvements
+
+* **http:** reuse read scratch and cheaper CL/TE scan ([#9](https://github.com/Tuntii/viltrum/issues/9)) ([34c2a13](https://github.com/Tuntii/viltrum/commit/34c2a134652a68e58a5f33ad53146974dbd3184d))
+
 ## [0.6.0](https://github.com/Tuntii/viltrum/compare/v0.5.2...v0.6.0) (2026-07-23)
 
 ### Features

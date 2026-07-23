@@ -33,3 +33,10 @@ jobs:
           v -o /tmp/viltrum-features examples/features
           v -o /tmp/viltrum-upgrade examples/upgrade_echo
           v -o /tmp/viltrum-ws-echo examples/ws_echo
+
+      - name: Build WS load client
+        run: v -o /tmp/viltrum-ws-load benches/ws_load_client.v
+
+      - name: WS soak / close-storm (short)
+        run: |
+          CLIENTS=8 MSGS=50 CLOSE_ROUNDS=50 bash benches/soak_ws.sh

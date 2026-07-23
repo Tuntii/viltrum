@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# WebSocket echo throughput (Python client). Honest laptop numbers; not TechEmpower.
+# WebSocket echo throughput. Headline path uses first-party V client (issue #7).
+# Optional: CLIENT=python for legacy Python smoke. Honest laptop numbers; not TechEmpower.
 set -euo pipefail
 export PATH="${HOME}/.local/bin:/tmp/v:${PATH}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -7,15 +8,13 @@ ln -sfn "$ROOT" "${HOME}/.vmodules/viltrum"
 
 PORT=18085
 BIN="/tmp/viltrum-ws-bench-bin"
+CLIENT_BIN="/tmp/viltrum-ws-load-client"
 OUT_DIR="/tmp/viltrum-bench"
+CLIENT="${CLIENT:-v}" # v | python
 mkdir -p "$OUT_DIR"
 
 if ! command -v v >/dev/null 2>&1; then
 	echo "v not on PATH" >&2
-	exit 2
-fi
-if ! command -v python3 >/dev/null 2>&1; then
-	echo "python3 required for WS client" >&2
 	exit 2
 fi
 
@@ -49,11 +48,12 @@ fn main() {
 }
 V
 
-echo "== build WS echo (-prod) =="
+echo "== build WS echo server (-prod) =="
 if v -prod -o "$BIN" /tmp/viltrum-ws-bench-main.v 2>/tmp/viltrum-ws-bench-build.err; then
 	echo "built with -prod → $BIN"
 else
 	echo "(-prod failed, using default build)"
+	cat /tmp/viltrum-ws-bench-build.err >&2 || true
 	v -o "$BIN" /tmp/viltrum-ws-bench-main.v
 fi
 
@@ -74,7 +74,13 @@ if ! kill -0 "$SRV_PID" 2>/dev/null; then
 	exit 1
 fi
 
-python3 - <<'PY' | tee "$OUT_DIR/ws_results.json"
+if [ "$CLIENT" = "python" ]; then
+	if ! command -v python3 >/dev/null 2>&1; then
+		echo "python3 required for CLIENT=python" >&2
+		exit 2
+	fi
+	echo "== WS load (Python client, optional smoke) =="
+	python3 - <<'PY' | tee "$OUT_DIR/ws_results.json"
 import base64, json, os, socket, struct, time, concurrent.futures
 
 PORT = 18085
@@ -148,7 +154,7 @@ def worker(n_msgs, payload):
 		pass
 	return ok, dt
 
-out = {}
+out = {"client": "python"}
 payload64 = b"x" * 64
 worker(100, payload64)  # warm
 
@@ -194,7 +200,19 @@ out["D_single_5k_1KB"] = {
 
 print(json.dumps(out, indent=2))
 PY
+else
+	echo "== build V WS load client (-prod) =="
+	if v -prod -o "$CLIENT_BIN" "$ROOT/benches/ws_load_client.v" 2>/tmp/viltrum-ws-client-build.err; then
+		echo "client built with -prod → $CLIENT_BIN"
+	else
+		echo "(-prod client failed, default build)"
+		cat /tmp/viltrum-ws-client-build.err >&2 || true
+		v -o "$CLIENT_BIN" "$ROOT/benches/ws_load_client.v"
+	fi
+	echo "== WS load (V client, headline) =="
+	"$CLIENT_BIN" "127.0.0.1:${PORT}" | tee "$OUT_DIR/ws_results.json"
+fi
 
 echo
 echo "Raw JSON: $OUT_DIR/ws_results.json"
-echo "done"
+echo "client=$CLIENT done"

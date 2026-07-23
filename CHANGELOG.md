@@ -16,10 +16,13 @@ From **v0.6.0** onward, entries are produced by [semantic-release](docs/releasin
 - Opt-in UTF-8 validation on text frames: `WsOptions{ validate_utf8: true }` closes with **1007** on invalid sequences; default remains off for compat (#8)
 - Soak / close-storm harness: `bash benches/soak_ws.sh` (multi-conn echo + rapid open/close; optional `SOAK_SECONDS`) (#5)
 - **Fix:** `WsSocket` holds `Conn` by reference (was a copy). Closing the socket then returning to the engine double-closed the TCP fd and raced new accepts under close-storm load
+- Soak health check no longer requires `curl` (python sockets); CI runs a short soak + builds the V load client
 
 ### Performance
 
 - WS server write path reuses an internal encode scratch buffer (`encode_server_into`) — public `write_text` / `write_binary` / `write_message` unchanged (#6)
+- First-party V WS load client: `benches/ws_load_client.v`; `run_ws.sh` defaults to it (`CLIENT=python` keeps optional smoke) (#7)
+- WS headline re-baseline (V client): multi-conn aggregate ~**30–40k msg/s** on developer laptop (method noted in `benches/RESULTS.md`)
 
 ## 0.5.0 — 2026-07-19
 

@@ -29,6 +29,7 @@ From **v0.6.0** onward, entries are produced by [semantic-release](docs/releasin
 - WS server write path reuses an internal encode scratch buffer (`encode_server_into`) — public `write_text` / `write_binary` / `write_message` unchanged (#6)
 - First-party V WS load client: `benches/ws_load_client.v`; `run_ws.sh` defaults to it (`CLIENT=python` keeps optional smoke) (#7)
 - WS headline re-baseline (V client): multi-conn aggregate ~**30–40k msg/s** on developer laptop (method noted in `benches/RESULTS.md`)
+- HTTP accept/read/write profile note (`benches/HTTP_PROFILE.md`) plus two micro-opts (#9): reuse `read_message` scratch `tmp` across keep-alive requests; engine Content-Length / Transfer-Encoding pre-scan is a byte-level field walk (no full-header `bytestr`+`split`+`to_lower`). No public API change; `RESULTS.md` unchanged (no oha re-run; expected win below the ~10% material bar without measurement)
 
 ## 0.5.0 — 2026-07-19
 

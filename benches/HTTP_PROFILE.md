@@ -96,6 +96,8 @@ Out of library control, but common costs:
 
 Severity = impact on **steady keep-alive** request cost in this codebase (not absolute wall time).
 
+Note: rows for per-message `tmp` and engine CL/TE string scans describe the pre-#9 path; both were addressed in **Decision** below (tmp reuse + `header_value_ci`).
+
 | Step | Cost class | Severity | GET `/` | POST small JSON |
 |------|------------|----------|---------|-----------------|
 | `accept` + `spawn` | syscall / runtime | low* | once per TCP, amortized by keep-alive | same |

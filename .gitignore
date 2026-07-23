@@ -38,3 +38,6 @@ target/
 
 # Release tooling (Node)
 node_modules/
+
+# SDD worktrees
+.worktrees/

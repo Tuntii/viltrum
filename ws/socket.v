@@ -2,6 +2,7 @@ module ws
 
 // Socket is a server-side WebSocket on an engine.Conn after a successful 101.
 
+import encoding.utf8
 import viltrum.engine
 import viltrum.http
 
@@ -25,6 +26,9 @@ pub:
 	// check_origin: if set, Origin must pass; missing Origin fails when set.
 	// Use carefully for browser clients; leave unset for tools/non-browser.
 	check_origin OriginCheck = unsafe { nil }
+	// validate_utf8: when true, text payloads must be valid UTF-8 or the socket
+	// is closed with 1007 (RFC 6455). Default false (compat); opt in for strict.
+	validate_utf8 bool
 }
 
 pub struct Message {
@@ -47,26 +51,31 @@ pub fn (m &Message) is_binary() bool {
 
 pub struct Socket {
 mut:
-	conn   engine.Conn
+	// Reference (not a copy): closing must set closed on the same Conn the
+	// engine holds, or handle_conn double-closes the fd and races new accepts.
+	conn   &engine.Conn = unsafe { nil }
 	opts   Options
 	closed bool
 	// peer_close_code set when a close frame is received
 	peer_close_code   u16
 	peer_close_reason string
+	// write_scratch reuses frame encode buffers across writes (internal).
+	write_scratch []u8
 }
 
-// wrap takes ownership of the upgraded Conn.
+// wrap takes ownership of the upgraded Conn (by reference).
 pub fn Socket.wrap(mut conn engine.Conn, opts Options) Socket {
 	max_msg := if opts.max_message_bytes <= 0 { 1 << 20 } else { opts.max_message_bytes }
 	max_fr := if opts.max_frame_bytes <= 0 { max_msg } else { opts.max_frame_bytes }
 	return Socket{
-		conn: conn
+		conn: &conn
 		opts: Options{
 			max_message_bytes: max_msg
 			max_frame_bytes:   max_fr
 			auto_pong:         opts.auto_pong
 			subprotocol:       opts.subprotocol
 			check_origin:      opts.check_origin
+			validate_utf8:     opts.validate_utf8
 		}
 		closed: false
 	}
@@ -101,8 +110,8 @@ pub fn (mut s Socket) write_message(opcode Opcode, data []u8) ! {
 	if data.len > s.opts.max_message_bytes {
 		return error('message exceeds max_message_bytes')
 	}
-	frame := encode_server(true, opcode, data)
-	s.conn.write_all(frame)!
+	encode_server_into(mut s.write_scratch, true, opcode, data)
+	s.conn.write_all(s.write_scratch)!
 }
 
 // ping sends a ping control frame (payload ≤ 125 bytes).
@@ -125,8 +134,8 @@ fn (mut s Socket) write_control(opcode Opcode, payload []u8) ! {
 	if s.closed {
 		return error('ws closed')
 	}
-	frame := encode_server(true, opcode, payload)
-	s.conn.write_all(frame)!
+	encode_server_into(mut s.write_scratch, true, opcode, payload)
+	s.conn.write_all(s.write_scratch)!
 }
 
 // close sends a close frame (code + reason) and marks the socket closed.
@@ -139,8 +148,8 @@ pub fn (mut s Socket) close(code u16, reason string) ! {
 	if payload.len > 125 {
 		return error('close reason too long')
 	}
-	frame := encode_server(true, .close, payload)
-	s.conn.write_all(frame) or {
+	encode_server_into(mut s.write_scratch, true, .close, payload)
+	s.conn.write_all(s.write_scratch) or {
 		s.closed = true
 		s.conn.close() or {}
 		return err
@@ -181,6 +190,12 @@ pub fn (mut s Socket) read_message() !Message {
 					s.close(1009, 'message too big') or {}
 					return error('message too big')
 				}
+				if frame.opcode == .text && s.opts.validate_utf8 {
+					if !payload_is_valid_utf8(frame.payload) {
+						s.close(1007, 'invalid utf-8') or {}
+						return error('invalid utf-8')
+					}
+				}
 				return Message{
 					opcode: frame.opcode
 					data:   frame.payload
@@ -218,8 +233,8 @@ fn (mut s Socket) handle_control(frame Frame) ! {
 				// use peer code if valid range, else 1000
 				echo_code := if code >= 1000 && code < 5000 { code } else { u16(1000) }
 				payload := close_payload(echo_code, '')
-				frame_out := encode_server(true, .close, payload)
-				s.conn.write_all(frame_out) or {}
+				encode_server_into(mut s.write_scratch, true, .close, payload)
+				s.conn.write_all(s.write_scratch) or {}
 				s.closed = true
 				s.conn.close() or {}
 			}
@@ -341,4 +356,11 @@ fn write_http_err(mut c engine.Conn, status int, msg string) {
 	r.set_connection_close()
 	c.write_all(r.to_bytes()) or {}
 	c.close() or {}
+}
+
+fn payload_is_valid_utf8(data []u8) bool {
+	if data.len == 0 {
+		return true
+	}
+	return utf8.validate(unsafe { &data[0] }, data.len)
 }

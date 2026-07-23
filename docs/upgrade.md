@@ -107,9 +107,11 @@ All new non-HTTP protocols should use `Conn`, not `net.TcpConn` directly:
 |--------|--------|
 | `max_conns` | Caps concurrent accepted connections (HTTP + upgrade). Excess accepts get **503** + `Connection: close`, then TCP close. |
 | `read_header_timeout` | Header assembly phase; `0` → use `read_timeout`. |
-| `read_timeout` / `write_timeout` | Applied on the `Conn` before your handler runs; change them in-handler if needed. |
-| `idle_timeout` | Only for HTTP keep-alive wait **before** the next request. After hijack, idle is your problem. |
+| `read_timeout` / `write_timeout` | HTTP active phases; after hijack, **read** becomes `max(read_timeout, idle_timeout)` and **write** stays `write_timeout`. Change either on `Conn` inside the handler if needed. |
+| `idle_timeout` | HTTP keep-alive wait **before** the next request. After hijack it also feeds the post-upgrade read deadline via `max(read_timeout, idle_timeout)`. |
 | `send_date` / `server_header` | Apply to normal HTTP responses only — **not** to upgrade-written bytes. |
+
+Quiet long-lived protocols (including `app.ws`) therefore inherit a deadline of at least `idle_timeout` under default options. This is intentional: no silent infinite hang, but not the short 30s HTTP request timeout alone. Full story: [connection.md](./connection.md), [ws.md](./ws.md).
 
 ### `Conn.peer_ip`
 

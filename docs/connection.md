@@ -52,6 +52,17 @@ Response is serialized as HTTP/1.1 status line + headers + body.
 
 If keep-alive: loop waits for the next request with `idle_timeout`. On timeout, EOF, protocol error, or close decision, the conn is closed.
 
+### After upgrade / WebSocket
+
+When a route matches `app.upgrade` or `app.ws`, the HTTP keep-alive loop **stops**. The hijacked `Conn` gets:
+
+| Deadline | Value |
+|----------|--------|
+| Read | **`max(read_timeout, idle_timeout)`** |
+| Write | `write_timeout` |
+
+Rationale: HTTP `read_timeout` is sized for a single request (default 30s). Quiet WebSocket peers that only send occasional messages would otherwise be cut mid-session. Using the larger of the two keeps long-lived streams workable under default options (typically **60s** quiet) without an infinite hang. Override in the handler with `set_read_timeout` if you need more; send application pings for multi-hour idle. See [ws.md](./ws.md) and [upgrade.md](./upgrade.md).
+
 ## Expect: 100-continue
 
 If the request includes `Expect: 100-continue` and a non-negative `Content-Length`, the engine sends a minimal **`100 Continue`** interim response before finishing the body read (when the body is not already fully buffered). Other `Expect` values are ignored (not treated as errors).

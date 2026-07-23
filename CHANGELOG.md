@@ -8,6 +8,19 @@
 
 From **v0.6.0** onward, entries are produced by [semantic-release](docs/releasing.md) from conventional commits on `main`. Earlier versions were written by hand.
 
+## Unreleased (0.5.x)
+
+### Hardening
+
+- After `app.upgrade` / `app.ws`, Conn read deadline is `max(read_timeout, idle_timeout)` so quiet long-lived streams survive past the short HTTP request timeout (#4)
+- Opt-in UTF-8 validation on text frames: `WsOptions{ validate_utf8: true }` closes with **1007** on invalid sequences; default remains off for compat (#8)
+- Soak / close-storm harness: `bash benches/soak_ws.sh` (multi-conn echo + rapid open/close; optional `SOAK_SECONDS`) (#5)
+- **Fix:** `WsSocket` holds `Conn` by reference (was a copy). Closing the socket then returning to the engine double-closed the TCP fd and raced new accepts under close-storm load
+
+### Performance
+
+- WS server write path reuses an internal encode scratch buffer (`encode_server_into`) — public `write_text` / `write_binary` / `write_message` unchanged (#6)
+
 ## 0.5.0 — 2026-07-19
 
 ### WebSocket (`ws://`) — first-party engine

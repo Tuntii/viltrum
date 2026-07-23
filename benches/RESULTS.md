@@ -14,7 +14,9 @@ Reproduce:
 
 ```bash
 bash benches/run.sh      # HTTP
-bash benches/run_ws.sh   # WebSocket echo
+bash benches/run_ws.sh   # WebSocket echo (throughput, Python client)
+bash benches/soak_ws.sh  # WS multi-conn echo + close-storm (correctness)
+# SOAK_SECONDS=120 bash benches/soak_ws.sh   # optional longer local soak
 ```
 
 ---
@@ -65,6 +67,12 @@ Server: `app.ws` echo text/binary. Client: Python threads, masked frames, TCP_NO
 Correctness smoke (same binary): handshake 101 + Accept, text/binary echo, auto-pong, unmasked client → close **1002**.
 
 **Headline (honest):** multi-conn echo sits in the **~15–25k msg/s** band on this laptop for small payloads; single-conn ~**11k msg/s**. Client is Python (not a C loadgen), so these are **lower bounds** on server capacity, not a pure server-only ceiling.
+
+### WS write-path notes (0.5.x)
+
+- Server frames encode into a **reused per-socket scratch buffer** (`encode_server_into`); public write APIs unchanged.
+- Close-storm correctness is covered by `bash benches/soak_ws.sh` (was previously racing: `Socket` copied `Conn` and double-closed fds).
+- Throughput re-measure with `run_ws.sh` still uses a Python client; treat numbers as lower bounds until a first-party load client (#7).
 
 ---
 

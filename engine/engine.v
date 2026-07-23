@@ -232,7 +232,11 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 			leftover = []u8{}
 			hijacked = true
 			mut c := Conn.wrap(mut conn, buffered)
-			c.set_read_timeout(opts.read_timeout)
+			// Long-lived streams (WS, custom protocols): use the longer of
+			// read_timeout and idle_timeout so quiet peers are not cut by the
+			// short HTTP request timeout alone. Handlers may still call
+			// set_read_timeout themselves.
+			c.set_read_timeout(upgrade_read_timeout(opts))
 			c.set_write_timeout(opts.write_timeout)
 			hit.handler(mut c, rq)
 			if !c.is_closed() {
@@ -291,6 +295,17 @@ fn write_tcp(mut conn net.TcpConn, data []u8) ! {
 fn header_timeout(opts ServerOptions) time.Duration {
 	if opts.read_header_timeout > 0 {
 		return opts.read_header_timeout
+	}
+	return opts.read_timeout
+}
+
+// upgrade_read_timeout is applied on Conn after hijack (app.upgrade / app.ws).
+// HTTP keep-alive uses idle_timeout only between requests; after upgrade there
+// is no keep-alive loop, so we take max(read_timeout, idle_timeout) as a
+// sensible default for long-lived streams without silent infinite hang.
+fn upgrade_read_timeout(opts ServerOptions) time.Duration {
+	if opts.idle_timeout > opts.read_timeout {
+		return opts.idle_timeout
 	}
 	return opts.read_timeout
 }

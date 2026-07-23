@@ -24,7 +24,7 @@ pub type UpgradeFn = fn (mut c Conn, req Request)
 pub type WsSocket = ws.Socket
 // WsHandler runs after a successful WebSocket handshake.
 pub type WsHandler = fn (mut s WsSocket)
-// WsOptions configures limits, auto-pong, subprotocol, origin check.
+// WsOptions configures limits, auto-pong, subprotocol, origin check, UTF-8.
 pub type WsOptions = ws.Options
 
 pub struct App {

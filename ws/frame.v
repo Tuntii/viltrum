@@ -25,6 +25,14 @@ pub:
 
 // encode_server builds an unmasked frame (server → client). Single allocation.
 pub fn encode_server(fin bool, opcode Opcode, payload []u8) []u8 {
+	mut out := []u8{}
+	encode_server_into(mut out, fin, opcode, payload)
+	return out
+}
+
+// encode_server_into writes an unmasked frame into `out`, reusing capacity when possible.
+// After return, `out` length is exactly the encoded frame size (for write_all).
+pub fn encode_server_into(mut out []u8, fin bool, opcode Opcode, payload []u8) {
 	plen := payload.len
 	mut header_len := 2
 	if plen >= 126 && plen <= 65535 {
@@ -32,7 +40,14 @@ pub fn encode_server(fin bool, opcode Opcode, payload []u8) []u8 {
 	} else if plen > 65535 {
 		header_len = 10
 	}
-	mut out := []u8{len: header_len + plen}
+	need := header_len + plen
+	if out.cap < need {
+		out = []u8{len: need}
+	} else {
+		unsafe {
+			out.len = need
+		}
+	}
 	mut b0 := u8(opcode) & 0x0f
 	if fin {
 		b0 |= 0x80
@@ -67,7 +82,6 @@ pub fn encode_server(fin bool, opcode Opcode, payload []u8) []u8 {
 			out[10 + i] = payload[i]
 		}
 	}
-	return out
 }
 
 // encode_client builds a masked frame (tests / rare client role).

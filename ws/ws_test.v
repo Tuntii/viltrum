@@ -147,3 +147,63 @@ fn test_pick_subprotocol() {
 	assert pick_subprotocol(req, 'chat') == 'chat'
 	assert pick_subprotocol(req, 'nope') == ''
 }
+
+fn test_utf8_valid_multibyte_ok() {
+	// "héllo" with multi-byte é (U+00E9 = C3 A9)
+	payload := [u8(`h`), 0xc3, 0xa9, `l`, `l`, `o`]
+	mask := [u8(1), 2, 3, 4]!
+	raw := encode_client(true, .text, payload, mask)
+	mut c := engine.Conn.new_buffered(raw)
+	mut s := Socket.wrap(mut c, Options{
+		validate_utf8: true
+	})
+	msg := s.read_message() or { panic(err) }
+	assert msg.is_text()
+	assert msg.data.len == 6
+}
+
+fn test_utf8_invalid_closes_1007() {
+	// Invalid continuation byte after lead
+	payload := [u8(0xc3), 0x28] // not valid UTF-8
+	mask := [u8(9), 8, 7, 6]!
+	raw := encode_client(true, .text, payload, mask)
+	mut c := engine.Conn.new_buffered(raw)
+	mut s := Socket.wrap(mut c, Options{
+		validate_utf8: true
+	})
+	s.read_message() or {
+		assert err.msg().contains('utf-8') || err.msg().contains('closed')
+		return
+	}
+	assert false, 'expected invalid utf-8 rejection'
+}
+
+fn test_utf8_validation_off_by_default() {
+	// Same invalid bytes; default opts pass payload through as "text"
+	payload := [u8(0xff), 0xfe]
+	mask := [u8(1), 1, 1, 1]!
+	raw := encode_client(true, .text, payload, mask)
+	mut c := engine.Conn.new_buffered(raw)
+	mut s := Socket.wrap(mut c, Options{})
+	msg := s.read_message() or { panic(err) }
+	assert msg.is_text()
+	assert msg.data.len == 2
+}
+
+fn test_encode_server_into_reuses_buffer() {
+	mut buf := []u8{cap: 64}
+	payload := 'hello'.bytes()
+	encode_server_into(mut buf, true, .text, payload)
+	assert buf.len == 7
+	assert buf[0] == 0x81
+	assert buf[1] == 5
+	assert buf[2..].bytestr() == 'hello'
+	// Second encode with larger payload should grow; smaller reuses capacity
+	big := 'abcdefghijklmnop'.bytes()
+	encode_server_into(mut buf, true, .text, big)
+	assert buf.len == 18
+	assert buf[2..].bytestr() == 'abcdefghijklmnop'
+	encode_server_into(mut buf, true, .text, 'x'.bytes())
+	assert buf.len == 3
+	assert buf[2] == `x`
+}

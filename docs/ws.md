@@ -55,6 +55,7 @@ app.ws_opts('/ws', WsOptions{
 	max_frame_bytes:   1 << 20
 	auto_pong:         true    // default: reply to ping
 	subprotocol:       'chat'  // echoed only if client offered it
+	// validate_utf8:  true   // opt-in: invalid text → close 1007
 	// check_origin: fn (origin string) bool { return origin == 'https://app.example' }
 }, handler)
 ```
@@ -63,6 +64,7 @@ app.ws_opts('/ws', WsOptions{
 - **Fragmented data frames are rejected** (close **1002**) in v0.5; single-frame messages only.
 - **Client frames must be masked**; unmasked → protocol error.
 - **Origin check is off by default** (tools / non-browser). Set `check_origin` for browsers.
+- **UTF-8 validation is off by default** (compat). Set `validate_utf8: true` for strict RFC 6455 text (close **1007** on invalid sequences). Binary frames are never checked.
 
 ## Handshake (what we require)
 
@@ -109,18 +111,33 @@ Reverse proxy must forward `Upgrade` and `Connection` hop-by-hop headers and lon
 | Do | Don't assume |
 |----|----------------|
 | Put TLS at the reverse proxy until v0.6 | In-process `wss://` |
-| Raise `read_timeout` / `write_timeout` for idle sockets (defaults are HTTP-oriented, often 30s) | Silent “forever idle” without pings |
+| Set `ServerOptions` timeouts for long quiet sessions (see below) | Silent “forever idle” without pings or raised deadlines |
 | Set `check_origin` for browser clients | Origin protection by default |
 | Keep messages under `max_message_bytes` (default 1 MiB) | Unbounded frames |
 | Use single-frame messages | Fragmented frames (rejected with close 1002) |
+| Opt in `validate_utf8: true` when peers must be strict | UTF-8 validation by default |
+
+### Timeouts after `app.ws` / `app.upgrade`
+
+After a successful hijack, the engine applies **`max(read_timeout, idle_timeout)`** as the Conn read deadline (write still uses `write_timeout`). Defaults: `read_timeout` 30s, `idle_timeout` 60s → upgraded sockets wait **60s** of silence before the next read fails.
+
+| Phase | What applies |
+|-------|----------------|
+| HTTP request headers/body | `read_timeout` / `read_header_timeout` |
+| HTTP keep-alive wait for next request | `idle_timeout` |
+| After `app.ws` / `app.upgrade` | read = **max(read_timeout, idle_timeout)**; write = `write_timeout` |
+
+Handlers may call `c.set_read_timeout(...)` (or keep traffic with pings) for longer sessions. Raising both timeouts is the production knob; there is no silent infinite hang by default. Details: [connection.md](./connection.md), [upgrade.md](./upgrade.md).
+
+**Stress / soak:** `bash benches/soak_ws.sh` (CI-friendly defaults; set `SOAK_SECONDS` for longer local runs).
 
 **Known limitations (not bugs of the happy path, but not full RFC completeness):**
 
-- No UTF-8 validation on text payloads (invalid UTF-8 is not auto-closed with 1007)
+- UTF-8 on text is **opt-in** (`validate_utf8`); default still accepts invalid text bytes for compat
 - No permessage-deflate / extensions
 - Close path is best-effort (send close + TCP close; no long half-open drain)
 - One OS thread per connection (same model as HTTP) — fine for thousands of quiet sockets, not a free ticket to millions without tuning
-- Not multi-year production soak-tested; treat as a solid **0.5** server, not a mature edge platform
+- Treat as a solid **0.5** server, not a mature edge platform; use soak harness before large deploys
 
 ## Performance / DX
 

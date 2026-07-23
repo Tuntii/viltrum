@@ -159,3 +159,20 @@ None of this is a correctness bug; it is repeated ownership conversion on a shor
 ## Relation to published benches
 
 `benches/RESULTS.md` already shows this laptop sustains roughly **60–85k req/s** GET `/` (oha, cleartext, logging off). This profile explains **where CPU/alloc work sits** inside that number; it does not re-benchmark. Any micro-opt that lands should only update RESULTS if sustained change is clearly material (plan bar: roughly &gt;10%).
+
+---
+
+## Decision
+
+| | |
+|--|--|
+| **Date** | 2026-07-23 |
+| **Path** | Fix (two micro-opts from recommendation #2 and #4) |
+| **Not done** | Body double-materialization (#1), response serialize rewrite (#3), public API, reactor, HTTP/2 |
+
+**Landed:**
+
+1. **Reuse `tmp` across keep-alive requests** — allocate `[]u8{len: read_chunk_size}` once in `handle_conn` and pass into `read_message` (no per-message scratch alloc).
+2. **Engine CL/TE pre-scan without full stringification** — `content_length_from_headers` / `transfer_encoding_present` use byte-level case-insensitive field scan (`header_value_ci`) instead of `bytestr` + `split` + `to_lower` twice. Reject-before-body and TE+CL conflict behavior unchanged. `expects_100_continue` left as string path (out of scope).
+
+**Tests:** `v test engine/` (incl. new pre-scan unit tests in `conn_test.v`) and `v test http/` — green. Full oha re-run not done this task; `RESULTS.md` not updated (expect alloc/CPU win below the ~10% bar without measurement).

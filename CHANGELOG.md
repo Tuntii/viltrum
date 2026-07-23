@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0](https://github.com/Tuntii/viltrum/compare/v0.5.2...v0.6.0) (2026-07-23)
+
+### Features
+
+* **bench:** first-party V WS load client and CI soak ([fc9f626](https://github.com/Tuntii/viltrum/commit/fc9f6269d3febe6523caa59d3708d27944d74582))
+
 ## [0.5.2](https://github.com/Tuntii/viltrum/compare/v0.5.1...v0.5.2) (2026-07-23)
 
 ### Bug Fixes

@@ -166,6 +166,8 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 	conn.set_write_timeout(opts.write_timeout)
 
 	mut leftover := []u8{}
+	// One read scratch buffer per connection; reused across keep-alive requests.
+	mut tmp := []u8{len: opts.read_chunk_size}
 	mut first := true
 	for {
 		if !first {
@@ -173,7 +175,7 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 		}
 		first = false
 
-		raw := read_message(mut conn, mut leftover, opts) or {
+		raw := read_message(mut conn, mut leftover, mut tmp, opts) or {
 			msg := err.msg()
 			kind := classify_read_error(msg)
 			if kind != 'eof' {
@@ -310,11 +312,10 @@ fn upgrade_read_timeout(opts ServerOptions) time.Duration {
 	return opts.read_timeout
 }
 
-fn read_message(mut conn net.TcpConn, mut leftover []u8, opts ServerOptions) ![]u8 {
+fn read_message(mut conn net.TcpConn, mut leftover []u8, mut tmp []u8, opts ServerOptions) ![]u8 {
 	mut buf := leftover.clone()
 	leftover = []u8{}
 
-	mut tmp := []u8{len: opts.read_chunk_size}
 	mut sent_100 := false
 	mut saw_bytes := buf.len > 0
 	if saw_bytes {
@@ -413,31 +414,19 @@ fn index_of_double_crlf(buf []u8) ?int {
 	return none
 }
 
+// content_length_from_headers scans raw header bytes (request line + fields, no
+// trailing CRLFCRLF) for the first Content-Length field without stringifying the
+// whole block. Case-insensitive name match; value parsed like string.int().
 fn content_length_from_headers(header_bytes []u8) ?int {
-	text := header_bytes.bytestr()
-	lines := text.split('\r\n')
-	for i in 1 .. lines.len {
-		line := lines[i]
-		lower := line.to_lower()
-		if lower.starts_with('content-length:') {
-			val := line[line.index(':') or { 0 } + 1..].trim_space()
-			return val.int()
-		}
-	}
-	return none
+	val := header_value_ci(header_bytes, 'content-length') or { return none }
+	return parse_decimal_bytes(val)
 }
 
+// transfer_encoding_present is true when a Transfer-Encoding field exists with a
+// non-empty value (after OWS trim). Byte-level; no full header stringification.
 fn transfer_encoding_present(header_bytes []u8) bool {
-	text := header_bytes.bytestr()
-	lines := text.split('\r\n')
-	for i in 1 .. lines.len {
-		lower := lines[i].to_lower()
-		if lower.starts_with('transfer-encoding:') {
-			val := lower['transfer-encoding:'.len..].trim_space()
-			return val.len > 0
-		}
-	}
-	return false
+	val := header_value_ci(header_bytes, 'transfer-encoding') or { return false }
+	return val.len > 0
 }
 
 fn expects_100_continue(header_bytes []u8) bool {
@@ -451,4 +440,100 @@ fn expects_100_continue(header_bytes []u8) bool {
 		}
 	}
 	return false
+}
+
+// header_value_ci returns the first header field value whose name matches
+// name_lower (ASCII lower-case, no colon). Skips the request line. Match requires
+// name then ':' with no space between (same as prior starts_with path). Value is
+// trimmed of leading/trailing SP and HTAB only.
+fn header_value_ci(header_bytes []u8, name_lower string) ?[]u8 {
+	nlen := name_lower.len
+	mut i := 0
+	mut line_idx := 0
+	for i <= header_bytes.len {
+		mut j := i
+		for j < header_bytes.len {
+			if j + 1 < header_bytes.len && header_bytes[j] == `\r` && header_bytes[j + 1] == `\n` {
+				break
+			}
+			j++
+		}
+		if line_idx > 0 && j >= i {
+			line_len := j - i
+			if line_len >= nlen + 1 {
+				mut ok := true
+				for k in 0 .. nlen {
+					if ascii_lower(header_bytes[i + k]) != name_lower[k] {
+						ok = false
+						break
+					}
+				}
+				if ok && header_bytes[i + nlen] == `:` {
+					return trim_ows(header_bytes[i + nlen + 1..j])
+				}
+			}
+		}
+		line_idx++
+		if j + 1 < header_bytes.len && header_bytes[j] == `\r` && header_bytes[j + 1] == `\n` {
+			i = j + 2
+			if i > header_bytes.len {
+				break
+			}
+			continue
+		}
+		break
+	}
+	return none
+}
+
+@[inline]
+fn ascii_lower(b u8) u8 {
+	if b >= `A` && b <= `Z` {
+		return b + 32
+	}
+	return b
+}
+
+// trim_ows trims HTTP optional whitespace (SP / HTAB) from both ends.
+fn trim_ows(b []u8) []u8 {
+	mut s := 0
+	mut e := b.len
+	for s < e && (b[s] == ` ` || b[s] == `\t`) {
+		s++
+	}
+	for e > s && (b[e - 1] == ` ` || b[e - 1] == `\t`) {
+		e--
+	}
+	if s == 0 && e == b.len {
+		return b
+	}
+	return b[s..e]
+}
+
+// parse_decimal_bytes mirrors string.int() for optional leading '-' and digits.
+fn parse_decimal_bytes(b []u8) int {
+	if b.len == 0 {
+		return 0
+	}
+	mut i := 0
+	mut neg := false
+	if b[0] == `-` {
+		neg = true
+		i = 1
+	} else if b[0] == `+` {
+		i = 1
+	}
+	mut n := 0
+	for i < b.len {
+		c := b[i]
+		if c < `0` || c > `9` {
+			break
+		}
+		n = n * 10 + int(c - `0`)
+		i++
+	}
+	if neg {
+		return -n
+	}
+	return n
 }

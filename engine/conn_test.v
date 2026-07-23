@@ -115,3 +115,91 @@ fn test_match_upgrade_wrong_method() {
 	}
 	assert false, 'POST should not match GET upgrade'
 }
+
+// --- header pre-scan (byte-level CL / TE; no full stringification) ---
+
+fn test_content_length_byte_scan() {
+	hdr := 'POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5'.bytes()
+	cl := content_length_from_headers(hdr) or {
+		assert false, 'expected Content-Length'
+		return
+	}
+	assert cl == 5
+}
+
+fn test_content_length_case_insensitive_and_ows() {
+	hdr := 'POST / HTTP/1.1\r\nHost: x\r\ncOnTeNt-LeNgTh:  \t12\t '.bytes()
+	cl := content_length_from_headers(hdr) or {
+		assert false, 'expected Content-Length'
+		return
+	}
+	assert cl == 12
+}
+
+fn test_content_length_absent() {
+	hdr := 'GET / HTTP/1.1\r\nHost: x'.bytes()
+	content_length_from_headers(hdr) or {
+		assert true
+		return
+	}
+	assert false, 'expected no Content-Length'
+}
+
+fn test_content_length_negative() {
+	hdr := 'POST / HTTP/1.1\r\nHost: x\r\nContent-Length: -3'.bytes()
+	cl := content_length_from_headers(hdr) or {
+		assert false
+		return
+	}
+	assert cl == -3
+}
+
+fn test_content_length_skips_request_line() {
+	// Path must not be scanned as a header field.
+	hdr := 'GET /Content-Length:%205 HTTP/1.1\r\nHost: x'.bytes()
+	content_length_from_headers(hdr) or {
+		assert true
+		return
+	}
+	assert false, 'request-line must not yield Content-Length'
+}
+
+fn test_transfer_encoding_byte_scan() {
+	hdr := 'POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked'.bytes()
+	assert transfer_encoding_present(hdr) == true
+}
+
+fn test_transfer_encoding_case_insensitive() {
+	hdr := 'POST / HTTP/1.1\r\nHost: x\r\ntRaNsFeR-eNcOdInG: gzip'.bytes()
+	assert transfer_encoding_present(hdr) == true
+}
+
+fn test_transfer_encoding_empty_value_not_present() {
+	hdr := 'POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:   '.bytes()
+	assert transfer_encoding_present(hdr) == false
+}
+
+fn test_transfer_encoding_absent() {
+	hdr := 'POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 0'.bytes()
+	assert transfer_encoding_present(hdr) == false
+}
+
+fn test_te_and_cl_both_detected_for_conflict_path() {
+	// Engine rejects TE+CL when both pre-scans fire; keep that contract.
+	hdr := 'POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 5'.bytes()
+	assert transfer_encoding_present(hdr) == true
+	cl := content_length_from_headers(hdr) or {
+		assert false, 'expected Content-Length beside TE'
+		return
+	}
+	assert cl == 5
+}
+
+fn test_header_value_ci_first_match_wins() {
+	hdr := 'POST / HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 99'.bytes()
+	cl := content_length_from_headers(hdr) or {
+		assert false
+		return
+	}
+	assert cl == 1
+}

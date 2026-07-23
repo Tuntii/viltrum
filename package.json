@@ -2,7 +2,7 @@
   "name": "viltrum",
   "private": true,
   "description": "Release tooling only (V module lives in v.mod)",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "license": "MIT",
   "repository": {
     "type": "git",

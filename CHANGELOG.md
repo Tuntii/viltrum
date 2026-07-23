@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.2](https://github.com/Tuntii/viltrum/compare/v0.5.1...v0.5.2) (2026-07-23)
+
+### Bug Fixes
+
+* **ws:** idle timeouts, UTF-8 opt-in, soak harness, Conn ref ([356a5eb](https://github.com/Tuntii/viltrum/commit/356a5ebb561824ea8b154d1cded4a6c094a11139)), closes [#4](https://github.com/Tuntii/viltrum/issues/4) [#8](https://github.com/Tuntii/viltrum/issues/8) [#5](https://github.com/Tuntii/viltrum/issues/5) [#6](https://github.com/Tuntii/viltrum/issues/6)
+
 ## [0.5.1](https://github.com/Tuntii/viltrum/compare/v0.5.0...v0.5.1) (2026-07-19)
 
 ### Bug Fixes

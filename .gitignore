@@ -40,5 +40,8 @@ target/
 # Release tooling (Node)
 node_modules/
 
+# Superpowers local state (never commit)
+.superpowers/
+
 # SDD worktrees
 .worktrees/

@@ -2,7 +2,7 @@
 
 Viltrum ships a **first-party** RFC 6455 server on the v0.4 Conn / `app.upgrade` path. Not a wrapper around another stack.
 
-**Status:** v0.5.0 (cleartext). `wss://` is v0.6 (TLS + same WS code).
+**Status:** cleartext `ws://` and, with `app.listen_tls`, `wss://` (same WS code over TLS; see [tls.md](./tls.md)).
 
 ## Quick start
 
@@ -24,11 +24,15 @@ fn main() {
 }
 ```
 
-Demo: `examples/ws_echo` (port **8084**).
+Demos: `examples/ws_echo` (port **8084**, cleartext) and `examples/wss_echo` (port **8444**, TLS).
 
 ```bash
 v run examples/ws_echo
 websocat ws://127.0.0.1:8084/ws
+
+bash scripts/dev-cert.sh
+v run examples/wss_echo
+websocat -k wss://127.0.0.1:8444/ws
 ```
 
 ## API

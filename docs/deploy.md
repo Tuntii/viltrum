@@ -1,6 +1,6 @@
 # Deploy (cleartext behind a reverse proxy)
 
-Viltrum speaks **cleartext HTTP/1.1** on TCP. For TLS at the edge, put **Caddy**, **nginx**, or another reverse proxy in front. In-process TLS is planned (roadmap v0.6), not required for production-shaped deploys.
+Viltrum speaks **cleartext HTTP/1.1** on TCP by default. For TLS at the edge, put **Caddy**, **nginx**, or another reverse proxy in front. Optional in-process HTTPS/WSS is available via `app.listen_tls` (see [tls.md](./tls.md)); proxy termination remains recommended for heavy production edge.
 
 ## Recommended shape
 

@@ -1,7 +1,7 @@
 module engine
 
 // TCP accept + HTTP/1.1 framing + upgrade/hijack (v0.4).
-
+// Conn is the single I/O surface for cleartext and TLS (v0.6).
 import net
 import os
 import sync
@@ -26,7 +26,7 @@ pub:
 	send_date bool
 	// server_header if non-empty sets Server when the handler did not. Default empty (omit).
 	server_header string
-	require_host bool = true
+	require_host  bool = true
 	// handle_signals installs SIGINT/SIGTERM shutdown (disable in embedded/bench/tests).
 	handle_signals bool = true
 }
@@ -118,7 +118,7 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 		if opts.handle_signals && signal_stop_get(shared stopping) {
 			break
 		}
-		mut conn := listener.accept() or {
+		mut tcp := listener.accept() or {
 			if opts.handle_signals && signal_stop_get(shared stopping) {
 				break
 			}
@@ -137,18 +137,22 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 				mut busy := http.Response.text(503, 'service unavailable')
 				busy.set_connection_close()
 				apply_response_defaults(mut busy, opts)
-				write_tcp(mut conn, busy.to_bytes()) or {}
-				conn.close() or {}
+				mut busy_c := Conn.wrap(mut tcp, []u8{})
+				busy_c.write_all(busy.to_bytes()) or {}
+				busy_c.close() or {}
 				continue
 			}
 		}
 
-		spawn handle_conn(mut conn, handler, upgrades, opts, active, track)
+		c := Conn.wrap(mut tcp, []u8{})
+		// Pass Conn by value into the worker (ownership of the socket/ssl handle).
+		spawn handle_conn(c, handler, upgrades, opts, active, track)
 	}
 	eprintln('[viltrum] stopped')
 }
 
-fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, track bool) {
+fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, track bool) {
+	mut c := c_in
 	mut hijacked := false
 	defer {
 		if track {
@@ -158,12 +162,12 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 			}
 		}
 		if !hijacked {
-			conn.close() or {}
+			c.close() or {}
 		}
 	}
 
-	conn.set_read_timeout(opts.read_timeout)
-	conn.set_write_timeout(opts.write_timeout)
+	c.set_read_timeout(opts.read_timeout)
+	c.set_write_timeout(opts.write_timeout)
 
 	mut leftover := []u8{}
 	// One read scratch buffer per connection; reused across keep-alive requests.
@@ -171,11 +175,11 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 	mut first := true
 	for {
 		if !first {
-			conn.set_read_timeout(opts.idle_timeout)
+			c.set_read_timeout(opts.idle_timeout)
 		}
 		first = false
 
-		raw := read_message(mut conn, mut leftover, mut tmp, opts) or {
+		raw := read_message(mut c, mut leftover, mut tmp, opts) or {
 			msg := err.msg()
 			kind := classify_read_error(msg)
 			if kind != 'eof' {
@@ -185,24 +189,24 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 				mut resp := http.Response.text(413, msg)
 				resp.set_connection_close()
 				apply_response_defaults(mut resp, opts)
-				write_tcp(mut conn, resp.to_bytes()) or {}
+				c.write_all(resp.to_bytes()) or {}
 			} else if kind == 'protocol' {
 				mut resp := http.Response.bad_request(msg)
 				resp.set_connection_close()
 				apply_response_defaults(mut resp, opts)
-				write_tcp(mut conn, resp.to_bytes()) or {}
+				c.write_all(resp.to_bytes()) or {}
 			}
 			return
 		}
 
-		conn.set_read_timeout(opts.read_timeout)
+		c.set_read_timeout(opts.read_timeout)
 
 		req := http.parse_request(raw) or {
 			eprintln('[viltrum] conn parse: protocol: ${err.msg()}')
 			mut resp := http.Response.bad_request(err.msg())
 			resp.set_connection_close()
 			apply_response_defaults(mut resp, opts)
-			write_tcp(mut conn, resp.to_bytes()) or {}
+			c.write_all(resp.to_bytes()) or {}
 			return
 		}
 
@@ -211,7 +215,7 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 				mut resp := http.Response.bad_request('missing host header')
 				resp.set_connection_close()
 				apply_response_defaults(mut resp, opts)
-				write_tcp(mut conn, resp.to_bytes()) or {}
+				c.write_all(resp.to_bytes()) or {}
 				return
 			}
 		}
@@ -220,7 +224,7 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 			mut resp := http.Response.text(413, 'payload too large')
 			resp.set_connection_close()
 			apply_response_defaults(mut resp, opts)
-			write_tcp(mut conn, resp.to_bytes()) or {}
+			c.write_all(resp.to_bytes()) or {}
 			return
 		}
 
@@ -230,10 +234,11 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 			rq.params = hit.params.clone()
 			// leftover holds bytes past this HTTP message (pipelined / early data).
 			// Move them into Conn pushback; HTTP loop never resumes.
-			buffered := leftover.clone()
-			leftover = []u8{}
+			if leftover.len > 0 {
+				c.rbuf = leftover.clone()
+				leftover = []u8{}
+			}
 			hijacked = true
-			mut c := Conn.wrap(mut conn, buffered)
 			// Long-lived streams (WS, custom protocols): use the longer of
 			// read_timeout and idle_timeout so quiet peers are not cut by the
 			// short HTTP request timeout alone. Handlers may still call
@@ -256,7 +261,7 @@ fn handle_conn(mut conn net.TcpConn, handler Handler, upgrades []UpgradeRoute, o
 		}
 		apply_response_defaults(mut resp, opts)
 
-		write_tcp(mut conn, resp.to_bytes_for_method(req.method)) or { return }
+		c.write_all(resp.to_bytes_for_method(req.method)) or { return }
 		if close_after {
 			return
 		}
@@ -283,17 +288,6 @@ fn classify_read_error(msg string) string {
 	}
 }
 
-fn write_tcp(mut conn net.TcpConn, data []u8) ! {
-	mut off := 0
-	for off < data.len {
-		n := conn.write(data[off..]) or { return err }
-		if n <= 0 {
-			return error('short write')
-		}
-		off += n
-	}
-}
-
 fn header_timeout(opts ServerOptions) time.Duration {
 	if opts.read_header_timeout > 0 {
 		return opts.read_header_timeout
@@ -312,7 +306,7 @@ fn upgrade_read_timeout(opts ServerOptions) time.Duration {
 	return opts.read_timeout
 }
 
-fn read_message(mut conn net.TcpConn, mut leftover []u8, mut tmp []u8, opts ServerOptions) ![]u8 {
+fn read_message(mut c Conn, mut leftover []u8, mut tmp []u8, opts ServerOptions) ![]u8 {
 	mut buf := leftover.clone()
 	leftover = []u8{}
 
@@ -320,7 +314,7 @@ fn read_message(mut conn net.TcpConn, mut leftover []u8, mut tmp []u8, opts Serv
 	mut saw_bytes := buf.len > 0
 	if saw_bytes {
 		// Already have data (from prior leftover); apply header timeout for the rest.
-		conn.set_read_timeout(header_timeout(opts))
+		c.set_read_timeout(header_timeout(opts))
 	}
 
 	for {
@@ -347,11 +341,11 @@ fn read_message(mut conn net.TcpConn, mut leftover []u8, mut tmp []u8, opts Serv
 			}
 
 			// Body phase uses read_timeout (distinct from header timeout).
-			conn.set_read_timeout(opts.read_timeout)
+			c.set_read_timeout(opts.read_timeout)
 
 			if !sent_100 && cl > 0 && expects_100_continue(hdr) {
 				if buf.len < body_start + cl {
-					write_tcp(mut conn, 'HTTP/1.1 100 Continue\r\n\r\n'.bytes()) or {
+					c.write_all('HTTP/1.1 100 Continue\r\n\r\n'.bytes()) or {
 						return error('write 100-continue failed')
 					}
 					sent_100 = true
@@ -360,7 +354,7 @@ fn read_message(mut conn net.TcpConn, mut leftover []u8, mut tmp []u8, opts Serv
 
 			total := body_start + cl
 			for buf.len < total {
-				n := conn.read(mut tmp) or { return err }
+				n := c.read(mut tmp) or { return err }
 				if n <= 0 {
 					return error('eof during body')
 				}
@@ -375,7 +369,7 @@ fn read_message(mut conn net.TcpConn, mut leftover []u8, mut tmp []u8, opts Serv
 		if buf.len > opts.max_header_bytes {
 			return error('headers too large')
 		}
-		n := conn.read(mut tmp) or { return err }
+		n := c.read(mut tmp) or { return err }
 		if n <= 0 {
 			if buf.len == 0 {
 				return error('eof')
@@ -385,7 +379,7 @@ fn read_message(mut conn net.TcpConn, mut leftover []u8, mut tmp []u8, opts Serv
 		if !saw_bytes {
 			// First byte after idle wait: switch to header assembly timeout.
 			saw_bytes = true
-			conn.set_read_timeout(header_timeout(opts))
+			c.set_read_timeout(header_timeout(opts))
 		}
 		buf << tmp[..n]
 	}

@@ -40,5 +40,11 @@ target/
 # Release tooling (Node)
 node_modules/
 
+# Superpowers local state (never commit)
+.superpowers/
+
 # SDD worktrees
 .worktrees/
+
+# Dev TLS certs (scripts/dev-cert.sh)
+certs/

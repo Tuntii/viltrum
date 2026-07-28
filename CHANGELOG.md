@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/Tuntii/viltrum/compare/v0.7.0...v0.7.1) (2026-07-28)
+
+### Performance Improvements
+
+* **http:** PR1 Axum compare harness and hot-path epic baseline ([#17](https://github.com/Tuntii/viltrum/issues/17)) ([227ae9a](https://github.com/Tuntii/viltrum/commit/227ae9af805b7bc8eca31a8e12b607d6bf33c7ec)), closes [#16](https://github.com/Tuntii/viltrum/issues/16)
+* **http:** PR1 baseline harness without design doc share ([#17](https://github.com/Tuntii/viltrum/issues/17)) ([fec76eb](https://github.com/Tuntii/viltrum/commit/fec76ebf4043adec7406eb457b01d0310ec54d1f))
+
 ## [0.7.0](https://github.com/Tuntii/viltrum/compare/v0.6.1...v0.7.0) (2026-07-28)
 
 ### Features

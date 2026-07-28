@@ -237,6 +237,31 @@ app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
 
 ---
 
+## v0.8 — HTTP/1.1 hot path (cleartext)
+
+**Goal:** Own-stack cleartext HTTP/1.1 throughput and latency in a competitive band on the same machine and client. Reproduce: `bash benches/compare/run_vs_axum.sh` (peer benchmark harness).
+
+| PR | Work | Status |
+|----|------|--------|
+| PR1 | Instrument + baseline lock (benchmark harness) | in progress |
+| PR2 | Byte-level `parse_request` (no full `bytestr`) | pending |
+| PR3 | Single message ownership (no double body clone) | pending |
+| PR4 | Response `[]u8` builder + header casing cache | pending |
+| PR5 | Conn-local buffer reuse (assembly + write) | pending |
+| PR6 | Multi-accept / `SO_REUSEPORT` experiment (measure) | pending |
+| PR7 | Document remaining gap (honest RESULTS) | pending |
+
+### Exit
+
+- [ ] League bar: sustained GET **≥ ~150k** (10s c=50) **or** **≥ ~0.75×** peer on that run
+- [ ] RESULTS updated; no public API break without version decision
+
+### Out of scope
+
+- Wrapping another stack; HTTP/2/3; TLS micro-opts as primary; fake benches
+
+---
+
 ## v0.7+ — Backlog (demand-driven)
 
 Only pull when real use or repeated asks:
@@ -274,9 +299,8 @@ Unless this file is explicitly revised:
 2. ~~v0.3.x correctness (chunked reject, HEAD, Expect, tests)~~ **done**
 3. ~~v0.4 conn + hijack + tests + `docs/upgrade.md`~~ **done**
 4. ~~v0.5 `ws` echo + limits + tests + tag~~ **done**
-5. v0.6a TLS spike (48h max): stdlib fit? go / no-go ← **next**
-6. v0.6a HTTPS listen + example
-7. v0.6b WSS example (should be thin)
+5. ~~v0.6 TLS + WSS~~ **done** (v0.7.0 release line)
+6. **v0.8 HTTP/1.1 hot path** ← **next** (PR1 baseline → PR2 parse …)
 
 Do not parallelize 5–7 across half-finished branches.
 

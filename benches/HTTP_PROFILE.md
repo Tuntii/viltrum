@@ -171,6 +171,7 @@ None of this is a correctness bug; it is repeated ownership conversion on a shor
 | **Date** | 2026-07-23 |
 | **Path** | Fix (two micro-opts from recommendation #2 and #4) |
 | **Not done** | Body double-materialization (#1), response serialize rewrite (#3), public API, reactor, HTTP/2 |
+| **Follow-up** | Full hot-path epic **v0.8** / [#16](https://github.com/Tuntii/viltrum/issues/16): [docs/design/http11-hotpath-axum.md](../docs/design/http11-hotpath-axum.md) (PR2–PR7). Baseline vs Axum: `benches/compare/` |
 
 **Landed:**
 

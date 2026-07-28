@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.0](https://github.com/Tuntii/viltrum/compare/v0.6.1...v0.7.0) (2026-07-28)
+
+### Features
+
+* **tls:** in-process HTTPS and WSS via mbedtls ([#1](https://github.com/Tuntii/viltrum/issues/1)) ([00ab6c0](https://github.com/Tuntii/viltrum/commit/00ab6c0899c14671f31045a839d14ec34ac7648a))
+
 ## [0.6.1](https://github.com/Tuntii/viltrum/compare/v0.6.0...v0.6.1) (2026-07-23)
 
 ### Performance Improvements

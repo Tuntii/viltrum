@@ -237,28 +237,28 @@ app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
 
 ---
 
-## v0.8 — HTTP/1.1 hot path (Axum-competitive cleartext)
+## v0.8 — HTTP/1.1 hot path (cleartext)
 
-**Goal:** Own-stack cleartext HTTP/1.1 in the same league as a minimal Axum peer on the same machine/client. Design: [docs/design/http11-hotpath-axum.md](docs/design/http11-hotpath-axum.md). Compare: `bash benches/compare/run_vs_axum.sh`.
+**Goal:** Own-stack cleartext HTTP/1.1 throughput and latency in a competitive band on the same machine and client. Reproduce: `bash benches/compare/run_vs_axum.sh` (peer benchmark harness).
 
 | PR | Work | Status |
 |----|------|--------|
-| PR1 | Instrument + baseline lock (compare harness) | in progress |
+| PR1 | Instrument + baseline lock (benchmark harness) | in progress |
 | PR2 | Byte-level `parse_request` (no full `bytestr`) | pending |
 | PR3 | Single message ownership (no double body clone) | pending |
 | PR4 | Response `[]u8` builder + header casing cache | pending |
 | PR5 | Conn-local buffer reuse (assembly + write) | pending |
 | PR6 | Multi-accept / `SO_REUSEPORT` experiment (measure) | pending |
-| PR7 | Document remaining gap vs Tokio (honest RESULTS) | pending |
+| PR7 | Document remaining gap (honest RESULTS) | pending |
 
 ### Exit
 
-- [ ] League bar: sustained GET **≥ ~150k** (10s c=50) **or** **≥ ~0.75×** Axum on that run
-- [ ] Epic design + RESULTS updated; no public API break without version decision
+- [ ] League bar: sustained GET **≥ ~150k** (10s c=50) **or** **≥ ~0.75×** peer on that run
+- [ ] RESULTS updated; no public API break without version decision
 
 ### Out of scope
 
-- Wrapping Hyper/Axum; HTTP/2/3; TLS micro-opts as primary; fake benches
+- Wrapping another stack; HTTP/2/3; TLS micro-opts as primary; fake benches
 
 ---
 

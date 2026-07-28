@@ -47,6 +47,7 @@ target/
 
 # Local-only design specs (not shipped in git)
 /docs/local/
+/docs/design/http11-*.md
 
 # Release tooling (Node)
 node_modules/

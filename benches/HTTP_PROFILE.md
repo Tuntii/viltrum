@@ -60,16 +60,16 @@ Engine rejects TE and TE+CL conflict **before** `parse_request`, using the strin
 
 | Site | File | Cost class | Notes |
 |------|------|------------|-------|
-| `raw.bytestr()` | `http.v` L238 | alloc / copy | Entire message (headers **and** body) → string |
-| `head.split('\r\n')`, request-line `split(' ')` | `http.v` L242–L247 | alloc | Line / token slices as new strings |
-| `HeaderMap.add` → `name.to_lower()` | `http.v` L276 + L23–L28 | alloc | One map entry per header; lowercased keys |
-| TE / CL re-check via `headers.get` | `http.v` L279–L287 | low | Map lookups; logic already done in engine |
-| `body = raw[body_start..body_start+n].clone()` | `http.v` L300 | copy / alloc | **Second** body materialization (body already inside `finish_message` clone) |
-| `params: map[string]string{}` | `http.v` L312 | alloc | Empty map every request |
+| Double-CRLF + line walk on `[]u8` | `http.v` `parse_request` | none / CPU | No full-message `bytestr` (PR2) |
+| Request-line / header field `bytestr` of slices only | `http.v` | alloc | Method, target, version, each name/value — not body |
+| `HeaderMap.add` → `name.to_lower()` | `http.v` | alloc | One map entry per header; lowercased keys |
+| TE / CL re-check via `headers.get` | `http.v` | low | Map lookups; logic already done in engine |
+| `body = raw[body_start..body_start+n].clone()` | `http.v` | copy / alloc | **Second** body materialization (body already inside `finish_message` clone) — PR3 |
+| `params: map[string]string{}` | `http.v` | alloc | Empty map every request |
 
-For **GET `/`**: body clone is empty (`n == 0` or no CL); still pay full `raw.bytestr()`, header map, and request-line work.
+For **GET `/`**: body clone is empty (`n == 0` or no CL); pay per-field strings + header map, not a full-message string.
 
-For **POST small JSON**: full message string includes body bytes; body is then **cloned again** from `raw` into `Request.body`.
+For **POST small JSON**: body stays binary until the explicit clone into `Request.body` (still a second materialization vs engine — PR3).
 
 ### Handler (typical GET / POST)
 

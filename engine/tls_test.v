@@ -1,7 +1,6 @@
 module engine
 
 // HTTPS / WSS smoke tests (self-signed PEM files in a temp dir).
-
 import net
 import net.http as nhttp
 import net.mbedtls
@@ -119,11 +118,18 @@ fn wait_listen() {
 fn test_validate_tls_options_empty_and_missing() {
 	validate_tls_options(TlsOptions{}) or {
 		assert err.msg().contains('cert_file')
-		// fall through
+		// continue to next case
 	}
-	validate_tls_options(TlsOptions{ cert_file: 'x' }) or {
-		assert err.msg().contains('key_file')
+	// Must not succeed with empty paths.
+	if _ := validate_tls_options(TlsOptions{}) {
+		assert false, 'empty TlsOptions should fail'
 	}
+
+	validate_tls_options(TlsOptions{ cert_file: 'x' }) or { assert err.msg().contains('key_file') }
+	if _ := validate_tls_options(TlsOptions{ cert_file: 'x' }) {
+		assert false, 'missing key_file should fail'
+	}
+
 	validate_tls_options(TlsOptions{
 		cert_file: '/no/such/cert.pem'
 		key_file:  '/no/such/key.pem'

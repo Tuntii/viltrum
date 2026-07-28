@@ -4,7 +4,6 @@ module viltrum
 // v0.4: connection hijack / upgrade on engine.Conn.
 // v0.5: first-party WebSocket via app.ws on the same Conn path.
 // v0.6: in-process HTTPS / WSS via app.listen_tls (mbedtls).
-
 import time
 import viltrum.engine
 import viltrum.http
@@ -15,18 +14,26 @@ import viltrum.ws
 pub type Request = http.Request
 pub type Response = http.Response
 pub type Handler = fn (req http.Request) http.Response
+
 pub type Middleware = fn (next Handler) Handler
+
 pub type ServerOptions = engine.ServerOptions
+
 // Conn is the upgrade/hijack stream (engine.Conn). Use this in UpgradeFn handlers.
 pub type Conn = engine.Conn
+
 // UpgradeFn takes over the connection after a matched app.upgrade route.
 pub type UpgradeFn = fn (mut c Conn, req Request)
+
 // WsSocket is the server-side WebSocket after 101.
 pub type WsSocket = ws.Socket
+
 // WsHandler runs after a successful WebSocket handshake.
 pub type WsHandler = fn (mut s WsSocket)
+
 // WsOptions configures limits, auto-pong, subprotocol, origin check, UTF-8.
 pub type WsOptions = ws.Options
+
 // TlsOptions is PEM cert/key paths for app.listen_tls.
 pub type TlsOptions = engine.TlsOptions
 

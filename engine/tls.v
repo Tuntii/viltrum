@@ -1,7 +1,6 @@
 module engine
 
 // TLS listen path (v0.6). mbedtls only; WSS reuses app.ws over the same Conn.
-
 import net.mbedtls
 import os
 import viltrum.http
@@ -91,8 +90,10 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 				mut busy := http.Response.text(503, 'service unavailable')
 				busy.set_connection_close()
 				apply_response_defaults(mut busy, opts)
-				ssl.write(busy.to_bytes()) or {}
-				ssl.close() or {}
+				// Best-effort 503; do not keep the TLS conn.
+				mut tmp := Conn.wrap_ssl(ssl, []u8{})
+				tmp.write_all(busy.to_bytes()) or {}
+				tmp.close() or {}
 				continue
 			}
 		}

@@ -3,7 +3,6 @@ module engine
 // Conn is the byte-stream abstraction for one accepted connection.
 // After HTTP upgrade/hijack, ownership moves to the UpgradeFn; the HTTP loop stops.
 // Cleartext TCP and mbedtls SSL share this surface (read/write/close/deadlines).
-
 import net
 import net.mbedtls
 import time
@@ -62,10 +61,6 @@ pub fn (c &Conn) buffered_len() int {
 
 pub fn (c &Conn) is_closed() bool {
 	return c.closed
-}
-
-pub fn (c &Conn) kind() ConnKind {
-	return c.kind
 }
 
 pub fn (mut c Conn) set_read_timeout(d time.Duration) {

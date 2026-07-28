@@ -5,22 +5,29 @@ module main
 //   bash scripts/dev-cert.sh
 //   v run examples/https_hello
 //   curl -k https://127.0.0.1:8443/
-
 import os
 import viltrum {
-	new
-	recover
-	logger
-	text
-	json
-	Request
-	Response
-	TlsOptions
+	Request,
+	Response,
+	TlsOptions,
+	json,
+	logger,
+	new,
+	recover,
+	text,
+}
+
+fn env_or(key string, def string) string {
+	v := os.getenv(key)
+	if v.len == 0 {
+		return def
+	}
+	return v
 }
 
 fn main() {
-	cert := os.getenv_opt('VILTRUM_CERT') or { 'certs/dev.crt' }
-	key := os.getenv_opt('VILTRUM_KEY') or { 'certs/dev.key' }
+	cert := env_or('VILTRUM_CERT', 'certs/dev.crt')
+	key := env_or('VILTRUM_KEY', 'certs/dev.key')
 	if !os.exists(cert) || !os.exists(key) {
 		eprintln('missing ${cert} / ${key}')
 		eprintln('run: bash scripts/dev-cert.sh')

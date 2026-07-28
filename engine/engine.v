@@ -2,7 +2,6 @@ module engine
 
 // TCP accept + HTTP/1.1 framing + upgrade/hijack (v0.4).
 // Conn is the single I/O surface for cleartext and TLS (v0.6).
-
 import net
 import os
 import sync
@@ -27,7 +26,7 @@ pub:
 	send_date bool
 	// server_header if non-empty sets Server when the handler did not. Default empty (omit).
 	server_header string
-	require_host bool = true
+	require_host  bool = true
 	// handle_signals installs SIGINT/SIGTERM shutdown (disable in embedded/bench/tests).
 	handle_signals bool = true
 }

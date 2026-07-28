@@ -18,6 +18,7 @@ bash benches/run_ws.sh   # WebSocket echo (headline = V client)
 CLIENT=python bash benches/run_ws.sh   # optional Python smoke
 bash benches/soak_ws.sh  # WS multi-conn echo + close-storm (correctness)
 # SOAK_SECONDS=120 bash benches/soak_ws.sh   # optional longer local soak
+bash benches/compare/run_vs_axum.sh   # side-by-side vs Rust Axum (see compare/README.md)
 ```
 
 ---
@@ -42,6 +43,17 @@ bash benches/soak_ws.sh  # WS multi-conn echo + close-storm (correctness)
 | G GET `/` | 5s | 200 | **~59k** | 100% |
 
 **Headline (honest):** on this laptop, cleartext `GET /` sustains **~60–85k req/s** depending on concurrency; short low-`c` bursts can touch **~95k**. Not a lab guarantee.
+
+### Cross-check vs Axum (2026-07-29, v0.7.0)
+
+Same oha shapes, Axum 0.8 release+LTO on the same box. Full table: [compare/README.md](./compare/README.md).
+
+| Scenario | Viltrum | Axum |
+|----------|--------:|-----:|
+| E GET 10s c=50 | **~85k** | **~202k** |
+| F GET 10s c=100 | **~71k** | **~192k** |
+
+Axum ~**2.4–2.8×** higher on this run (expected: mature Tokio stack). 100% success both sides.
 
 Snippet from E (10s, c=50):
 

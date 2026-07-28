@@ -21,6 +21,17 @@ vls.log
 !/benches/ws_load_client.v
 !/benches/RESULTS.md
 !/benches/HTTP_PROFILE.md
+# Side-by-side vs Axum (source only; not target/)
+!/benches/compare/
+/benches/compare/**
+!/benches/compare/README.md
+!/benches/compare/run_vs_axum.sh
+!/benches/compare/axum/
+/benches/compare/axum/**
+!/benches/compare/axum/Cargo.toml
+!/benches/compare/axum/Cargo.lock
+!/benches/compare/axum/src/
+!/benches/compare/axum/src/main.rs
 
 # OS / IDE
 .DS_Store
@@ -48,3 +59,6 @@ node_modules/
 
 # Dev TLS certs (scripts/dev-cert.sh)
 certs/
+
+# Compare bench (Rust)
+benches/compare/axum/target/

@@ -2,14 +2,24 @@ module engine
 
 // Conn is the byte-stream abstraction for one accepted connection.
 // After HTTP upgrade/hijack, ownership moves to the UpgradeFn; the HTTP loop stops.
-// Future TLS will wrap the same surface (read/write/close/deadlines).
+// Cleartext TCP and mbedtls SSL share this surface (read/write/close/deadlines).
 
 import net
+import net.mbedtls
 import time
+
+// ConnKind selects the underlying transport for Conn I/O.
+pub enum ConnKind {
+	tcp
+	ssl
+	buffered // tests / pushback-only
+}
 
 pub struct Conn {
 mut:
+	kind   ConnKind
 	tcp    net.TcpConn
+	ssl    &mbedtls.SSLConn = unsafe { nil }
 	rbuf   []u8 // unread bytes (HTTP leftover / pushback)
 	closed bool
 }
@@ -18,7 +28,18 @@ mut:
 // `buffered` is already-read data that must be returned by read() before the socket.
 pub fn Conn.wrap(mut tcp net.TcpConn, buffered []u8) Conn {
 	return Conn{
+		kind:   .tcp
 		tcp:    tcp
+		rbuf:   buffered.clone()
+		closed: false
+	}
+}
+
+// wrap_ssl takes ownership of an accepted TLS conn (mbedtls).
+pub fn Conn.wrap_ssl(ssl &mbedtls.SSLConn, buffered []u8) Conn {
+	return Conn{
+		kind:   .ssl
+		ssl:    ssl
 		rbuf:   buffered.clone()
 		closed: false
 	}
@@ -28,6 +49,7 @@ pub fn Conn.wrap(mut tcp net.TcpConn, buffered []u8) Conn {
 // Used in tests to prove leftover ownership without a TCP race.
 pub fn Conn.new_buffered(data []u8) Conn {
 	return Conn{
+		kind:   .buffered
 		rbuf:   data.clone()
 		closed: false
 	}
@@ -42,18 +64,37 @@ pub fn (c &Conn) is_closed() bool {
 	return c.closed
 }
 
+pub fn (c &Conn) kind() ConnKind {
+	return c.kind
+}
+
 pub fn (mut c Conn) set_read_timeout(d time.Duration) {
 	if c.closed {
 		return
 	}
-	c.tcp.set_read_timeout(d)
+	match c.kind {
+		.tcp {
+			c.tcp.set_read_timeout(d)
+		}
+		.ssl {
+			c.ssl.set_read_timeout(d)
+		}
+		.buffered {}
+	}
 }
 
 pub fn (mut c Conn) set_write_timeout(d time.Duration) {
 	if c.closed {
 		return
 	}
-	c.tcp.set_write_timeout(d)
+	match c.kind {
+		.tcp {
+			c.tcp.set_write_timeout(d)
+		}
+		// mbedtls SSLConn has no write-deadline API.
+		.ssl {}
+		.buffered {}
+	}
 }
 
 // read fills buf from pushback first, then the socket. Returns bytes read (0 only on empty buf).
@@ -76,11 +117,25 @@ pub fn (mut c Conn) read(mut buf []u8) !int {
 		}
 		return n
 	}
-	n := c.tcp.read(mut buf) or { return err }
-	if n < 0 {
-		return error('negative read')
+	match c.kind {
+		.tcp {
+			n := c.tcp.read(mut buf) or { return err }
+			if n < 0 {
+				return error('negative read')
+			}
+			return n
+		}
+		.ssl {
+			n := c.ssl.read(mut buf) or { return err }
+			if n < 0 {
+				return error('negative read')
+			}
+			return n
+		}
+		.buffered {
+			return error('eof')
+		}
 	}
-	return n
 }
 
 // read_exact reads exactly buf.len bytes (from pushback + socket).
@@ -103,7 +158,17 @@ pub fn (mut c Conn) write(data []u8) !int {
 	if data.len == 0 {
 		return 0
 	}
-	return c.tcp.write(data)
+	match c.kind {
+		.tcp {
+			return c.tcp.write(data)
+		}
+		.ssl {
+			return c.ssl.write(data)
+		}
+		.buffered {
+			return error('write on buffered conn')
+		}
+	}
 }
 
 // write_all writes the full buffer or returns an error.
@@ -125,7 +190,15 @@ pub fn (mut c Conn) close() ! {
 	}
 	c.closed = true
 	c.rbuf = []u8{}
-	c.tcp.close() or { return err }
+	match c.kind {
+		.tcp {
+			c.tcp.close() or { return err }
+		}
+		.ssl {
+			c.ssl.close() or { return err }
+		}
+		.buffered {}
+	}
 }
 
 // peer_ip returns the remote address string (host:port or host), if available.
@@ -133,5 +206,16 @@ pub fn (c &Conn) peer_ip() !string {
 	if c.closed {
 		return error('conn closed')
 	}
-	return c.tcp.peer_ip()
+	match c.kind {
+		.tcp {
+			return c.tcp.peer_ip()
+		}
+		.ssl {
+			addr := c.ssl.peer_addr() or { return err }
+			return addr.str()
+		}
+		.buffered {
+			return error('no peer on buffered conn')
+		}
+	}
 }

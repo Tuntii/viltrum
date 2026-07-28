@@ -55,6 +55,24 @@ websocat ws://127.0.0.1:8084/ws
 
 See [docs/ws.md](../docs/ws.md).
 
+## https_hello — `:8443` in-process TLS
+
+```bash
+bash scripts/dev-cert.sh
+v run examples/https_hello
+curl -k https://127.0.0.1:8443/
+```
+
+## wss_echo — `:8444` WebSocket over TLS
+
+```bash
+bash scripts/dev-cert.sh
+v run examples/wss_echo
+websocat -k wss://127.0.0.1:8444/ws
+```
+
+See [docs/tls.md](../docs/tls.md).
+
 ## Server options sketch
 
 ```v

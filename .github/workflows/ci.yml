@@ -33,6 +33,8 @@ jobs:
           v -o /tmp/viltrum-features examples/features
           v -o /tmp/viltrum-upgrade examples/upgrade_echo
           v -o /tmp/viltrum-ws-echo examples/ws_echo
+          v -o /tmp/viltrum-https-hello examples/https_hello
+          v -o /tmp/viltrum-wss-echo examples/wss_echo
 
       - name: Build WS load client
         run: v -o /tmp/viltrum-ws-load benches/ws_load_client.v

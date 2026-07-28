@@ -45,3 +45,6 @@ node_modules/
 
 # SDD worktrees
 .worktrees/
+
+# Dev TLS certs (scripts/dev-cert.sh)
+certs/

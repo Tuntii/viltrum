@@ -9,7 +9,7 @@
 
 You write a few routes. Viltrum owns the rest of the wire: accept loop, HTTP/1.1, keep-alive, hijack, WebSocket frames. No third-party stack under the hood. No ORM, sessions, or template engine pretending to be a framework.
 
-Built for [V](https://vlang.io). Cleartext first; put Caddy or nginx in front when you want TLS. In-process HTTPS/WSS is on the map for later, not a gate for shipping.
+Built for [V](https://vlang.io). Cleartext first; put Caddy or nginx in front when you want edge TLS. Optional in-process HTTPS/WSS via `app.listen_tls` (mbedtls) for single-binary demos.
 
 ```bash
 git clone https://github.com/Tuntii/viltrum.git && cd viltrum
@@ -57,7 +57,7 @@ Selective imports keep handlers short. Full prefixes (`import viltrum` + `viltru
 
 ### WebSocket without a second stack
 
-Same process, same `Conn` model. Text and binary, ping/pong, size limits. Fragmentation and `wss://` are out of scope for now (see [docs/ws.md](docs/ws.md)).
+Same process, same `Conn` model. Text and binary, ping/pong, size limits. Over TLS: same `app.ws` + `app.listen_tls` → `wss://` (see [docs/ws.md](docs/ws.md), [docs/tls.md](docs/tls.md)).
 
 ```v
 import viltrum { new, WsSocket }
@@ -78,6 +78,10 @@ app.listen('127.0.0.1:8084') or { panic(err) }
 ```bash
 v run examples/ws_echo
 websocat ws://127.0.0.1:8084/ws
+
+bash scripts/dev-cert.sh
+v run examples/wss_echo
+websocat -k wss://127.0.0.1:8444/ws
 ```
 
 ### When HTTP is not enough

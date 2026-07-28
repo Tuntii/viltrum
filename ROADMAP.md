@@ -209,19 +209,19 @@ app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
 
 ### 0.6a — HTTPS
 
-- [ ] Design note: V stdlib / `net.ssl` (or current V TLS API) capability check; **abort phase if stdlib is inadequate** — document “proxy only” rather than half TLS
-- [ ] `ServerOptions` / `TlsOptions`: cert file, key file, optional client CA later
-- [ ] `listen_tls(addr, opts)` or `app.listen_tls` parallel to `listen`
-- [ ] Conn abstraction from v0.4 wraps SSL stream; deadlines still apply
-- [ ] Example: `examples/https_hello` + dev cert script (`scripts/dev-cert.sh`) — dev only, documented
-- [ ] Tests: smoke against self-signed; bad cert fail; plain HTTP client to TLS port fails cleanly
-- [ ] Docs: cipher/version policy = whatever stdlib defaults unless we must pin; no custom crypto
+- [x] Design note: V stdlib / `net.mbedtls` server TLS spike (go); see [docs/design/v0.6-tls-wss.md](docs/design/v0.6-tls-wss.md)
+- [x] `TlsOptions`: cert file, key file (client CA later)
+- [x] `app.listen_tls` / `engine.listen_and_serve_tls_full` parallel to `listen`
+- [x] Conn dual transport (tcp | ssl | buffered); read deadlines on SSL
+- [x] Example: `examples/https_hello` + `scripts/dev-cert.sh`
+- [x] Tests: self-signed smoke; missing key path; plain HTTP client to TLS port fails cleanly
+- [x] Docs: [docs/tls.md](docs/tls.md) — cipher/version = mbedtls/V defaults
 
 ### 0.6b — WSS
 
-- [ ] Same WS code path as v0.5 over TLS conn (no second WS stack)
-- [ ] Example: `examples/wss_echo`
-- [ ] Doc: browser `wss://` needs trusted cert or dev exception
+- [x] Same WS code path as v0.5 over TLS conn (no second WS stack)
+- [x] Example: `examples/wss_echo`
+- [x] Doc: browser `wss://` needs trusted cert or dev exception
 
 ### Out of scope for v0.6
 
@@ -232,8 +232,8 @@ app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
 
 ### Exit
 
-- [ ] Tag **v0.6.0** HTTPS; **v0.6.1** or same tag if WSS lands together when thin enough
-- [ ] README status updated: “optional TLS; proxy still fine”
+- [x] HTTPS + WSS landed together on current 0.6.x line (see CHANGELOG when tagged)
+- [x] README status updated: optional TLS; proxy still fine
 
 ---
 

@@ -3,6 +3,7 @@ module viltrum
 // Viltrum HTTP App facade.
 // v0.4: connection hijack / upgrade on engine.Conn.
 // v0.5: first-party WebSocket via app.ws on the same Conn path.
+// v0.6: in-process HTTPS / WSS via app.listen_tls (mbedtls).
 
 import time
 import viltrum.engine
@@ -26,6 +27,8 @@ pub type WsSocket = ws.Socket
 pub type WsHandler = fn (mut s WsSocket)
 // WsOptions configures limits, auto-pong, subprotocol, origin check, UTF-8.
 pub type WsOptions = ws.Options
+// TlsOptions is PEM cert/key paths for app.listen_tls.
+pub type TlsOptions = engine.TlsOptions
 
 pub struct App {
 mut:
@@ -205,6 +208,19 @@ fn join_mount(prefix string, pattern string) string {
 }
 
 pub fn (mut app App) listen(addr string) ! {
+	handler, upgrades, opts := app.build_serve()
+	engine.listen_and_serve_full(addr, handler, upgrades, opts)!
+}
+
+// listen_tls serves HTTPS/1.1 (and WSS when app.ws routes are registered).
+// Cert and key are PEM file paths (see docs/tls.md). mbedtls only.
+pub fn (mut app App) listen_tls(addr string, tls TlsOptions) ! {
+	handler, upgrades, opts := app.build_serve()
+	engine.listen_and_serve_tls_full(addr, handler, upgrades, opts, tls)!
+}
+
+// build_serve wires middleware, app ctx, and upgrade routes for listen / listen_tls.
+fn (app &App) build_serve() (engine.Handler, []engine.UpgradeRoute, engine.ServerOptions) {
 	r := app.router
 	mws := app.middlewares.clone()
 	app_ctx := app.ctx
@@ -243,7 +259,7 @@ pub fn (mut app App) listen(addr string) ! {
 		}
 	}
 
-	engine.listen_and_serve_full(addr, engine_handler, upgrades, opts)!
+	return engine_handler, upgrades, opts
 }
 
 // switching_protocols is a convenience for upgrade handlers (101 + Upgrade header).

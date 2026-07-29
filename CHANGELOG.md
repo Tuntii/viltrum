@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/Tuntii/viltrum/compare/v0.7.1...v0.7.2) (2026-07-29)
+
+### Performance Improvements
+
+* **http:** polish PR2 parse_request helpers and edge tests ([#18](https://github.com/Tuntii/viltrum/issues/18)) ([d66e238](https://github.com/Tuntii/viltrum/commit/d66e238e06731ce149b3fc424d7bad215fdfe648))
+* **http:** PR2 parse_request byte walk without full bytestr ([#18](https://github.com/Tuntii/viltrum/issues/18)) ([6eef34c](https://github.com/Tuntii/viltrum/commit/6eef34c6db377663d5d1c8b40098203f51c86973))
+
 ## [0.7.1](https://github.com/Tuntii/viltrum/compare/v0.7.0...v0.7.1) (2026-07-28)
 
 ### Performance Improvements

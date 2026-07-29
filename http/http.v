@@ -247,19 +247,7 @@ pub fn parse_request(raw []u8) !Request {
 	mut line_idx := 0
 	mut i := 0
 	for i <= sep {
-		mut j := i
-		for j < sep {
-			if raw[j] == `\r` && j + 1 < raw.len && raw[j + 1] == `\n` {
-				break
-			}
-			j++
-		}
-		// Last field line ends at sep (no trailing CRLF inside the head region).
-		line_end := if j < sep && raw[j] == `\r` && j + 1 < raw.len && raw[j + 1] == `\n` {
-			j
-		} else {
-			sep
-		}
+		line_end := find_crlf_or(raw, i, sep)
 		line := raw[i..line_end]
 
 		if line_idx == 0 {
@@ -281,13 +269,7 @@ pub fn parse_request(raw []u8) !Request {
 		if line_end >= sep {
 			break
 		}
-		i = line_end + 2
-		if i > sep {
-			break
-		}
-	}
-	if line_idx == 0 {
-		return error('empty request')
+		i = line_end + 2 // skip CRLF
 	}
 
 	path_raw, query := split_target(target)
@@ -332,31 +314,47 @@ pub fn parse_request(raw []u8) !Request {
 	}
 }
 
+// parse_request_line requires exactly three SP-separated tokens (same as prior split).
 fn parse_request_line(line []u8) !(string, string, string) {
-	// Same shape as split-on-space with exactly three parts (no empty tokens).
-	mut parts := [][]u8{cap: 3}
-	mut start := 0
+	mut sp1 := -1
+	mut sp2 := -1
 	for k in 0 .. line.len {
-		if line[k] == ` ` {
-			parts << line[start..k]
-			start = k + 1
+		if line[k] != ` ` {
+			continue
+		}
+		if sp1 < 0 {
+			sp1 = k
+		} else if sp2 < 0 {
+			sp2 = k
+		} else {
+			return error('bad request line')
 		}
 	}
-	parts << line[start..]
-	if parts.len != 3 {
+	if sp1 < 0 || sp2 < 0 {
 		return error('bad request line')
 	}
-	if parts[0].len == 0 {
+	if sp1 == 0 {
 		return error('empty method')
 	}
-	method := parts[0].bytestr()
-	target := parts[1].bytestr()
-	version := parts[2].bytestr()
-	if version.len < 5 || version[0] != `H` || version[1] != `T` || version[2] != `T`
-		|| version[3] != `P` || version[4] != `/` {
+	method := line[..sp1].bytestr()
+	target := line[sp1 + 1..sp2].bytestr()
+	version := line[sp2 + 1..].bytestr()
+	if !version.starts_with('HTTP/') {
 		return error('bad version')
 	}
 	return method, target, version
+}
+
+// find_crlf_or returns the index of CRLF in raw[from..limit), or limit if none.
+fn find_crlf_or(raw []u8, from int, limit int) int {
+	mut j := from
+	for j < limit {
+		if raw[j] == `\r` && j + 1 < raw.len && raw[j + 1] == `\n` {
+			return j
+		}
+		j++
+	}
+	return limit
 }
 
 fn index_of_double_crlf(buf []u8) ?int {

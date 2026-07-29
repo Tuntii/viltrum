@@ -234,47 +234,47 @@ pub fn should_close(req Request, resp Response) bool {
 	return false
 }
 
+// parse_request walks request-line + header fields on raw bytes. It does not
+// string-convert the full message (body stays binary until cloned when needed).
 pub fn parse_request(raw []u8) !Request {
-	text := raw.bytestr()
-	sep := text.index('\r\n\r\n') or { return error('incomplete headers') }
-	head := text[..sep]
+	sep := index_of_double_crlf(raw) or { return error('incomplete headers') }
 	body_start := sep + 4
-	lines := head.split('\r\n')
-	if lines.len == 0 || lines[0].len == 0 {
-		return error('empty request')
+
+	mut method := ''
+	mut target := ''
+	mut version := ''
+	mut headers := HeaderMap.new()
+	mut line_idx := 0
+	mut i := 0
+	for i <= sep {
+		line_end := find_crlf_or(raw, i, sep)
+		line := raw[i..line_end]
+
+		if line_idx == 0 {
+			if line.len == 0 {
+				return error('empty request')
+			}
+			method, target, version = parse_request_line(line)!
+		} else if line.len > 0 {
+			colon := index_byte(line, `:`) or { return error('bad header line') }
+			name := trim_ows(line[..colon])
+			if name.len == 0 {
+				return error('empty header name')
+			}
+			value := trim_ows(line[colon + 1..])
+			headers.add(name.bytestr(), value.bytestr())
+		}
+
+		line_idx++
+		if line_end >= sep {
+			break
+		}
+		i = line_end + 2 // skip CRLF
 	}
-	// reject bare LF request lines (require CRLF framing already split)
-	parts := lines[0].split(' ')
-	if parts.len != 3 {
-		return error('bad request line')
-	}
-	method := parts[0]
-	if method.len == 0 {
-		return error('empty method')
-	}
-	target := parts[1]
-	version := parts[2]
-	if !version.starts_with('HTTP/') {
-		return error('bad version')
-	}
+
 	path_raw, query := split_target(target)
 	// OPTIONS * keeps asterisk path; absolute-form is reduced in split_target
 	path := if path_raw == '*' { '*' } else { normalize_path(path_raw) }
-
-	mut headers := HeaderMap.new()
-	for i in 1 .. lines.len {
-		line := lines[i]
-		if line.len == 0 {
-			continue
-		}
-		colon := line.index(':') or { return error('bad header line') }
-		name := line[..colon].trim_space()
-		if name.len == 0 {
-			return error('empty header name')
-		}
-		value := line[colon + 1..].trim_space()
-		headers.add(name, value)
-	}
 
 	// TE + Content-Length together is invalid (RFC 9112). TE alone (e.g. chunked) is unsupported.
 	te := headers.get('transfer-encoding') or { '' }
@@ -312,6 +312,87 @@ pub fn parse_request(raw []u8) !Request {
 		params:  map[string]string{}
 		ctx:     unsafe { nil }
 	}
+}
+
+// parse_request_line requires exactly three SP-separated tokens (same as prior split).
+fn parse_request_line(line []u8) !(string, string, string) {
+	mut sp1 := -1
+	mut sp2 := -1
+	for k in 0 .. line.len {
+		if line[k] != ` ` {
+			continue
+		}
+		if sp1 < 0 {
+			sp1 = k
+		} else if sp2 < 0 {
+			sp2 = k
+		} else {
+			return error('bad request line')
+		}
+	}
+	if sp1 < 0 || sp2 < 0 {
+		return error('bad request line')
+	}
+	if sp1 == 0 {
+		return error('empty method')
+	}
+	method := line[..sp1].bytestr()
+	target := line[sp1 + 1..sp2].bytestr()
+	version := line[sp2 + 1..].bytestr()
+	if !version.starts_with('HTTP/') {
+		return error('bad version')
+	}
+	return method, target, version
+}
+
+// find_crlf_or returns the index of CRLF in raw[from..limit), or limit if none.
+fn find_crlf_or(raw []u8, from int, limit int) int {
+	mut j := from
+	for j < limit {
+		if raw[j] == `\r` && j + 1 < raw.len && raw[j + 1] == `\n` {
+			return j
+		}
+		j++
+	}
+	return limit
+}
+
+fn index_of_double_crlf(buf []u8) ?int {
+	if buf.len < 4 {
+		return none
+	}
+	limit := buf.len - 3
+	for i in 0 .. limit {
+		if buf[i] == `\r` && buf[i + 1] == `\n` && buf[i + 2] == `\r` && buf[i + 3] == `\n` {
+			return i
+		}
+	}
+	return none
+}
+
+fn index_byte(buf []u8, b u8) ?int {
+	for i in 0 .. buf.len {
+		if buf[i] == b {
+			return i
+		}
+	}
+	return none
+}
+
+// trim_ows strips leading/trailing SP and HTAB (HTTP OWS).
+fn trim_ows(buf []u8) []u8 {
+	mut a := 0
+	mut b := buf.len
+	for a < b && (buf[a] == ` ` || buf[a] == `\t`) {
+		a++
+	}
+	for b > a && (buf[b - 1] == ` ` || buf[b - 1] == `\t`) {
+		b--
+	}
+	if a == 0 && b == buf.len {
+		return buf
+	}
+	return buf[a..b]
 }
 
 // normalize_path collapses trailing slashes except for root "/".

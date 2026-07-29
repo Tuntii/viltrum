@@ -187,6 +187,39 @@ fn test_fuzz_tab_in_header_value() {
 	assert req.headers.get('x-a')? == 'hello\tworld'
 }
 
+fn test_parse_header_ows_trim() {
+	// leading/trailing SP/HTAB around field value (HTTP OWS)
+	req := parse_request('GET / HTTP/1.1\r\nHost:   localhost  \r\nX-B:\tok\t\r\n\r\n'.bytes()) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.headers.get('host')? == 'localhost'
+	assert req.headers.get('x-b')? == 'ok'
+}
+
+fn test_parse_binary_body_not_stringified() {
+	// body may be non-UTF-8; parser must not require a full-message string
+	mut raw := 'POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\n'.bytes()
+	raw << [u8(0xff), u8(0x00), u8(0xfe), u8(0x01)]
+	req := parse_request(raw) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.body.len == 4
+	assert req.body[0] == 0xff
+	assert req.body[1] == 0x00
+	assert req.body[2] == 0xfe
+	assert req.body[3] == 0x01
+}
+
+fn test_parse_request_line_extra_space_rejected() {
+	parse_request('GET  / HTTP/1.1\r\nHost: x\r\n\r\n'.bytes()) or {
+		assert err.msg().contains('bad request line') || err.msg().len > 0
+		return
+	}
+	assert false, 'expected bad request line for double space'
+}
+
 fn test_fuzz_url_decode_truncated() {
 	url_decode('a%2') or {
 		assert true

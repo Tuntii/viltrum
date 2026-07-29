@@ -243,8 +243,8 @@ app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
 
 | PR | Work | Status |
 |----|------|--------|
-| PR1 | Instrument + baseline lock (benchmark harness) | in progress |
-| PR2 | Byte-level `parse_request` (no full `bytestr`) | pending |
+| PR1 | Instrument + baseline lock (benchmark harness) | done |
+| PR2 | Byte-level `parse_request` (no full `bytestr`) | done |
 | PR3 | Single message ownership (no double body clone) | pending |
 | PR4 | Response `[]u8` builder + header casing cache | pending |
 | PR5 | Conn-local buffer reuse (assembly + write) | pending |

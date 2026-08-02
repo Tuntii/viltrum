@@ -386,13 +386,18 @@ fn read_message(mut c Conn, mut leftover []u8, mut tmp []u8, opts ServerOptions)
 	return error('unreachable')
 }
 
+// finish_message hands off one complete HTTP message from the assembly buffer.
+// Exact-length reads return `buf` without a full-message clone (common keep-alive path).
+// Over-read (pipelined bytes) clones only the leftover tail; the message is a
+// length-limited view of the same assembly buffer so body octets are not copied again.
+// unsafe slice: avoid V's implicit clone on `buf[..total]` (same pattern as header scans).
 fn finish_message(mut leftover []u8, buf []u8, body_start int, cl int) []u8 {
 	total := body_start + cl
-	msg := buf[..total].clone()
 	if buf.len > total {
 		leftover = buf[total..].clone()
+		return unsafe { buf[..total] }
 	}
-	return msg
+	return buf
 }
 
 fn index_of_double_crlf(buf []u8) ?int {

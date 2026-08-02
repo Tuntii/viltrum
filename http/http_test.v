@@ -26,6 +26,27 @@ fn test_parse_post_body() {
 	assert req.text() == 'hello'
 }
 
+// Body is a slice of the message buffer (PR3): only Content-Length octets, not trailing junk.
+fn test_parse_post_body_ignores_bytes_past_content_length() {
+	raw := 'POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhelloEXTRA'.bytes()
+	req := parse_request(raw) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.body.len == 5
+	assert req.body.bytestr() == 'hello'
+}
+
+// Body still readable after parse returns (slice shares message storage; GC keeps it).
+fn test_parse_post_body_survives_raw_drop() {
+	req := parse_request('POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 11\r\n\r\nhello world'.bytes()) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.body.bytestr() == 'hello world'
+	assert req.body.len == 11
+}
+
 fn test_response_bytes_contain_status() {
 	r := Response.text(200, 'ok')
 	s := r.to_bytes().bytestr()

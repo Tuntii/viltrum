@@ -37,9 +37,9 @@ listener.accept
 
 ```text
 leftover.clone() → grow buf via conn.read(tmp) → find \r\n\r\n
-  → content_length_from_headers / transfer_encoding_present (string scan)
+  → content_length_from_headers / transfer_encoding_present (byte scan)
   → read body to body_start+cl
-  → finish_message: msg = buf[..total].clone(); leftover = rest.clone()
+  → finish_message: exact → return buf; over-read → leftover=rest.clone(), msg=buf[..total] view
 ```
 
 | Site | File | Cost class | Notes |
@@ -51,8 +51,7 @@ leftover.clone() → grow buf via conn.read(tmp) → find \r\n\r\n
 | `content_length_from_headers` | `engine.v` L416 | alloc / copy | `header_bytes.bytestr()` + `split('\r\n')` + `to_lower()` on each line |
 | `transfer_encoding_present` | `engine.v` L430 | alloc / copy | **Second** full header `bytestr` + `split` + `to_lower` on same bytes |
 | `expects_100_continue` | `engine.v` L443 | alloc / copy | **Third** header stringification when `cl > 0` (POST with Expect) |
-| `finish_message` `buf[..total].clone()` | `engine.v` L396 | copy / alloc | Full wire message (headers + body) copied out of assembly buffer |
-| `finish_message` leftover `buf[total..].clone()` | `engine.v` L398 | copy / alloc | Pipelined / over-read only; none on clean single-message reads |
+| `finish_message` hand-off / leftover | `engine.v` `finish_message` | none / copy | Exact-length: return assembly `buf` (no full-message clone). Over-read: leftover tail `.clone()` only; message is length-limited view (PR3) |
 
 Engine rejects TE and TE+CL conflict **before** `parse_request`, using the string scans above. Body size is also checked again after parse (`handle_conn` vs `opts.max_body_bytes`).
 
@@ -64,7 +63,7 @@ Engine rejects TE and TE+CL conflict **before** `parse_request`, using the strin
 | Request-line / header field `bytestr` of slices only | `http.v` | alloc | Method, target, version, each name/value — not body |
 | `HeaderMap.add` → `name.to_lower()` | `http.v` | alloc | One map entry per header; lowercased keys |
 | TE / CL re-check via `headers.get` | `http.v` | low | Map lookups; logic already done in engine |
-| `body = raw[body_start..body_start+n].clone()` | `http.v` | copy / alloc | **Second** body materialization (body already inside `finish_message` clone) — PR3 |
+| `body = raw[body_start..body_start+n]` (slice) | `http.v` | none | Shares message buffer; no second body materialization (PR3) |
 | `params: map[string]string{}` | `http.v` | alloc | Empty map every request |
 
 For **GET `/`**: body clone is empty (`n == 0` or no CL); pay per-field strings + header map, not a full-message string.
@@ -107,10 +106,10 @@ Note: rows for per-message `tmp` and engine CL/TE string scans describe the pre-
 | Engine CL scan (`bytestr`+`split`) | alloc / copy | **high** | yes | yes |
 | Engine TE scan (duplicate string work) | alloc / copy | **high** | yes | yes |
 | Engine Expect scan | alloc / copy | low / med | rare | only with `Expect: 100-continue` |
-| `finish_message` full clone | copy / alloc | **high** | headers only | headers + body |
-| `parse_request` full `bytestr` | alloc / copy | **high** | headers (+ empty body region) | headers + body as string |
+| `finish_message` hand-off | none / copy | low | exact-length: no clone | same; leftover only if pipelined |
+| `parse_request` full `bytestr` | alloc / copy | — | removed (PR2) | removed (PR2) |
 | Header map build | alloc | med | yes | yes (+ CL / CT) |
-| Body `.clone()` in parse | copy / alloc | none / **high** | none (empty) | **yes — second body copy** |
+| Body slice in parse | none | none | empty body | shares message buffer (PR3) |
 | Handler `Response.*` construction | alloc | med | small fixed headers + body bytes | same |
 | `to_bytes_for_method` string build + canonicalize | alloc / copy | **high** | yes | yes |
 | Wire `bytes << body` | copy | low / med | small/empty body | response body size |
@@ -122,14 +121,14 @@ Note: rows for per-message `tmp` and engine CL/TE string scans describe the pre-
 
 ## Double-work summary (the main evidence)
 
-On a normal keep-alive request the library currently:
+On a normal keep-alive request the library **used to**:
 
-1. Assembles bytes in `buf`, then **clones the whole message** (`finish_message`).
-2. Converts that clone to a string for parse (`raw.bytestr()`), and for POST **clones the body again** into `Request.body`.
-3. Stringifies and splits header bytes **twice** in the engine (CL + TE) **before** parse does the same logical work again into `HeaderMap`.
-4. Rebuilds the response as a growing string with **canonicalized** header names, then copies body into the final `[]u8` for `write`.
+1. Assemble bytes in `buf`, then **clone the whole message** (`finish_message`).
+2. Convert that clone to a string for parse (`raw.bytestr()`), and for POST **clone the body again** into `Request.body`.
+3. Stringify and split header bytes **twice** in the engine (CL + TE) **before** parse does the same logical work again into `HeaderMap`.
+4. Rebuild the response as a growing string with **canonicalized** header names, then copy body into the final `[]u8` for `write`.
 
-None of this is a correctness bug; it is repeated ownership conversion on a short-lived buffer.
+**Status:** (2) full-message `bytestr` removed in PR2; (1)+(body half of 2) single ownership in PR3; engine CL/TE string scans addressed in #9. Remaining: (4) response serialize (PR4), conn-local assembly reuse (PR5).
 
 ---
 
@@ -137,9 +136,9 @@ None of this is a correctness bug; it is repeated ownership conversion on a shor
 
 **Fix candidates** (smallest useful wins, no API change, no architecture rewrite):
 
-1. **Body / message double materialization (highest clarity)**  
-   - Today: `finish_message` clones headers+body; `parse_request` clones body again.  
-   - Direction: single ownership hand-off (e.g. parse from one buffer without a second body clone, or slice body without clone where lifetime allows). Touches `finish_message` + `parse_request`.
+1. **Body / message double materialization** — **done (PR3 / #19)**  
+   - Was: `finish_message` full clone + `parse_request` body clone.  
+   - Now: exact-length hand-off; body is a slice of the message buffer.
 
 2. **Engine header pre-scan without full stringification (high, localized)**  
    - Today: `content_length_from_headers` and `transfer_encoding_present` each do `bytestr` + `split` + per-line `to_lower`.  
@@ -168,14 +167,15 @@ None of this is a correctness bug; it is repeated ownership conversion on a shor
 
 | | |
 |--|--|
-| **Date** | 2026-07-23 |
-| **Path** | Fix (two micro-opts from recommendation #2 and #4) |
-| **Not done** | Body double-materialization (#1), response serialize rewrite (#3), public API, reactor, HTTP/2 |
-| **Follow-up** | Full hot-path epic **v0.8** / [#16](https://github.com/Tuntii/viltrum/issues/16): [docs/design/http11-hotpath-axum.md](../docs/design/http11-hotpath-axum.md) (PR2–PR7). Baseline vs Axum: `benches/compare/` |
+| **Date** | 2026-07-29 (updated) |
+| **Path** | Fix (micro-opts #2, #4, then #1 body ownership) |
+| **Not done** | Response serialize rewrite (#3), public API, reactor, HTTP/2 |
+| **Follow-up** | Full hot-path epic **v0.8** / [#16](https://github.com/Tuntii/viltrum/issues/16) (PR4–PR7). Baseline vs Axum: `benches/compare/` |
 
 **Landed:**
 
 1. **Reuse `tmp` across keep-alive requests** — allocate `[]u8{len: read_chunk_size}` once in `handle_conn` and pass into `read_message` (no per-message scratch alloc).
 2. **Engine CL/TE pre-scan without full stringification** — `content_length_from_headers` / `transfer_encoding_present` use byte-level case-insensitive field scan (`header_value_ci`) instead of `bytestr` + `split` + `to_lower` twice. Reject-before-body and TE+CL conflict behavior unchanged. `expects_100_continue` left as string path (out of scope).
+3. **Single message ownership (PR3 / #19)** — `finish_message` hands off the assembly buffer on exact-length reads (no full-message clone); over-read clones only the leftover tail. `parse_request` takes `Request.body` as a slice of that buffer (no second body `.clone()`). One body ownership path for the engine → parse hand-off.
 
-**Tests:** `v test engine/` (incl. new pre-scan unit tests in `conn_test.v`) and `v test http/` — green. Full oha re-run not done this task; `RESULTS.md` not updated (expect alloc/CPU win below the ~10% bar without measurement).
+**Tests:** `v test engine/` (incl. finish_message unit tests) and `v test http/` — green.

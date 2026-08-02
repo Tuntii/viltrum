@@ -204,19 +204,46 @@ pub fn (r &Response) to_bytes() []u8 {
 	return r.to_bytes_for_method('')
 }
 
-// to_bytes_for_method serializes the response. For HEAD, headers are kept (including
-// Content-Length) but the body octets are omitted (RFC 9110 §9.3.2).
+// to_bytes_for_method serializes the response into a single pre-sized []u8 buffer.
+// For HEAD, headers are kept (including Content-Length) but the body octets are
+// omitted (RFC 9110 §9.3.2). Header names use a known-header casing cache so the
+// hot path avoids per-field split/join canonicalize; unknown names still fold.
 pub fn (r &Response) to_bytes_for_method(method string) []u8 {
-	mut out := 'HTTP/1.1 ${r.status} ${r.reason}\r\n'
+	include_body := r.body.len > 0 && !is_head_method(method)
+
+	// Capacity: status line + each "Name: value\r\n" + final CRLF + optional body.
+	mut need := 16 + r.reason.len // "HTTP/1.1 NNN " + reason + CRLF (status ≤ 3–4 digits)
 	for k, v in r.headers.values {
-		out += '${canonicalize_header_name(k)}: ${v}\r\n'
+		// Wire name ≤ slightly larger than lowercased key; +4 for ": \r\n"
+		need += k.len + 8 + v.len + 4
 	}
-	out += '\r\n'
-	mut bytes := out.bytes()
-	if r.body.len > 0 && method.to_upper() != 'HEAD' {
-		bytes << r.body
+	need += 2
+	if include_body {
+		need += r.body.len
 	}
-	return bytes
+
+	mut out := []u8{cap: need}
+	append_str(mut out, 'HTTP/1.1 ')
+	append_status_code(mut out, r.status)
+	out << ` `
+	append_str(mut out, r.reason)
+	out << `\r`
+	out << `\n`
+
+	for k, v in r.headers.values {
+		append_wire_header_name(mut out, k)
+		out << `:`
+		out << ` `
+		append_str(mut out, v)
+		out << `\r`
+		out << `\n`
+	}
+	out << `\r`
+	out << `\n`
+	if include_body {
+		out << r.body
+	}
+	return out
 }
 
 pub fn should_close(req Request, resp Response) bool {
@@ -549,6 +576,78 @@ pub fn http_date(t time.Time) string {
 	return t.custom_format('ddd, DD MMM YYYY HH:mm:ss') + ' GMT'
 }
 
+// is_head_method is true for "HEAD" (any ASCII case) without a full to_upper alloc.
+fn is_head_method(method string) bool {
+	if method.len != 4 {
+		return false
+	}
+	// case-insensitive HEAD
+	return (method[0] | 32) == `h` && (method[1] | 32) == `e` && (method[2] | 32) == `a` && (method[3] | 32) == `d`
+}
+
+fn append_str(mut buf []u8, s string) {
+	for i in 0 .. s.len {
+		buf << s[i]
+	}
+}
+
+// append_status_code writes a decimal HTTP status (typically 100–599) without formatting.
+fn append_status_code(mut buf []u8, code int) {
+	if code >= 100 && code <= 999 {
+		buf << u8(`0` + code / 100)
+		buf << u8(`0` + (code / 10) % 10)
+		buf << u8(`0` + code % 10)
+		return
+	}
+	// Rare non-3-digit: fall back to decimal digits
+	if code <= 0 {
+		buf << `0`
+		return
+	}
+	mut x := code
+	mut tmp := []u8{cap: 10}
+	for x > 0 {
+		tmp << u8(`0` + (x % 10))
+		x /= 10
+	}
+	for i := tmp.len - 1; i >= 0; i-- {
+		buf << tmp[i]
+	}
+}
+
+// append_wire_header_name writes the conventional Title-Case field name for a
+// lowercased HeaderMap key. Hot-path names are a fixed match (no split/join).
+fn append_wire_header_name(mut buf []u8, name string) {
+	// Keys in HeaderMap are already lowercased by set/add.
+	known := match name {
+		'content-type' { 'Content-Type' }
+		'content-length' { 'Content-Length' }
+		'connection' { 'Connection' }
+		'date' { 'Date' }
+		'server' { 'Server' }
+		'host' { 'Host' }
+		'upgrade' { 'Upgrade' }
+		'location' { 'Location' }
+		'transfer-encoding' { 'Transfer-Encoding' }
+		'content-encoding' { 'Content-Encoding' }
+		'cache-control' { 'Cache-Control' }
+		'set-cookie' { 'Set-Cookie' }
+		'www-authenticate' { 'WWW-Authenticate' }
+		'sec-websocket-accept' { 'Sec-WebSocket-Accept' }
+		'sec-websocket-protocol' { 'Sec-WebSocket-Protocol' }
+		'sec-websocket-version' { 'Sec-WebSocket-Version' }
+		'sec-websocket-key' { 'Sec-WebSocket-Key' }
+		else { '' }
+	}
+	if known.len > 0 {
+		append_str(mut buf, known)
+		return
+	}
+	append_str(mut buf, canonicalize_header_name(name))
+}
+
+// canonicalize_header_name Title-Cases a lowercased (or mixed) header token on '-'.
+// Used for unknown custom headers on the wire.
 fn canonicalize_header_name(name string) string {
 	parts := name.split('-')
 	mut out := []string{cap: parts.len}

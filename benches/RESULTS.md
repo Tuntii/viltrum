@@ -2,13 +2,13 @@
 
 | | |
 |--|--|
-| **Version** | Viltrum **v0.5.x** (`-prod` server binary) |
-| **Date** | 2026-07-23 (WS client re-baseline); HTTP table from 2026-07-19 |
+| **Version** | Viltrum **v0.7.6** (`-prod` server binary) |
+| **Date** | 2026-08-05 (HTTP peer re-baseline after hot-path PR1–PR6); WS table still 2026-07-23 |
 | **Machine** | local CachyOS Linux (developer laptop), not a dedicated lab |
 | **CPU** | AMD Ryzen 7 4800H (16 threads), ~14 GiB RAM |
 | **Tools** | [oha](https://github.com/hatoo/oha) **1.15.0** (HTTP); **V first-party** masked WS load client (`benches/ws_load_client.v`) |
 
-Handler profile: `recover` on (HTTP), **logging off**, `handle_signals: false`, cleartext only.
+Handler profile: `recover` on (HTTP), **logging off**, `handle_signals: false`, cleartext only, **`accept_workers: 1`** (default).
 
 Reproduce:
 
@@ -18,57 +18,67 @@ bash benches/run_ws.sh   # WebSocket echo (headline = V client)
 CLIENT=python bash benches/run_ws.sh   # optional Python smoke
 bash benches/soak_ws.sh  # WS multi-conn echo + close-storm (correctness)
 # SOAK_SECONDS=120 bash benches/soak_ws.sh   # optional longer local soak
-bash benches/compare/run_vs_axum.sh   # optional peer benchmark (see compare/README.md)
+bash benches/compare/run_vs_axum.sh   # peer benchmark (see compare/README.md)
+bash benches/compare/run_reuseport_exp.sh  # PR6 multi-listener experiment
 ```
 
 ---
 
-## HTTP engine
+## HTTP engine (post hot-path epic, 2026-08-05)
 
-### Fixed-n (oha)
+Locked on this laptop after PR1–PR6 (byte parse, single ownership, response builder, conn-local buffers; multi-accept measured but default off). Full peer table: [compare/README.md](./compare/README.md).
 
-| Scenario | n | c | req/s | Success | Notes |
-|----------|--:|--:|------:|--------:|-------|
-| A GET `/` | 10k | 100 | **~52k** | 100% | short burst |
-| B GET `/` | 10k | 500 | **~7.8k** | 100% | dial storm; p99 large |
-| C POST `/echo` JSON | 5k | 100 | **~63k** | 100% | warm process |
-| D GET `/` longer | 50k | 50 | **~95k** | 100% | best fixed-n on this run |
+### Peer compare (oha, 100% success both sides)
 
-### Sustained duration (oha `-z`)
+| Scenario | Viltrum | Peer (Axum) | Peer / Viltrum |
+|----------|--------:|------------:|---------------:|
+| A GET n=10k c=100 | **~82k** | ~209k | ~2.5× |
+| D GET n=50k c=50 | **~102k** | ~199k | ~1.9× |
+| **E GET 10s c=50** | **~98k** | ~191k | **~1.9×** |
+| F GET 10s c=100 | **~91k** | ~225k | ~2.5× |
+| C POST `/echo` n=5k c=100 | **~72k** | ~167k | ~2.3× |
 
-| Scenario | duration | c | req/s | Success |
-|----------|----------|--:|------:|--------:|
-| E GET `/` | 10s | 50 | **~85k** | 100% |
-| F GET `/` | 10s | 100 | **~64k** | 100% |
-| G GET `/` | 5s | 200 | **~59k** | 100% |
-
-**Headline (honest):** on this laptop, cleartext `GET /` sustains **~60–85k req/s** depending on concurrency; short low-`c` bursts can touch **~95k**. Not a lab guarantee.
-
-### Peer benchmark (2026-07-29, v0.7.0)
-
-Same oha shapes, peer release build on the same box. Full table: [compare/README.md](./compare/README.md).
-
-| Scenario | Viltrum | Peer |
-|----------|--------:|-----:|
-| E GET 10s c=50 | **~85k** | **~202k** |
-| F GET 10s c=100 | **~71k** | **~192k** |
-
-Peer ~**2.4–2.8×** higher on this run. 100% success both sides.
+**Headline (honest):** cleartext `GET /` sustains roughly **~90–100k req/s** at moderate concurrency on this laptop (E/F). Peer stays ~**2×** ahead. Not a lab guarantee; laptop variance is real.
 
 Snippet from E (10s, c=50):
 
 ```text
 Success rate:  100%
-Requests/sec:  ~85150
-Average:       0.58 ms
-p50 / p99:     0.43 ms / 2.12 ms
+Requests/sec:  ~98493
+Average:       0.50 ms
+p50 / p99:     0.41 ms / 2.43 ms
 ```
+
+### vs PR1 lock (2026-07-29, v0.7.0)
+
+| Scenario | PR1 Viltrum | Now | Δ (absolute) |
+|----------|------------:|----:|-------------:|
+| E GET 10s c=50 | ~85k | **~98k** | ~**+15%** |
+| F GET 10s c=100 | ~71k | **~91k** | ~**+28%** |
+
+### League bar (epic #16)
+
+| Bar | Target | Result |
+|-----|--------|--------|
+| Absolute | E ≥ ~150k | **Not met** (~98k) |
+| Relative | E ≥ ~0.75× peer | **Not met** (~0.51×) |
+
+Honest ceiling after PR1–PR6: **own-stack cleartext sits in a ~90–110k band** on this box for keep-alive GET; remaining gap is largely **runtime / scheduler / syscall stack** (V spawn-per-conn + std `net` vs Tokio multi-thread), not a single missing clone on the HTTP path. See [HTTP_PROFILE.md](./HTTP_PROFILE.md) Decision and [compare/REUSEPORT.md](./compare/REUSEPORT.md) (dial-storm improves with opt-in multi-listener; keep-alive does not).
+
+### Historical fixed-n (pre-epic, still useful as class-of-test)
+
+Older 2026-07-19 shapes (v0.5.x era) for dial-storm / short burst context — not re-locked this closeout:
+
+| Scenario | n | c | Notes |
+|----------|--:|--:|-------|
+| B GET `/` | 10k | 500 | Dial storm; ~8k class with `accept_workers=1`; ~50k class with workers=8 (PR6) |
+| G GET `/` | — | 200 | 5s sustained, lower than E/F |
 
 ---
 
 ## WebSocket (`ws://` echo)
 
-Server: `app.ws` echo text/binary. **Headline client: V** (`benches/ws_load_client.v`), masked frames, multi-conn via spawn.
+Server: `app.ws` echo text/binary. **Headline client: V** (`benches/ws_load_client.v`), masked frames, multi-conn via spawn. *(Table from 2026-07-23 re-baseline; not re-run in PR7.)*
 
 | Scenario | Shape | Result (V client) | Success |
 |----------|-------|------------------:|--------:|
@@ -103,8 +113,9 @@ Correctness: `bash benches/soak_ws.sh` (echo + close-storm). Unmasked client →
 - Not large-payload or slowloris stress
 - Not a promise of multi-hundred-k RPS on every machine
 - WS headline numbers use a V client; HTTP uses oha
+- Not “we beat Axum” — peer remains ahead on this laptop
 
-Raw dumps: `/tmp/viltrum-bench/` (local).
+Raw dumps: `/tmp/viltrum-bench/`, `/tmp/viltrum-vs-axum/` (local).
 
 ## History
 
@@ -113,4 +124,6 @@ Raw dumps: `/tmp/viltrum-bench/` (local).
 | v0.3.x | ~27k GET c=100 | — |
 | v0.4.0 | ~36k GET c=100; ~84k long c=50 | — |
 | v0.5.0 | **~52k** GET c=100; **~85k** sustained 10s c=50 | Python client ~11k single / ~23k agg |
-| **v0.5.x** | (HTTP unchanged in this re-baseline) | **V client ~10k single / ~37k agg** |
+| v0.5.x | (HTTP unchanged in WS re-baseline) | **V client ~10k single / ~37k agg** |
+| v0.7.0 PR1 lock | E ~85k / F ~71k vs Axum ~202k / ~192k | — |
+| **v0.7.6 PR1–PR6** | **E ~98k / F ~91k** vs Axum ~191k / ~225k | WS table unchanged |

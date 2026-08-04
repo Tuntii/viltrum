@@ -249,16 +249,17 @@ app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
 | PR4 | Response `[]u8` builder + header casing cache | done |
 | PR5 | Conn-local buffer reuse (assembly + write) | done |
 | PR6 | Multi-accept / `SO_REUSEPORT` experiment (measure) | done |
-| PR7 | Document remaining gap (honest RESULTS) | pending |
+| PR7 | Document remaining gap (honest RESULTS) | done |
 
 ### Exit
 
-- [ ] League bar: sustained GET **≥ ~150k** (10s c=50) **or** **≥ ~0.75×** peer on that run
-- [ ] RESULTS updated; no public API break without version decision
+- [x] League bar checked: **not met** (E ~98k / ~0.51× peer on 2026-08-05 laptop run); honest ceiling documented in [benches/RESULTS.md](./benches/RESULTS.md)
+- [x] RESULTS + compare README updated (PR7); no public API break
 
-### Out of scope
+### Out of scope (still)
 
 - Wrapping another stack; HTTP/2/3; TLS micro-opts as primary; fake benches
+- Chasing Tokio parity without a runtime/scheduler change (see RESULTS “remaining gap”)
 
 ---
 

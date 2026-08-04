@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.3](https://github.com/Tuntii/viltrum/compare/v0.7.2...v0.7.3) (2026-08-04)
+
+### Performance Improvements
+
+* **http:** PR3 single message ownership, no double body clone ([#19](https://github.com/Tuntii/viltrum/issues/19)) ([39b7d14](https://github.com/Tuntii/viltrum/commit/39b7d14ccdf1764a7b55c30a88d1b2b54e03afdf)), closes [#16](https://github.com/Tuntii/viltrum/issues/16)
+
 ## [0.7.2](https://github.com/Tuntii/viltrum/compare/v0.7.1...v0.7.2) (2026-07-29)
 
 ### Performance Improvements

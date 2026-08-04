@@ -29,6 +29,11 @@ pub:
 	require_host  bool = true
 	// handle_signals installs SIGINT/SIGTERM shutdown (disable in embedded/bench/tests).
 	handle_signals bool = true
+	// accept_workers is how many accept loops / SO_REUSEPORT listeners to run.
+	// Default 1 = single listener (production default). Values >1 enable the
+	// Linux SO_REUSEPORT multi-listener experiment (PR6 / #22). Non-Linux falls
+	// back to 1 with a stderr notice. Prefer keeping 1 unless measure shows a win.
+	accept_workers int = 1
 }
 
 // ActiveConns tracks live connections for max_conns (mutex, not shared int — portable on V).
@@ -92,27 +97,114 @@ fn signal_stop_get(shared s SignalStop) bool {
 
 // listen_and_serve_full is the full server entry: HTTP handler + optional upgrade routes.
 pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRoute, opts ServerOptions) ! {
-	mut listener := net.listen_tcp(.ip, addr)!
+	workers := normalize_accept_workers(opts.accept_workers)
 	shared stopping := SignalStop{}
 	mut active := &ActiveConns{}
 
-	if opts.handle_signals {
-		os.signal_opt(.int, fn [shared stopping, mut listener] () {
-			signal_stop_set(shared stopping)
-			eprintln('[viltrum] shutting down (SIGINT)')
+	if workers == 1 {
+		mut listener := net.listen_tcp(.ip, addr)!
+		if opts.handle_signals {
+			os.signal_opt(.int, fn [shared stopping, mut listener] () {
+				signal_stop_set(shared stopping)
+				eprintln('[viltrum] shutting down (SIGINT)')
+				listener.close() or {}
+			}) or {}
+			os.signal_opt(.term, fn [shared stopping, mut listener] () {
+				signal_stop_set(shared stopping)
+				eprintln('[viltrum] shutting down (SIGTERM)')
+				listener.close() or {}
+			}) or {}
+		}
+		defer {
 			listener.close() or {}
-		}) or {}
-		os.signal_opt(.term, fn [shared stopping, mut listener] () {
-			signal_stop_set(shared stopping)
-			eprintln('[viltrum] shutting down (SIGTERM)')
-			listener.close() or {}
-		}) or {}
+		}
+		eprintln('[viltrum] listening on http://${addr}')
+		accept_loop(mut listener, handler, upgrades, opts, active, shared stopping)
+		eprintln('[viltrum] stopped')
+		return
 	}
 
-	defer {
-		listener.close() or {}
+	// Multi-listener (Linux SO_REUSEPORT). Experimental; default remains workers=1.
+	mut set := &ListenerSet{}
+	for _ in 0 .. workers {
+		set.items << listen_tcp_reuseport(addr)!
 	}
-	eprintln('[viltrum] listening on http://${addr}')
+	if opts.handle_signals {
+		os.signal_opt(.int, fn [shared stopping, mut set] () {
+			signal_stop_set(shared stopping)
+			eprintln('[viltrum] shutting down (SIGINT)')
+			set.close_all()
+		}) or {}
+		os.signal_opt(.term, fn [shared stopping, mut set] () {
+			signal_stop_set(shared stopping)
+			eprintln('[viltrum] shutting down (SIGTERM)')
+			set.close_all()
+		}) or {}
+	}
+	defer {
+		set.close_all()
+	}
+	eprintln('[viltrum] listening on http://${addr} (accept_workers=${workers}, SO_REUSEPORT)')
+	// Spawn workers-1 loops; run the last on this thread.
+	for i in 0 .. workers - 1 {
+		mut l := set.items[i]
+		spawn accept_loop(mut l, handler, upgrades, opts, active, shared stopping)
+	}
+	mut main_l := set.items[workers - 1]
+	accept_loop(mut main_l, handler, upgrades, opts, active, shared stopping)
+	eprintln('[viltrum] stopped')
+}
+
+// ListenerSet holds multi-listener sockets so signal handlers can close them all.
+struct ListenerSet {
+mut:
+	items []&net.TcpListener
+}
+
+fn (mut s ListenerSet) close_all() {
+	for mut l in s.items {
+		l.close() or {}
+	}
+}
+
+fn normalize_accept_workers(n int) int {
+	if n <= 1 {
+		return 1
+	}
+	$if linux {
+		return n
+	} $else {
+		eprintln('[viltrum] accept_workers=${n} needs Linux SO_REUSEPORT; using 1')
+		return 1
+	}
+}
+
+// listen_tcp_reuseport binds with SO_REUSEPORT so multiple listeners can share addr.
+// Linux only (caller must gate via normalize_accept_workers).
+fn listen_tcp_reuseport(addr string) !&net.TcpListener {
+	mut s := net.new_tcp_socket(.ip)!
+	// new_tcp_socket already sets SO_REUSEADDR; add SO_REUSEPORT before bind.
+	val := 1
+	r := C.setsockopt(s.handle, C.SOL_SOCKET, C.SO_REUSEPORT, &val, sizeof(int))
+	if r != 0 {
+		return error('SO_REUSEPORT setsockopt failed')
+	}
+	s.bind(addr)!
+	res := C.listen(s.handle, 128)
+	if res != 0 {
+		return error('listen failed after SO_REUSEPORT bind')
+	}
+	// Match net.listen_tcp defaults: infinite accept wait (0 timeout = immediate fail).
+	mut listener := &net.TcpListener{
+		sock:           s
+		accept_timeout: net.infinite_timeout
+	}
+	return listener
+}
+
+// accept_loop is one accept + spawn-handle_conn loop on a single listener.
+fn accept_loop(mut listener net.TcpListener, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, shared stopping SignalStop) {
+	track := opts.max_conns > 0
 	for {
 		// handle_signals: poll stop flag without using `if shared_bool` (V pitfall).
 		if opts.handle_signals && signal_stop_get(shared stopping) {
@@ -130,9 +222,13 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 			continue
 		}
 
-		track := opts.max_conns > 0
 		if track {
-			if !active.try_acquire(opts.max_conns) {
+			mut ok := false
+			unsafe {
+				mut a := &ActiveConns(active)
+				ok = a.try_acquire(opts.max_conns)
+			}
+			if !ok {
 				// Bound reached: short 503 then close (no keep-alive, no handler).
 				mut busy := http.Response.text(503, 'service unavailable')
 				busy.set_connection_close()
@@ -148,7 +244,6 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 		// Pass Conn by value into the worker (ownership of the socket/ssl handle).
 		spawn handle_conn(c, handler, upgrades, opts, active, track)
 	}
-	eprintln('[viltrum] stopped')
 }
 
 fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, track bool) {

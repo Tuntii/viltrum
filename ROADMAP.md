@@ -248,7 +248,7 @@ app.upgrade('GET', '/echo', fn (mut c Conn, req Request) {
 | PR3 | Single message ownership (no double body clone) | done |
 | PR4 | Response `[]u8` builder + header casing cache | done |
 | PR5 | Conn-local buffer reuse (assembly + write) | done |
-| PR6 | Multi-accept / `SO_REUSEPORT` experiment (measure) | pending |
+| PR6 | Multi-accept / `SO_REUSEPORT` experiment (measure) | done |
 | PR7 | Document remaining gap (honest RESULTS) | pending |
 
 ### Exit

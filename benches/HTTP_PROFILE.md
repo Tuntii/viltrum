@@ -128,7 +128,7 @@ On a normal keep-alive request the library **used to**:
 3. Stringify and split header bytes **twice** in the engine (CL + TE) **before** parse does the same logical work again into `HeaderMap`.
 4. Rebuild the response as a growing string with **canonicalized** header names, then copy body into the final `[]u8` for `write`.
 
-**Status:** (2) full-message `bytestr` removed in PR2; (1)+(body half of 2) single ownership in PR3; (4) response serialize in PR4; (conn assembly + write scratch) reuse in PR5; engine CL/TE string scans addressed in #9. Remaining: multi-accept experiment (PR6), honest RESULTS (PR7).
+**Status:** (2) full-message `bytestr` removed in PR2; (1)+(body half of 2) single ownership in PR3; (4) response serialize in PR4; (conn assembly + write scratch) reuse in PR5; multi-accept/`SO_REUSEPORT` measured in PR6 (default still single); engine CL/TE string scans addressed in #9. Remaining: honest RESULTS (PR7).
 
 ---
 
@@ -169,9 +169,9 @@ On a normal keep-alive request the library **used to**:
 | | |
 |--|--|
 | **Date** | 2026-08-05 (updated) |
-| **Path** | Fix (micro-opts #2, #4, body ownership #1 / PR3, serialize #3 / PR4, conn buffers / PR5) |
-| **Not done** | Multi-accept experiment (PR6), public API, reactor, HTTP/2 |
-| **Follow-up** | Epic **v0.8** / [#16](https://github.com/Tuntii/viltrum/issues/16) (PR6–PR7). Baseline vs Axum: `benches/compare/` |
+| **Path** | Fix (micro-opts #2, #4, body ownership #1 / PR3, serialize #3 / PR4, conn buffers / PR5, multi-accept measure / PR6) |
+| **Not done** | Public API, reactor, HTTP/2; league bar still open |
+| **Follow-up** | Epic **v0.8** / [#16](https://github.com/Tuntii/viltrum/issues/16) (PR7 docs). Baseline vs Axum: `benches/compare/` |
 
 **Landed:**
 
@@ -180,5 +180,6 @@ On a normal keep-alive request the library **used to**:
 3. **Single message ownership (PR3 / #19)** — `finish_message` hands off the assembly buffer on exact-length reads (no full-message clone); over-read clones only the leftover tail. `parse_request` takes `Request.body` as a slice of that buffer (no second body `.clone()`). One body ownership path for the engine → parse hand-off.
 4. **Response `[]u8` builder + header casing cache (PR4 / #20)** — `to_bytes_for_method` writes a pre-sized byte buffer (no growing string + `out.bytes()`). Known headers use fixed wire casing; `canonicalize_header_name` only for custom fields. HEAD check is case-insensitive without full `to_upper`.
 5. **Conn-local assembly + write scratch (PR5 / #21)** — `read_message` assembles into conn-local `assem` (truncate in place; seed from leftover when pipelined). Hot-path write uses `to_bytes_for_method_into` into conn-local `write_buf`. Capacity retained across keep-alive requests after handler + write complete.
+6. **Multi-accept / `SO_REUSEPORT` (PR6 / #22)** — optional `accept_workers` (default **1**). Linux multi-listener helps dial storms; keep-alive E/F gain is small/noisy. **Default stays single listener.** See [compare/REUSEPORT.md](./compare/REUSEPORT.md).
 
-**Tests:** `v test http/ router/ engine/ ws/` — green (incl. seed/recycle + into-builder reuse tests).
+**Tests:** `v test http/ router/ engine/ ws/` — green (incl. seed/recycle + into-builder reuse + multi-worker smoke).

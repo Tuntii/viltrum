@@ -357,6 +357,57 @@ fn test_get_still_includes_body() {
 	assert s.ends_with('hello')
 }
 
+// PR4: HEAD match is case-insensitive without relying on string to_upper alone.
+fn test_head_method_case_insensitive() {
+	r := Response.text(200, 'hello')
+	for m in ['HEAD', 'head', 'Head', 'HeAd'] {
+		s := r.to_bytes_for_method(m).bytestr()
+		assert s.contains('Content-Length: 5'), m
+		sep := s.index('\r\n\r\n') or {
+			assert false, m
+			return
+		}
+		assert s[sep + 4..].len == 0, m
+	}
+}
+
+// PR4: known headers use fixed casing; custom headers still Title-Case on '-'.
+fn test_response_wire_header_casing() {
+	mut r := Response.text(200, 'ok')
+	r.headers.set('x-request-id', 'abc-123')
+	r.headers.set('cache-control', 'no-store')
+	s := r.to_bytes().bytestr()
+	assert s.contains('Content-Type: ')
+	assert s.contains('Content-Length: ')
+	assert s.contains('Connection: ')
+	assert s.contains('Cache-Control: no-store')
+	assert s.contains('X-Request-Id: abc-123')
+	// status line shape
+	assert s.starts_with('HTTP/1.1 200 OK\r\n')
+	assert s.ends_with('ok')
+}
+
+fn test_response_builder_empty_body() {
+	r := Response.empty(204)
+	s := r.to_bytes().bytestr()
+	assert s.starts_with('HTTP/1.1 204 ')
+	assert s.contains('Content-Length: 0')
+	sep := s.index('\r\n\r\n') or {
+		assert false
+		return
+	}
+	assert s[sep + 4..].len == 0
+}
+
+fn test_is_head_method_helper() {
+	assert is_head_method('HEAD')
+	assert is_head_method('head')
+	assert !is_head_method('GET')
+	assert !is_head_method('HEA')
+	assert !is_head_method('HEADS')
+	assert !is_head_method('')
+}
+
 fn test_absolute_form_target() {
 	raw := 'GET http://example.com/api/hi?x=1 HTTP/1.1\r\nHost: example.com\r\n\r\n'.bytes()
 	req := parse_request(raw) or {

@@ -21,6 +21,10 @@ bash benches/compare/run_vs_axum.sh
 # PR6 experiment: single vs SO_REUSEPORT multi-listener (Viltrum only)
 bash benches/compare/run_reuseport_exp.sh
 # see REUSEPORT.md — default remains accept_workers=1
+
+# Conn worker-pool spike (blocking I/O): spawn vs fixed pool
+bash benches/compare/run_conn_pool_exp.sh
+# see CONN_POOL.md — default remains conn_workers=0
 ```
 
 Needs: `v`, `cargo`, `oha`, `curl`.

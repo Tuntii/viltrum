@@ -651,6 +651,63 @@ fn test_normalize_accept_workers() {
 	}
 }
 
+// Worker-pool spike: conn_workers > 0 still serves keep-alive HTTP correctly.
+fn test_conn_workers_pool_serves_get() {
+	addr := free_addr()
+	opts := ServerOptions{
+		handle_signals: false
+		conn_workers:   4
+		idle_timeout:   2 * time.second
+		read_timeout:   2 * time.second
+		write_timeout:  2 * time.second
+	}
+	handler := fn (req http.Request) http.Response {
+		return http.Response.text(200, 'pool-ok')
+	}
+	spawn fn [handler, opts, addr] () {
+		listen_and_serve_full(addr, handler, [], opts) or {}
+	}()
+	wait_listen()
+
+	for i in 0 .. 8 {
+		mut client := net.dial_tcp(addr) or {
+			assert false, 'dial ${i}: ${err}'
+			return
+		}
+		client.set_read_timeout(2 * time.second)
+		client.set_write_timeout(2 * time.second)
+		// Two keep-alive requests on one conn.
+		client.write('GET / HTTP/1.1\r\nHost: localhost\r\n\r\n'.bytes()) or {
+			client.close() or {}
+			assert false, 'write1 ${i}'
+			return
+		}
+		mut buf := []u8{len: 4096}
+		n := client.read(mut buf) or {
+			client.close() or {}
+			assert false, 'read1 ${i}: ${err}'
+			return
+		}
+		body := buf[..n].bytestr()
+		assert body.contains('200'), 'resp1 ${i}: ${body}'
+		assert body.contains('pool-ok'), 'resp1 ${i}: ${body}'
+
+		client.write('GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n'.bytes()) or {
+			client.close() or {}
+			assert false, 'write2 ${i}'
+			return
+		}
+		n2 := client.read(mut buf) or {
+			client.close() or {}
+			assert false, 'read2 ${i}: ${err}'
+			return
+		}
+		body2 := buf[..n2].bytestr()
+		client.close() or {}
+		assert body2.contains('pool-ok'), 'resp2 ${i}: ${body2}'
+	}
+}
+
 fn read_until_double_crlf(mut conn net.TcpConn) !string {
 	mut buf := []u8{}
 	mut tmp := []u8{len: 1024}

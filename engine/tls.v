@@ -48,6 +48,7 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 	})!
 	shared stopping := SignalStop{}
 	mut active := &ActiveConns{}
+	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, active)
 
 	if opts.handle_signals {
 		os.signal_opt(.int, fn [shared stopping, mut listener] () {
@@ -64,8 +65,13 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 
 	defer {
 		listener.shutdown() or {}
+		pool.close()
 	}
-	eprintln('[viltrum] listening on https://${addr}')
+	if pool.enabled {
+		eprintln('[viltrum] listening on https://${addr} (conn_workers=${pool.n})')
+	} else {
+		eprintln('[viltrum] listening on https://${addr}')
+	}
 	for {
 		if opts.handle_signals && signal_stop_get(shared stopping) {
 			break
@@ -86,7 +92,12 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 
 		track := opts.max_conns > 0
 		if track {
-			if !active.try_acquire(opts.max_conns) {
+			mut ok := false
+			unsafe {
+				mut a := &ActiveConns(active)
+				ok = a.try_acquire(opts.max_conns)
+			}
+			if !ok {
 				mut busy := http.Response.text(503, 'service unavailable')
 				busy.set_connection_close()
 				apply_response_defaults(mut busy, opts)
@@ -99,8 +110,8 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 		}
 
 		c := Conn.wrap_ssl(ssl, []u8{})
-		// Pass Conn by value into the worker (ownership of the ssl handle).
-		spawn handle_conn(c, handler, upgrades, opts, active, track)
+		// Ownership of the ssl handle moves to pool worker or spawn.
+		dispatch_conn(c, handler, upgrades, opts, active, track, pool)
 	}
 	eprintln('[viltrum] stopped')
 }

@@ -17,6 +17,10 @@ No access logs. Viltrum: `recover` on, `handle_signals: false`.
 ```bash
 bash benches/compare/run_vs_axum.sh
 # raw oha dumps: /tmp/viltrum-vs-axum/
+
+# PR6 experiment: single vs SO_REUSEPORT multi-listener (Viltrum only)
+bash benches/compare/run_reuseport_exp.sh
+# see REUSEPORT.md — default remains accept_workers=1
 ```
 
 Needs: `v`, `cargo`, `oha`, `curl`.

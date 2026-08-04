@@ -599,6 +599,58 @@ fn test_handle_signals_true_stays_listening() {
 	}
 }
 
+// PR6: multi-listener SO_REUSEPORT path still serves HTTP (Linux; no-op fallback elsewhere).
+fn test_accept_workers_two_serves_get() {
+	addr := free_addr()
+	opts := ServerOptions{
+		handle_signals: false
+		accept_workers: 2
+		idle_timeout:   2 * time.second
+		read_timeout:   2 * time.second
+		write_timeout:  2 * time.second
+	}
+	handler := fn (req http.Request) http.Response {
+		return http.Response.text(200, 'multi-ok')
+	}
+	spawn fn [handler, opts, addr] () {
+		listen_and_serve_full(addr, handler, [], opts) or {}
+	}()
+	wait_listen()
+
+	// A few sequential requests; any accept worker may pick them up.
+	for i in 0 .. 5 {
+		mut client := net.dial_tcp(addr) or {
+			assert false, 'dial ${i}: ${err}'
+			return
+		}
+		client.set_read_timeout(2 * time.second)
+		client.set_write_timeout(2 * time.second)
+		client.write('GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n'.bytes()) or {
+			client.close() or {}
+			assert false, 'write ${i}'
+			return
+		}
+		mut buf := []u8{len: 4096}
+		n := client.read(mut buf) or {
+			client.close() or {}
+			assert false, 'read ${i}: ${err}'
+			return
+		}
+		client.close() or {}
+		body := buf[..n].bytestr()
+		assert body.contains('200'), 'resp ${i}: ${body}'
+		assert body.contains('multi-ok'), 'resp ${i}: ${body}'
+	}
+}
+
+fn test_normalize_accept_workers() {
+	assert normalize_accept_workers(0) == 1
+	assert normalize_accept_workers(1) == 1
+	$if linux {
+		assert normalize_accept_workers(4) == 4
+	}
+}
+
 fn read_until_double_crlf(mut conn net.TcpConn) !string {
 	mut buf := []u8{}
 	mut tmp := []u8{len: 1024}

@@ -209,6 +209,15 @@ pub fn (r &Response) to_bytes() []u8 {
 // omitted (RFC 9110 §9.3.2). Header names use a known-header casing cache so the
 // hot path avoids per-field split/join canonicalize; unknown names still fold.
 pub fn (r &Response) to_bytes_for_method(method string) []u8 {
+	mut out := []u8{}
+	r.to_bytes_for_method_into(mut out, method)
+	return out
+}
+
+// to_bytes_for_method_into serializes into `out`, reusing capacity when possible
+// (conn-local write scratch on the keep-alive path). Wire format matches
+// to_bytes_for_method. After return, `out.len` is the exact wire size.
+pub fn (r &Response) to_bytes_for_method_into(mut out []u8, method string) {
 	include_body := r.body.len > 0 && !is_head_method(method)
 
 	// Capacity: status line + each "Name: value\r\n" + final CRLF + optional body.
@@ -222,7 +231,14 @@ pub fn (r &Response) to_bytes_for_method(method string) []u8 {
 		need += r.body.len
 	}
 
-	mut out := []u8{cap: need}
+	if out.cap < need {
+		out = []u8{cap: need}
+	} else {
+		unsafe {
+			out.len = 0
+		}
+	}
+
 	append_str(mut out, 'HTTP/1.1 ')
 	append_status_code(mut out, r.status)
 	out << ` `
@@ -243,7 +259,6 @@ pub fn (r &Response) to_bytes_for_method(method string) []u8 {
 	if include_body {
 		out << r.body
 	}
-	return out
 }
 
 pub fn should_close(req Request, resp Response) bool {

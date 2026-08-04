@@ -170,8 +170,11 @@ fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerO
 	c.set_write_timeout(opts.write_timeout)
 
 	mut leftover := []u8{}
-	// One read scratch buffer per connection; reused across keep-alive requests.
+	// Conn-local scratch: reused across keep-alive requests on this Conn.
+	// tmp  — socket read chunk; assem — HTTP message assembly; write_buf — response wire.
 	mut tmp := []u8{len: opts.read_chunk_size}
+	mut assem := []u8{cap: opts.read_chunk_size}
+	mut write_buf := []u8{}
 	mut first := true
 	for {
 		if !first {
@@ -179,7 +182,7 @@ fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerO
 		}
 		first = false
 
-		raw := read_message(mut c, mut leftover, mut tmp, opts) or {
+		raw := read_message(mut c, mut leftover, mut tmp, mut assem, opts) or {
 			msg := err.msg()
 			kind := classify_read_error(msg)
 			if kind != 'eof' {
@@ -261,10 +264,17 @@ fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerO
 		}
 		apply_response_defaults(mut resp, opts)
 
-		c.write_all(resp.to_bytes_for_method(req.method)) or { return }
+		// Serialize into conn-local write_buf (capacity retained across requests).
+		resp.to_bytes_for_method_into(mut write_buf, req.method)
+		c.write_all(write_buf) or { return }
 		if close_after {
 			return
 		}
+		// Message buffer is no longer needed; recycle capacity for next assembly.
+		// Request.body was a view into raw — safe only after handler + write finished.
+		// finish_message may return a length-limited view; assem still owns the
+		// underlying allocation and is truncated in place (cap retained).
+		recycle_assembly(mut assem)
 	}
 }
 
@@ -306,21 +316,32 @@ fn upgrade_read_timeout(opts ServerOptions) time.Duration {
 	return opts.read_timeout
 }
 
-fn read_message(mut c Conn, mut leftover []u8, mut tmp []u8, opts ServerOptions) ![]u8 {
-	mut buf := leftover.clone()
-	leftover = []u8{}
+// read_message assembles one HTTP message into `assem`, reusing that buffer's
+// capacity across keep-alive requests. When leftover holds pipelined bytes it is
+// copied into assem (assem capacity reused when large enough). Empty leftover no
+// longer pays leftover.clone() into a fresh empty array.
+fn read_message(mut c Conn, mut leftover []u8, mut tmp []u8, mut assem []u8, opts ServerOptions) ![]u8 {
+	if leftover.len > 0 {
+		seed_assembly(mut assem, leftover)
+		leftover = []u8{}
+	} else {
+		// Truncate in place — keep capacity from prior keep-alive requests.
+		unsafe {
+			assem.len = 0
+		}
+	}
 
 	mut sent_100 := false
-	mut saw_bytes := buf.len > 0
+	mut saw_bytes := assem.len > 0
 	if saw_bytes {
 		// Already have data (from prior leftover); apply header timeout for the rest.
 		c.set_read_timeout(header_timeout(opts))
 	}
 
 	for {
-		if hdr_end := index_of_double_crlf(buf) {
+		if hdr_end := index_of_double_crlf(assem) {
 			body_start := hdr_end + 4
-			hdr := unsafe { buf[..hdr_end] }
+			hdr := unsafe { assem[..hdr_end] }
 
 			// TE + CL together is a protocol error (RFC 9112); reject before TE-not-supported.
 			te := transfer_encoding_present(hdr)
@@ -332,7 +353,7 @@ fn read_message(mut c Conn, mut leftover []u8, mut tmp []u8, opts ServerOptions)
 				return error('transfer-encoding not supported')
 			}
 
-			cl := cl_opt or { return finish_message(mut leftover, buf, body_start, 0) }
+			cl := cl_opt or { return finish_message(mut leftover, assem, body_start, 0) }
 			if cl < 0 {
 				return error('negative content-length')
 			}
@@ -344,7 +365,7 @@ fn read_message(mut c Conn, mut leftover []u8, mut tmp []u8, opts ServerOptions)
 			c.set_read_timeout(opts.read_timeout)
 
 			if !sent_100 && cl > 0 && expects_100_continue(hdr) {
-				if buf.len < body_start + cl {
+				if assem.len < body_start + cl {
 					c.write_all('HTTP/1.1 100 Continue\r\n\r\n'.bytes()) or {
 						return error('write 100-continue failed')
 					}
@@ -353,25 +374,25 @@ fn read_message(mut c Conn, mut leftover []u8, mut tmp []u8, opts ServerOptions)
 			}
 
 			total := body_start + cl
-			for buf.len < total {
+			for assem.len < total {
 				n := c.read(mut tmp) or { return err }
 				if n <= 0 {
 					return error('eof during body')
 				}
-				buf << tmp[..n]
-				if buf.len > opts.max_header_bytes + opts.max_body_bytes {
+				assem << tmp[..n]
+				if assem.len > opts.max_header_bytes + opts.max_body_bytes {
 					return error('message too large')
 				}
 			}
-			return finish_message(mut leftover, buf, body_start, cl)
+			return finish_message(mut leftover, assem, body_start, cl)
 		}
 
-		if buf.len > opts.max_header_bytes {
+		if assem.len > opts.max_header_bytes {
 			return error('headers too large')
 		}
 		n := c.read(mut tmp) or { return err }
 		if n <= 0 {
-			if buf.len == 0 {
+			if assem.len == 0 {
 				return error('eof')
 			}
 			return error('eof during headers')
@@ -381,9 +402,31 @@ fn read_message(mut c Conn, mut leftover []u8, mut tmp []u8, opts ServerOptions)
 			saw_bytes = true
 			c.set_read_timeout(header_timeout(opts))
 		}
-		buf << tmp[..n]
+		assem << tmp[..n]
 	}
 	return error('unreachable')
+}
+
+// seed_assembly copies `src` into assem, reusing capacity when possible.
+fn seed_assembly(mut assem []u8, src []u8) {
+	if assem.cap < src.len {
+		assem = []u8{len: src.len}
+	} else {
+		unsafe {
+			assem.len = src.len
+		}
+	}
+	for i in 0 .. src.len {
+		assem[i] = src[i]
+	}
+}
+
+// recycle_assembly truncates the conn-local assembly buffer after the request
+// body view is no longer live, keeping capacity for the next keep-alive read.
+fn recycle_assembly(mut assem []u8) {
+	unsafe {
+		assem.len = 0
+	}
 }
 
 // finish_message hands off one complete HTTP message from the assembly buffer.

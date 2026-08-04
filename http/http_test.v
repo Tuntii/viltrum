@@ -408,6 +408,34 @@ fn test_is_head_method_helper() {
 	assert !is_head_method('')
 }
 
+// PR5: into-builder matches to_bytes_for_method and reuses capacity across calls.
+fn test_to_bytes_for_method_into_reuses_capacity() {
+	r := Response.text(200, 'hello')
+	mut buf := []u8{}
+	r.to_bytes_for_method_into(mut buf, 'GET')
+	first := buf.clone()
+	assert first.bytestr() == r.to_bytes_for_method('GET').bytestr()
+	cap_after_first := buf.cap
+	assert cap_after_first >= first.len
+
+	r2 := Response.text(200, 'hi')
+	r2.to_bytes_for_method_into(mut buf, 'GET')
+	assert buf.bytestr() == r2.to_bytes_for_method('GET').bytestr()
+	// Smaller second response should not grow capacity.
+	assert buf.cap == cap_after_first
+	assert buf.bytestr().ends_with('hi')
+
+	// HEAD still omits body when writing into a reused buffer.
+	r.to_bytes_for_method_into(mut buf, 'HEAD')
+	s := buf.bytestr()
+	assert s.contains('Content-Length: 5')
+	sep := s.index('\r\n\r\n') or {
+		assert false
+		return
+	}
+	assert s[sep + 4..].len == 0
+}
+
 fn test_absolute_form_target() {
 	raw := 'GET http://example.com/api/hi?x=1 HTTP/1.1\r\nHost: example.com\r\n\r\n'.bytes()
 	req := parse_request(raw) or {

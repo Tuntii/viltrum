@@ -232,3 +232,24 @@ fn test_finish_message_zero_body() {
 	assert msg.len == buf.len
 	assert leftover.len == 0
 }
+
+// PR5: seed_assembly reuses capacity; recycle_assembly truncates without shrinking cap.
+fn test_seed_and_recycle_assembly() {
+	mut assem := []u8{cap: 64}
+	src := 'GET / HTTP/1.1\r\nHost: x\r\n\r\n'.bytes()
+	seed_assembly(mut assem, src)
+	assert assem.len == src.len
+	assert assem.bytestr() == src.bytestr()
+	cap1 := assem.cap
+	assert cap1 >= src.len
+
+	// Second seed into the same buffer (smaller payload) keeps capacity.
+	src2 := 'ping'.bytes()
+	seed_assembly(mut assem, src2)
+	assert assem.bytestr() == 'ping'
+	assert assem.cap == cap1
+
+	recycle_assembly(mut assem)
+	assert assem.len == 0
+	assert assem.cap == cap1
+}

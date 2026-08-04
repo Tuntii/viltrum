@@ -44,9 +44,9 @@ leftover.clone() → grow buf via conn.read(tmp) → find \r\n\r\n
 
 | Site | File | Cost class | Notes |
 |------|------|------------|-------|
-| `leftover.clone()` into `buf` | `engine.v` `read_message` L314 | copy / alloc | Every message; empty clone when no pipeline leftover |
-| `[]u8{len: opts.read_chunk_size}` (`tmp`, default 8 KiB) | `read_message` L317 | alloc | Fresh scratch buffer **per message**, not reused across keep-alive requests |
-| `buf << tmp[..n]` | `read_message` L366, L389 | alloc / copy | Dynamic growth of the assembly buffer (may reallocate) |
+| Conn-local `assem` (truncate / seed) | `engine.v` `read_message` | none / copy | Empty leftover: `assem.len=0` (cap kept). Pipelined leftover: seed into assem (cap reused) |
+| Conn-local `tmp` (8 KiB) | `handle_conn` → `read_message` | none | One read scratch per Conn (not per message) |
+| `assem << tmp[..n]` | `read_message` | alloc / copy | Grows only when cap exceeded; capacity retained across keep-alive (PR5) |
 | `index_of_double_crlf` | `engine.v` L403 | none (CPU scan) | Byte walk, no heap |
 | `content_length_from_headers` | `engine.v` L416 | alloc / copy | `header_bytes.bytestr()` + `split('\r\n')` + `to_lower()` on each line |
 | `transfer_encoding_present` | `engine.v` L430 | alloc / copy | **Second** full header `bytestr` + `split` + `to_lower` on same bytes |
@@ -81,11 +81,11 @@ Out of library control, but common costs:
 
 | Site | File | Cost class | Notes |
 |------|------|------------|-------|
-| Pre-sized `[]u8` builder | `http.v` `to_bytes_for_method` | alloc | One buffer; status + headers + body (PR4) |
+| Pre-sized `[]u8` into conn-local scratch | `http.v` `to_bytes_for_method_into` | none / alloc | Reuses `write_buf` cap on keep-alive (PR5); grows only if need > cap |
 | Known-header casing cache | `http.v` `append_wire_header_name` | none | Hot names (`content-type`, `connection`, …) fixed match; no split/join |
 | `canonicalize_header_name` | `http.v` | alloc | Only **unknown** custom headers |
 | Body append into wire buffer | `http.v` | copy | Response body once into the same `[]u8` |
-| `write_tcp` / `conn.write` | `engine.v` | syscall | Full write loop; may split if short write |
+| `write_all` / `conn.write` | `engine.v` | syscall | Full write loop; may split if short write |
 
 `apply_response_defaults` is cheap when `send_date` is off and `server_header` is empty (bench default).
 
@@ -100,9 +100,9 @@ Note: rows for per-message `tmp` and engine CL/TE string scans describe the pre-
 | Step | Cost class | Severity | GET `/` | POST small JSON |
 |------|------------|----------|---------|-----------------|
 | `accept` + `spawn` | syscall / runtime | low* | once per TCP, amortized by keep-alive | same |
-| `tmp` 8 KiB alloc per message | alloc | med | every request | every request |
-| `leftover.clone` (empty) | alloc | low | every request | every request |
-| Grow `buf` via `<<` | alloc / copy | med | usually one `read` | often one `read` if CL fits first chunk |
+| Conn-local `tmp` / `assem` / `write_buf` | none | low | reused (PR5) | reused (PR5) |
+| Seed leftover into assem (pipeline only) | copy | low | rare | rare |
+| Grow `assem` via `<<` | alloc / copy | low / med | only when cap exceeded | same |
 | Engine CL scan (`bytestr`+`split`) | alloc / copy | **high** | yes | yes |
 | Engine TE scan (duplicate string work) | alloc / copy | **high** | yes | yes |
 | Engine Expect scan | alloc / copy | low / med | rare | only with `Expect: 100-continue` |
@@ -128,7 +128,7 @@ On a normal keep-alive request the library **used to**:
 3. Stringify and split header bytes **twice** in the engine (CL + TE) **before** parse does the same logical work again into `HeaderMap`.
 4. Rebuild the response as a growing string with **canonicalized** header names, then copy body into the final `[]u8` for `write`.
 
-**Status:** (2) full-message `bytestr` removed in PR2; (1)+(body half of 2) single ownership in PR3; (4) response serialize in PR4; engine CL/TE string scans addressed in #9. Remaining: conn-local assembly reuse (PR5).
+**Status:** (2) full-message `bytestr` removed in PR2; (1)+(body half of 2) single ownership in PR3; (4) response serialize in PR4; (conn assembly + write scratch) reuse in PR5; engine CL/TE string scans addressed in #9. Remaining: multi-accept experiment (PR6), honest RESULTS (PR7).
 
 ---
 
@@ -148,8 +148,9 @@ On a normal keep-alive request the library **used to**:
    - Was: growing string `+=` + per-header `canonicalize_header_name` + full `out.bytes()`.  
    - Now: pre-sized `[]u8` builder; known-header casing cache; canonicalize only for custom names.
 
-4. **Reuse `tmp` (and optionally assembly buf) on the connection (med, easy)**  
-   - Allocate `tmp` once in `handle_conn` and pass into `read_message` instead of `[]u8{len: read_chunk_size}` every message.
+4. **Reuse `tmp` / assembly / write scratch on the connection** — **done (PR5 / #21)**  
+   - Was: empty `leftover.clone()` + fresh response `[]u8` each request; `tmp` already per-conn.  
+   - Now: conn-local `assem` + `write_buf` across keep-alive; `to_bytes_for_method_into` reuses write capacity.
 
 **Not recommended as #9 work:** reactor/io_uring, pooled `HeaderMap` public API, zero-copy request types, TE/chunked support, chasing a 100k req/s claim.
 
@@ -167,10 +168,10 @@ On a normal keep-alive request the library **used to**:
 
 | | |
 |--|--|
-| **Date** | 2026-08-02 (updated) |
-| **Path** | Fix (micro-opts #2, #4, body ownership #1 / PR3, serialize #3 / PR4) |
-| **Not done** | Conn assembly reuse (PR5), public API, reactor, HTTP/2 |
-| **Follow-up** | Epic **v0.8** / [#16](https://github.com/Tuntii/viltrum/issues/16) (PR5–PR7). Baseline vs Axum: `benches/compare/` |
+| **Date** | 2026-08-05 (updated) |
+| **Path** | Fix (micro-opts #2, #4, body ownership #1 / PR3, serialize #3 / PR4, conn buffers / PR5) |
+| **Not done** | Multi-accept experiment (PR6), public API, reactor, HTTP/2 |
+| **Follow-up** | Epic **v0.8** / [#16](https://github.com/Tuntii/viltrum/issues/16) (PR6–PR7). Baseline vs Axum: `benches/compare/` |
 
 **Landed:**
 
@@ -178,5 +179,6 @@ On a normal keep-alive request the library **used to**:
 2. **Engine CL/TE pre-scan without full stringification** — `content_length_from_headers` / `transfer_encoding_present` use byte-level case-insensitive field scan (`header_value_ci`) instead of `bytestr` + `split` + `to_lower` twice. Reject-before-body and TE+CL conflict behavior unchanged. `expects_100_continue` left as string path (out of scope).
 3. **Single message ownership (PR3 / #19)** — `finish_message` hands off the assembly buffer on exact-length reads (no full-message clone); over-read clones only the leftover tail. `parse_request` takes `Request.body` as a slice of that buffer (no second body `.clone()`). One body ownership path for the engine → parse hand-off.
 4. **Response `[]u8` builder + header casing cache (PR4 / #20)** — `to_bytes_for_method` writes a pre-sized byte buffer (no growing string + `out.bytes()`). Known headers use fixed wire casing; `canonicalize_header_name` only for custom fields. HEAD check is case-insensitive without full `to_upper`.
+5. **Conn-local assembly + write scratch (PR5 / #21)** — `read_message` assembles into conn-local `assem` (truncate in place; seed from leftover when pipelined). Hot-path write uses `to_bytes_for_method_into` into conn-local `write_buf`. Capacity retained across keep-alive requests after handler + write complete.
 
-**Tests:** `v test http/ router/ engine/ ws/` — green (incl. finish_message, wire-casing / HEAD case tests).
+**Tests:** `v test http/ router/ engine/ ws/` — green (incl. seed/recycle + into-builder reuse tests).

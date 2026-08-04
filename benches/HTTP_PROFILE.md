@@ -128,7 +128,7 @@ On a normal keep-alive request the library **used to**:
 3. Stringify and split header bytes **twice** in the engine (CL + TE) **before** parse does the same logical work again into `HeaderMap`.
 4. Rebuild the response as a growing string with **canonicalized** header names, then copy body into the final `[]u8` for `write`.
 
-**Status:** (2) full-message `bytestr` removed in PR2; (1)+(body half of 2) single ownership in PR3; (4) response serialize in PR4; (conn assembly + write scratch) reuse in PR5; multi-accept/`SO_REUSEPORT` measured in PR6 (default still single); engine CL/TE string scans addressed in #9. Remaining: honest RESULTS (PR7).
+**Status:** PR2–PR7 complete. Hot-path double work addressed; multi-accept measured (default single); RESULTS re-locked 2026-08-05 (E ~98k, peer ~2×). League bar not met — remaining cost is largely runtime/OS, not another message clone.
 
 ---
 
@@ -168,10 +168,10 @@ On a normal keep-alive request the library **used to**:
 
 | | |
 |--|--|
-| **Date** | 2026-08-05 (updated) |
-| **Path** | Fix (micro-opts #2, #4, body ownership #1 / PR3, serialize #3 / PR4, conn buffers / PR5, multi-accept measure / PR6) |
-| **Not done** | Public API, reactor, HTTP/2; league bar still open |
-| **Follow-up** | Epic **v0.8** / [#16](https://github.com/Tuntii/viltrum/issues/16) (PR7 docs). Baseline vs Axum: `benches/compare/` |
+| **Date** | 2026-08-05 (PR7 closeout) |
+| **Path** | Fix (PR2–PR5 alloc/serialize; PR6 multi-accept measure only) |
+| **Not done** | League bar (E ≥150k or ≥0.75× peer); reactor / HTTP/2; wrapping foreign stacks |
+| **Follow-up** | Epic **v0.8** / [#16](https://github.com/Tuntii/viltrum/issues/16) **closed** after PR7 docs. Further gains need runtime-level work, not another HTTP clone. |
 
 **Landed:**
 
@@ -181,5 +181,18 @@ On a normal keep-alive request the library **used to**:
 4. **Response `[]u8` builder + header casing cache (PR4 / #20)** — `to_bytes_for_method` writes a pre-sized byte buffer (no growing string + `out.bytes()`). Known headers use fixed wire casing; `canonicalize_header_name` only for custom fields. HEAD check is case-insensitive without full `to_upper`.
 5. **Conn-local assembly + write scratch (PR5 / #21)** — `read_message` assembles into conn-local `assem` (truncate in place; seed from leftover when pipelined). Hot-path write uses `to_bytes_for_method_into` into conn-local `write_buf`. Capacity retained across keep-alive requests after handler + write complete.
 6. **Multi-accept / `SO_REUSEPORT` (PR6 / #22)** — optional `accept_workers` (default **1**). Linux multi-listener helps dial storms; keep-alive E/F gain is small/noisy. **Default stays single listener.** See [compare/REUSEPORT.md](./compare/REUSEPORT.md).
+7. **Honest closeout (PR7 / #23)** — RESULTS + compare table re-locked 2026-08-05: E ~**98k** / F ~**91k** vs Axum ~191k / ~225k. League bar **not** met; remaining gap attributed mainly to V runtime + per-conn spawn + OS path, not missing buffer clones on the HTTP hot path.
 
 **Tests:** `v test http/ router/ engine/ ws/` — green (incl. seed/recycle + into-builder reuse + multi-worker smoke).
+
+### Remaining cost (post-PR6, for the next person)
+
+| Layer | Still pays | Why it is not “one more PR2-style fix” |
+|-------|------------|----------------------------------------|
+| Accept + `spawn handle_conn` | syscall + runtime | One goroutine per TCP conn; multi-listener (PR6) helps dial storms only |
+| Per-request string fields | method/target/header `bytestr` | Needed for `HeaderMap` / handler API unless public types change |
+| Handler `Response` construction | map + body bytes | App-owned; library defaults stay cheap when Date/Server off |
+| OS write path | ≥1 `write` per response | Already single buffer (PR4/PR5); two-write vectored optional later |
+| V GC / scheduler | global | Peer (Tokio) is a different concurrency model |
+
+Do **not** claim multi-hundred-k RPS without re-measuring; do **not** re-open the double-clone story without a new profile.

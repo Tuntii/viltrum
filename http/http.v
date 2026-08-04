@@ -262,7 +262,9 @@ pub fn should_close(req Request, resp Response) bool {
 }
 
 // parse_request walks request-line + header fields on raw bytes. It does not
-// string-convert the full message (body stays binary until cloned when needed).
+// string-convert the full message. Body octets are a slice of `raw` (no second
+// materialization): engine `finish_message` already owns the message buffer, so
+// Request.body shares that storage instead of cloning the body again.
 pub fn parse_request(raw []u8) !Request {
 	sep := index_of_double_crlf(raw) or { return error('incomplete headers') }
 	body_start := sep + 4
@@ -324,7 +326,10 @@ pub fn parse_request(raw []u8) !Request {
 			return error('incomplete body')
 		}
 		if n > 0 {
-			body = raw[body_start..body_start + n].clone()
+			// View into message buffer (no copy). Safe while Request.body is live: V GC
+			// keeps the underlying allocation; engine keeps `raw` for the request turn.
+			// Explicit unsafe avoids V's default implicit slice clone.
+			body = unsafe { raw[body_start..body_start + n] }
 		}
 	}
 

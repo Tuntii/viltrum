@@ -203,3 +203,32 @@ fn test_header_value_ci_first_match_wins() {
 	}
 	assert cl == 1
 }
+
+// PR3: exact-length assembly buffer is handed off (no full-message clone).
+fn test_finish_message_exact_length() {
+	mut leftover := []u8{}
+	// body_start=10, cl=5 → total 15; buf is exact.
+	buf := '0123456789hello'.bytes()
+	msg := finish_message(mut leftover, buf, 10, 5)
+	assert msg.len == 15
+	assert msg.bytestr() == '0123456789hello'
+	assert leftover.len == 0
+}
+
+// PR3: over-read clones only the leftover tail; message body is not double-copied.
+fn test_finish_message_with_leftover() {
+	mut leftover := []u8{}
+	buf := '0123456789helloNEXT'.bytes()
+	msg := finish_message(mut leftover, buf, 10, 5)
+	assert msg.len == 15
+	assert msg.bytestr() == '0123456789hello'
+	assert leftover.bytestr() == 'NEXT'
+}
+
+fn test_finish_message_zero_body() {
+	mut leftover := []u8{}
+	buf := 'headers-only'.bytes()
+	msg := finish_message(mut leftover, buf, buf.len, 0)
+	assert msg.len == buf.len
+	assert leftover.len == 0
+}

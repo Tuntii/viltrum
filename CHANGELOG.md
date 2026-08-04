@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.6](https://github.com/Tuntii/viltrum/compare/v0.7.5...v0.7.6) (2026-08-04)
+
+### Performance Improvements
+
+* **http:** PR6 SO_REUSEPORT multi-listener experiment ([#22](https://github.com/Tuntii/viltrum/issues/22)) ([63e516d](https://github.com/Tuntii/viltrum/commit/63e516d8583d388e2204ac6056d8b1d1679c8d01)), closes [#16](https://github.com/Tuntii/viltrum/issues/16)
+
 ## [0.7.5](https://github.com/Tuntii/viltrum/compare/v0.7.4...v0.7.5) (2026-08-04)
 
 ### Performance Improvements

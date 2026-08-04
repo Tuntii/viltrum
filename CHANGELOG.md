@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.4](https://github.com/Tuntii/viltrum/compare/v0.7.3...v0.7.4) (2026-08-04)
+
+### Performance Improvements
+
+* **http:** PR4 response []u8 builder and header casing cache ([#20](https://github.com/Tuntii/viltrum/issues/20)) ([32a3284](https://github.com/Tuntii/viltrum/commit/32a32845dce657fe64a42190f5de750df070a0ae)), closes [#16](https://github.com/Tuntii/viltrum/issues/16)
+
 ## [0.7.3](https://github.com/Tuntii/viltrum/compare/v0.7.2...v0.7.3) (2026-08-04)
 
 ### Performance Improvements

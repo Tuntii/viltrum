@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.7](https://github.com/Tuntii/viltrum/compare/v0.7.6...v0.7.7) (2026-08-05)
+
+### Performance Improvements
+
+* **http:** experimental conn_workers pool (blocking) + A/B note ([50b5d4a](https://github.com/Tuntii/viltrum/commit/50b5d4a5139e278345ca263fdfbf7c9b3565042c))
+
 ## [0.7.6](https://github.com/Tuntii/viltrum/compare/v0.7.5...v0.7.6) (2026-08-04)
 
 ### Performance Improvements

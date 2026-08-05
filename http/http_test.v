@@ -466,3 +466,40 @@ fn test_options_asterisk_form() {
 	assert req.path == '*'
 	assert req.target == '*'
 }
+
+fn test_header_map_lowered_roundtrip() {
+	mut h := HeaderMap.new()
+	h.set_lowered('content-type', 'text/plain')
+	assert h.get_lowered('content-type')? == 'text/plain'
+	assert h.get('Content-Type')? == 'text/plain'
+	h.add_lowered('accept', 'a')
+	h.add_lowered('accept', 'b')
+	assert h.get_lowered('accept')? == 'a, b'
+}
+
+fn test_eq_ascii_ci() {
+	assert eq_ascii_ci('Close', 'close')
+	assert eq_ascii_ci('KEEP-ALIVE', 'keep-alive')
+	assert !eq_ascii_ci('close', 'keep-alive')
+	assert !eq_ascii_ci('clos', 'close')
+}
+
+fn test_should_close_mixed_case_connection() {
+	mut h := HeaderMap.new()
+	h.set_lowered('connection', 'Close')
+	req := Request{
+		method:  'GET'
+		target:  '/'
+		path:    '/'
+		version: 'HTTP/1.1'
+		headers: h
+		body:    []u8{}
+	}
+	resp := Response.text(200, 'ok')
+	assert should_close(req, resp)
+}
+
+fn test_bytes_to_lower_str() {
+	assert bytes_to_lower_str('Host'.bytes()) == 'host'
+	assert bytes_to_lower_str('CONTENT-LENGTH'.bytes()) == 'content-length'
+}

@@ -381,7 +381,7 @@ fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerO
 		}
 
 		if opts.require_host && req.version.starts_with('HTTP/1.1') {
-			if req.headers.get_or('host', '') == '' {
+			if req.headers.get_or_lowered('host', '') == '' {
 				mut resp := http.Response.bad_request('missing host header')
 				resp.set_connection_close()
 				apply_response_defaults(mut resp, opts)
@@ -425,9 +425,9 @@ fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerO
 		mut resp := handler(req)
 		close_after := http.should_close(req, resp)
 		if close_after {
-			resp.headers.set('Connection', 'close')
-		} else if resp.headers.get_or('connection', '') == '' {
-			resp.headers.set('Connection', 'keep-alive')
+			resp.headers.set_lowered('connection', 'close')
+		} else if resp.headers.get_or_lowered('connection', '') == '' {
+			resp.headers.set_lowered('connection', 'keep-alive')
 		}
 		apply_response_defaults(mut resp, opts)
 
@@ -448,11 +448,11 @@ fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerO
 // apply_response_defaults sets optional Date / Server when enabled and not already present.
 // Does not run for upgrade handlers (they write their own bytes on Conn).
 fn apply_response_defaults(mut resp http.Response, opts ServerOptions) {
-	if opts.send_date && resp.headers.get_or('date', '') == '' {
-		resp.headers.set('Date', http.http_date(time.utc()))
+	if opts.send_date && resp.headers.get_or_lowered('date', '') == '' {
+		resp.headers.set_lowered('date', http.http_date(time.utc()))
 	}
-	if opts.server_header.len > 0 && resp.headers.get_or('server', '') == '' {
-		resp.headers.set('Server', opts.server_header)
+	if opts.server_header.len > 0 && resp.headers.get_or_lowered('server', '') == '' {
+		resp.headers.set_lowered('server', opts.server_header)
 	}
 }
 

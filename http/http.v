@@ -16,12 +16,22 @@ pub fn HeaderMap.new() HeaderMap {
 }
 
 pub fn (mut h HeaderMap) set(name string, value string) {
-	h.values[name.to_lower()] = value
+	h.set_lowered(name.to_lower(), value)
+}
+
+// set_lowered stores under a key that is already lowercased (no to_lower).
+// Hot path for known headers and parse results.
+pub fn (mut h HeaderMap) set_lowered(key string, value string) {
+	h.values[key] = value
 }
 
 // add appends with comma if the header already exists (RFC 7230 combine).
 pub fn (mut h HeaderMap) add(name string, value string) {
-	key := name.to_lower()
+	h.add_lowered(name.to_lower(), value)
+}
+
+// add_lowered is add for an already-lowercased key.
+pub fn (mut h HeaderMap) add_lowered(key string, value string) {
 	if key in h.values {
 		h.values[key] = h.values[key] + ', ' + value
 	} else {
@@ -30,7 +40,11 @@ pub fn (mut h HeaderMap) add(name string, value string) {
 }
 
 pub fn (h &HeaderMap) get(name string) ?string {
-	key := name.to_lower()
+	return h.get_lowered(name.to_lower())
+}
+
+// get_lowered looks up a key that is already lowercased (no to_lower alloc).
+pub fn (h &HeaderMap) get_lowered(key string) ?string {
 	if key in h.values {
 		return h.values[key]
 	}
@@ -39,6 +53,10 @@ pub fn (h &HeaderMap) get(name string) ?string {
 
 pub fn (h &HeaderMap) get_or(name string, default_value string) string {
 	return h.get(name) or { default_value }
+}
+
+pub fn (h &HeaderMap) get_or_lowered(key string, default_value string) string {
+	return h.get_lowered(key) or { default_value }
 }
 
 pub struct Request {
@@ -132,9 +150,10 @@ pub fn Response.text(status int, body string) Response {
 		headers: HeaderMap.new()
 		body:    body.bytes()
 	}
-	r.headers.set('Content-Type', 'text/plain; charset=utf-8')
-	r.headers.set('Content-Length', '${r.body.len}')
-	r.headers.set('Connection', 'keep-alive')
+	// Keys already lower — avoid to_lower on every default response.
+	r.headers.set_lowered('content-type', 'text/plain; charset=utf-8')
+	r.headers.set_lowered('content-length', '${r.body.len}')
+	r.headers.set_lowered('connection', 'keep-alive')
 	return r
 }
 
@@ -145,9 +164,9 @@ pub fn Response.json(status int, body string) Response {
 		headers: HeaderMap.new()
 		body:    body.bytes()
 	}
-	r.headers.set('Content-Type', 'application/json; charset=utf-8')
-	r.headers.set('Content-Length', '${r.body.len}')
-	r.headers.set('Connection', 'keep-alive')
+	r.headers.set_lowered('content-type', 'application/json; charset=utf-8')
+	r.headers.set_lowered('content-length', '${r.body.len}')
+	r.headers.set_lowered('connection', 'keep-alive')
 	return r
 }
 
@@ -158,8 +177,8 @@ pub fn Response.empty(status int) Response {
 		headers: HeaderMap.new()
 		body:    []u8{}
 	}
-	r.headers.set('Content-Length', '0')
-	r.headers.set('Connection', 'keep-alive')
+	r.headers.set_lowered('content-length', '0')
+	r.headers.set_lowered('connection', 'keep-alive')
 	return r
 }
 
@@ -184,9 +203,9 @@ pub fn Response.switching_protocols(upgrade_proto string) Response {
 		headers: HeaderMap.new()
 		body:    []u8{}
 	}
-	r.headers.set('Connection', 'Upgrade')
+	r.headers.set_lowered('connection', 'Upgrade')
 	if upgrade_proto.len > 0 {
-		r.headers.set('Upgrade', upgrade_proto)
+		r.headers.set_lowered('upgrade', upgrade_proto)
 	}
 	return r
 }
@@ -197,7 +216,7 @@ pub fn (mut r Response) header(name string, value string) Response {
 }
 
 pub fn (mut r Response) set_connection_close() {
-	r.headers.set('Connection', 'close')
+	r.headers.set_lowered('connection', 'close')
 }
 
 pub fn (r &Response) to_bytes() []u8 {
@@ -262,18 +281,36 @@ pub fn (r &Response) to_bytes_for_method_into(mut out []u8, method string) {
 }
 
 pub fn should_close(req Request, resp Response) bool {
-	resp_conn := resp.headers.get_or('connection', '').to_lower()
-	if resp_conn == 'close' {
+	// Values compared case-insensitively without allocating to_lower strings.
+	resp_conn := resp.headers.get_or_lowered('connection', '')
+	if eq_ascii_ci(resp_conn, 'close') {
 		return true
 	}
-	req_conn := req.headers.get_or('connection', '').to_lower()
-	if req_conn == 'close' {
+	req_conn := req.headers.get_or_lowered('connection', '')
+	if eq_ascii_ci(req_conn, 'close') {
 		return true
 	}
 	if req.version.starts_with('HTTP/1.0') {
-		return req_conn != 'keep-alive'
+		return !eq_ascii_ci(req_conn, 'keep-alive')
 	}
 	return false
+}
+
+// eq_ascii_ci is true when s matches lower (ASCII lowercased literal) ignoring case.
+fn eq_ascii_ci(s string, lower string) bool {
+	if s.len != lower.len {
+		return false
+	}
+	for i in 0 .. s.len {
+		mut c := s[i]
+		if c >= `A` && c <= `Z` {
+			c += 32
+		}
+		if c != lower[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // parse_request walks request-line + header fields on raw bytes. It does not
@@ -306,7 +343,8 @@ pub fn parse_request(raw []u8) !Request {
 				return error('empty header name')
 			}
 			value := trim_ows(line[colon + 1..])
-			headers.add(name.bytestr(), value.bytestr())
+			// Lowercase field name while materializing; value kept as wire octets → string.
+			headers.add_lowered(bytes_to_lower_str(name), value.bytestr())
 		}
 
 		line_idx++
@@ -321,8 +359,9 @@ pub fn parse_request(raw []u8) !Request {
 	path := if path_raw == '*' { '*' } else { normalize_path(path_raw) }
 
 	// TE + Content-Length together is invalid (RFC 9112). TE alone (e.g. chunked) is unsupported.
-	te := headers.get('transfer-encoding') or { '' }
-	cl_hdr := headers.get('content-length') or { '' }
+	// Keys already lower in the map — no to_lower on lookup.
+	te := headers.get_lowered('transfer-encoding') or { '' }
+	cl_hdr := headers.get_lowered('content-length') or { '' }
 	if te.len > 0 && cl_hdr.len > 0 {
 		return error('transfer-encoding and content-length conflict')
 	}
@@ -331,8 +370,8 @@ pub fn parse_request(raw []u8) !Request {
 	}
 
 	mut body := []u8{}
-	if cl := headers.get('content-length') {
-		n := cl.int()
+	if cl_hdr.len > 0 {
+		n := cl_hdr.int()
 		if n < 0 {
 			return error('negative content-length')
 		}
@@ -440,6 +479,20 @@ fn trim_ows(buf []u8) []u8 {
 		return buf
 	}
 	return buf[a..b]
+}
+
+// bytes_to_lower_str materializes buf as a string with ASCII A–Z folded to lower.
+fn bytes_to_lower_str(buf []u8) string {
+	mut out := []u8{len: buf.len}
+	for i in 0 .. buf.len {
+		c := buf[i]
+		if c >= `A` && c <= `Z` {
+			out[i] = c + 32
+		} else {
+			out[i] = c
+		}
+	}
+	return out.bytestr()
 }
 
 // normalize_path collapses trailing slashes except for root "/".

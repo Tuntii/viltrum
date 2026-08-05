@@ -39,6 +39,10 @@ pub:
 	// N > 0 = accept enqueues Conn onto a channel; N workers run handle_conn
 	// (keep-alive stays on that worker). Experimental spike toward ~120k E.
 	conn_workers int
+	// use_epoll enables the Linux epoll single-thread reactor instead of
+	// spawn-per-conn (experimental). Cleartext only; upgrade/WS routes are
+	// not served on this path. Non-Linux returns an error from listen.
+	use_epoll bool
 }
 
 // ActiveConns tracks live connections for max_conns (mutex, not shared int — portable on V).
@@ -102,6 +106,13 @@ fn signal_stop_get(shared s SignalStop) bool {
 
 // listen_and_serve_full is the full server entry: HTTP handler + optional upgrade routes.
 pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRoute, opts ServerOptions) ! {
+	if opts.use_epoll {
+		if upgrades.len > 0 {
+			eprintln('[viltrum] use_epoll: upgrade/WS routes are not served on the reactor path')
+		}
+		serve_epoll(addr, handler, opts)!
+		return
+	}
 	workers := normalize_accept_workers(opts.accept_workers)
 	shared stopping := SignalStop{}
 	mut active := &ActiveConns{}

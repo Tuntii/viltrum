@@ -25,6 +25,8 @@ bash benches/compare/run_reuseport_exp.sh
 # Conn worker-pool spike (blocking I/O): spawn vs fixed pool
 bash benches/compare/run_conn_pool_exp.sh
 # see CONN_POOL.md — default remains conn_workers=0
+
+# Epoll reactor spike (Linux): ServerOptions.use_epoll — see REACTOR.md (default off)
 ```
 
 Needs: `v`, `cargo`, `oha`, `curl`.

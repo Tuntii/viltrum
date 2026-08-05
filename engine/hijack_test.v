@@ -651,6 +651,53 @@ fn test_normalize_accept_workers() {
 	}
 }
 
+// Epoll reactor smoke (Linux): use_epoll serves GET keep-alive without spawn-per-conn.
+fn test_use_epoll_serves_get() {
+	$if !linux {
+		return
+	}
+	addr := free_addr()
+	opts := ServerOptions{
+		handle_signals: false
+		use_epoll:      true
+		idle_timeout:   2 * time.second
+		read_timeout:   2 * time.second
+		write_timeout:  2 * time.second
+	}
+	handler := fn (req http.Request) http.Response {
+		return http.Response.text(200, 'epoll-ok')
+	}
+	spawn fn [handler, opts, addr] () {
+		listen_and_serve_full(addr, handler, [], opts) or {}
+	}()
+	wait_listen()
+	time.sleep(50 * time.millisecond)
+
+	for i in 0 .. 5 {
+		mut client := net.dial_tcp(addr) or {
+			assert false, 'dial ${i}: ${err}'
+			return
+		}
+		client.set_read_timeout(2 * time.second)
+		client.set_write_timeout(2 * time.second)
+		client.write('GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n'.bytes()) or {
+			client.close() or {}
+			assert false, 'write ${i}'
+			return
+		}
+		mut buf := []u8{len: 4096}
+		n := client.read(mut buf) or {
+			client.close() or {}
+			assert false, 'read ${i}: ${err}'
+			return
+		}
+		client.close() or {}
+		body := buf[..n].bytestr()
+		assert body.contains('200'), 'resp ${i}: ${body}'
+		assert body.contains('epoll-ok'), 'resp ${i}: ${body}'
+	}
+}
+
 // Worker-pool spike: conn_workers > 0 still serves keep-alive HTTP correctly.
 fn test_conn_workers_pool_serves_get() {
 	addr := free_addr()

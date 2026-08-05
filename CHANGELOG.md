@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.9](https://github.com/Tuntii/viltrum/compare/v0.7.8...v0.7.9) (2026-08-05)
+
+### Performance Improvements
+
+* **http:** experimental Linux epoll reactor (opt-in, default off) ([79adb02](https://github.com/Tuntii/viltrum/commit/79adb02f41e8c375f4934a279e514d146ad9916e))
+
 ## [0.7.8](https://github.com/Tuntii/viltrum/compare/v0.7.7...v0.7.8) (2026-08-05)
 
 ### Performance Improvements

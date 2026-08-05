@@ -34,6 +34,11 @@ pub:
 	// Linux SO_REUSEPORT multi-listener experiment (PR6 / #22). Non-Linux falls
 	// back to 1 with a stderr notice. Prefer keeping 1 unless measure shows a win.
 	accept_workers int = 1
+	// conn_workers is how many fixed connection workers process accepted Conns.
+	// Default 0 = spawn one goroutine per connection (current production path).
+	// N > 0 = accept enqueues Conn onto a channel; N workers run handle_conn
+	// (keep-alive stays on that worker). Experimental spike toward ~120k E.
+	conn_workers int
 }
 
 // ActiveConns tracks live connections for max_conns (mutex, not shared int — portable on V).
@@ -100,6 +105,7 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 	workers := normalize_accept_workers(opts.accept_workers)
 	shared stopping := SignalStop{}
 	mut active := &ActiveConns{}
+	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, active)
 
 	if workers == 1 {
 		mut listener := net.listen_tcp(.ip, addr)!
@@ -117,9 +123,14 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 		}
 		defer {
 			listener.close() or {}
+			pool.close()
 		}
-		eprintln('[viltrum] listening on http://${addr}')
-		accept_loop(mut listener, handler, upgrades, opts, active, shared stopping)
+		if pool.enabled {
+			eprintln('[viltrum] listening on http://${addr} (conn_workers=${pool.n})')
+		} else {
+			eprintln('[viltrum] listening on http://${addr}')
+		}
+		accept_loop(mut listener, handler, upgrades, opts, active, shared stopping, pool)
 		eprintln('[viltrum] stopped')
 		return
 	}
@@ -143,15 +154,20 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 	}
 	defer {
 		set.close_all()
+		pool.close()
 	}
-	eprintln('[viltrum] listening on http://${addr} (accept_workers=${workers}, SO_REUSEPORT)')
+	if pool.enabled {
+		eprintln('[viltrum] listening on http://${addr} (accept_workers=${workers}, SO_REUSEPORT, conn_workers=${pool.n})')
+	} else {
+		eprintln('[viltrum] listening on http://${addr} (accept_workers=${workers}, SO_REUSEPORT)')
+	}
 	// Spawn workers-1 loops; run the last on this thread.
 	for i in 0 .. workers - 1 {
 		mut l := set.items[i]
-		spawn accept_loop(mut l, handler, upgrades, opts, active, shared stopping)
+		spawn accept_loop(mut l, handler, upgrades, opts, active, shared stopping, pool)
 	}
 	mut main_l := set.items[workers - 1]
-	accept_loop(mut main_l, handler, upgrades, opts, active, shared stopping)
+	accept_loop(mut main_l, handler, upgrades, opts, active, shared stopping, pool)
 	eprintln('[viltrum] stopped')
 }
 
@@ -202,8 +218,64 @@ fn listen_tcp_reuseport(addr string) !&net.TcpListener {
 	return listener
 }
 
-// accept_loop is one accept + spawn-handle_conn loop on a single listener.
-fn accept_loop(mut listener net.TcpListener, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, shared stopping SignalStop) {
+// ConnPool is a fixed set of workers that run handle_conn (optional, conn_workers > 0).
+struct ConnPool {
+	enabled bool
+	n       int
+	ch      chan Conn
+}
+
+fn start_conn_pool(n int, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns) ConnPool {
+	if n <= 0 {
+		return ConnPool{
+			enabled: false
+		}
+	}
+	// Bounded queue: backpressure into accept when workers are saturated.
+	mut qcap := n * 64
+	if qcap < 64 {
+		qcap = 64
+	}
+	ch := chan Conn{cap: qcap}
+	track := opts.max_conns > 0
+	for _ in 0 .. n {
+		spawn conn_worker(ch, handler, upgrades, opts, active, track)
+	}
+	return ConnPool{
+		enabled: true
+		n:       n
+		ch:      ch
+	}
+}
+
+fn (p ConnPool) close() {
+	if p.enabled {
+		p.ch.close()
+	}
+}
+
+fn (p ConnPool) submit(c Conn) {
+	p.ch <- c
+}
+
+fn conn_worker(ch chan Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, track bool) {
+	for {
+		c := <-ch or { return }
+		handle_conn(c, handler, upgrades, opts, active, track)
+	}
+}
+
+// dispatch_conn hands a Conn to the pool or spawns handle_conn (production default).
+fn dispatch_conn(c Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, track bool, pool ConnPool) {
+	if pool.enabled {
+		pool.submit(c)
+		return
+	}
+	spawn handle_conn(c, handler, upgrades, opts, active, track)
+}
+
+// accept_loop is one accept + dispatch loop on a single listener.
+fn accept_loop(mut listener net.TcpListener, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, shared stopping SignalStop, pool ConnPool) {
 	track := opts.max_conns > 0
 	for {
 		// handle_signals: poll stop flag without using `if shared_bool` (V pitfall).
@@ -241,8 +313,8 @@ fn accept_loop(mut listener net.TcpListener, handler Handler, upgrades []Upgrade
 		}
 
 		c := Conn.wrap(mut tcp, []u8{})
-		// Pass Conn by value into the worker (ownership of the socket/ssl handle).
-		spawn handle_conn(c, handler, upgrades, opts, active, track)
+		// Ownership of the socket moves to a worker (pool) or a new goroutine (spawn).
+		dispatch_conn(c, handler, upgrades, opts, active, track, pool)
 	}
 }
 

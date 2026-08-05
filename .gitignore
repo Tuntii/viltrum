@@ -26,8 +26,10 @@ vls.log
 /benches/compare/**
 !/benches/compare/README.md
 !/benches/compare/REUSEPORT.md
+!/benches/compare/CONN_POOL.md
 !/benches/compare/run_vs_axum.sh
 !/benches/compare/run_reuseport_exp.sh
+!/benches/compare/run_conn_pool_exp.sh
 !/benches/compare/axum/
 /benches/compare/axum/**
 !/benches/compare/axum/Cargo.toml

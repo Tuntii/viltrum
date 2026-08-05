@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.8](https://github.com/Tuntii/viltrum/compare/v0.7.7...v0.7.8) (2026-08-05)
+
+### Performance Improvements
+
+* **http:** HeaderMap lowered hot path without extra to_lower ([ada4acb](https://github.com/Tuntii/viltrum/commit/ada4acb5d2ac3bed9a4a293df394ac051a631d20))
+
 ## [0.7.7](https://github.com/Tuntii/viltrum/compare/v0.7.6...v0.7.7) (2026-08-05)
 
 ### Performance Improvements

@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-08-11 · current release: **v0.8.0**
+Last updated: 2026-08-11 · current release: **v0.8.1**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP accept loop and HTTP/1.1 framing. Not a thin wrapper.
 

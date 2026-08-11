@@ -102,21 +102,25 @@ fn main() {
 
 ```v
 import time
-import viltrum { new, ServerOptions }
+import viltrum { new, ServerOptions, new_conn_stats }
 
+mut stats := new_conn_stats()
 mut app := new()
 app.server_options(ServerOptions{
 	max_body_bytes:  1 << 20
 	max_conns:       1024
+	drain_timeout:   10 * time.second // wait in-flight after SIGINT/SIGTERM
+	stats:           stats            // optional live counters
 	read_timeout:    30 * time.second
 	idle_timeout:    60 * time.second
 	handle_signals:  true // SIGINT/SIGTERM stop accept loop
 	send_date:       true
 	server_header:   'viltrum'
 })
+// snap := stats.snapshot() // active, accepted, rejected_max, closed
 ```
 
-Defaults are conservative. Raise timeouts for long-lived WebSockets; see [ws.md](./ws.md).
+Defaults are conservative. Raise timeouts for long-lived WebSockets; see [ws.md](./ws.md). Drain and stats: [connection.md](./connection.md).
 
 ## Next
 

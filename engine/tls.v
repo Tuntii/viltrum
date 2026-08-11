@@ -47,8 +47,8 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 		read_timeout: opts.read_timeout
 	})!
 	shared stopping := SignalStop{}
-	mut active := &ActiveConns{}
-	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, active)
+	mut stats := resolve_stats(opts)
+	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, stats)
 
 	if opts.handle_signals {
 		os.signal_opt(.int, fn [shared stopping, mut listener] () {
@@ -65,7 +65,6 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 
 	defer {
 		listener.shutdown() or {}
-		pool.close()
 	}
 	if pool.enabled {
 		eprintln('[viltrum] listening on https://${addr} (conn_workers=${pool.n})')
@@ -90,28 +89,27 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 			continue
 		}
 
-		track := opts.max_conns > 0
-		if track {
-			mut ok := false
-			unsafe {
-				mut a := &ActiveConns(active)
-				ok = a.try_acquire(opts.max_conns)
-			}
-			if !ok {
-				mut busy := http.Response.text(503, 'service unavailable')
-				busy.set_connection_close()
-				apply_response_defaults(mut busy, opts)
-				// Best-effort 503; do not keep the TLS conn.
-				mut tmp := Conn.wrap_ssl(ssl, []u8{})
-				tmp.write_all(busy.to_bytes()) or {}
-				tmp.close() or {}
-				continue
-			}
+		mut ok := false
+		unsafe {
+			mut s := &ConnStats(stats)
+			ok = s.try_acquire(opts.max_conns)
+		}
+		if !ok {
+			mut busy := http.Response.text(503, 'service unavailable')
+			busy.set_connection_close()
+			apply_response_defaults(mut busy, opts)
+			// Best-effort 503; do not keep the TLS conn.
+			mut tmp := Conn.wrap_ssl(ssl, []u8{})
+			tmp.write_all(busy.to_bytes()) or {}
+			tmp.close() or {}
+			continue
 		}
 
 		c := Conn.wrap_ssl(ssl, []u8{})
 		// Ownership of the ssl handle moves to pool worker or spawn.
-		dispatch_conn(c, handler, upgrades, opts, active, track, pool)
+		dispatch_conn(c, handler, upgrades, opts, stats, pool)
 	}
+	pool.close()
+	wait_drain(mut stats, opts.drain_timeout)
 	eprintln('[viltrum] stopped')
 }

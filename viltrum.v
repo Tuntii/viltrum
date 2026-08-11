@@ -19,6 +19,17 @@ pub type Middleware = fn (next Handler) Handler
 
 pub type ServerOptions = engine.ServerOptions
 
+// ConnStats is a live connection counter (max_conns, drain, ops). Pass via ServerOptions.stats.
+pub type ConnStats = engine.ConnStats
+
+// ConnStatsSnapshot is a point-in-time view from ConnStats.snapshot().
+pub type ConnStatsSnapshot = engine.ConnStatsSnapshot
+
+// new_conn_stats allocates a heap ConnStats for ServerOptions.stats.
+pub fn new_conn_stats() &ConnStats {
+	return engine.new_conn_stats()
+}
+
 // Conn is the upgrade/hijack stream (engine.Conn). Use this in UpgradeFn handlers.
 pub type Conn = engine.Conn
 

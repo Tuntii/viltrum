@@ -106,6 +106,8 @@ All new non-HTTP protocols should use `Conn`, not `net.TcpConn` directly:
 | Option | Effect |
 |--------|--------|
 | `max_conns` | Caps concurrent accepted connections (HTTP + upgrade). Excess accepts get **503** + `Connection: close`, then TCP close. |
+| `drain_timeout` | After accept stops, wait for active conns (including hijacked) up to this duration. Default 0 = no wait. |
+| `stats` | Optional `&ConnStats` for live active/accepted/rejected/closed counters. |
 | `read_header_timeout` | Header assembly phase; `0` → use `read_timeout`. |
 | `read_timeout` / `write_timeout` | HTTP active phases; after hijack, **read** becomes `max(read_timeout, idle_timeout)` and **write** stays `write_timeout`. Change either on `Conn` inside the handler if needed. |
 | `idle_timeout` | HTTP keep-alive wait **before** the next request. After hijack it also feeds the post-upgrade read deadline via `max(read_timeout, idle_timeout)`. |

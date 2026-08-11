@@ -92,12 +92,16 @@ Inspired by [fastapi/full-stack-fastapi-template](https://github.com/fastapi/ful
 ## Server options sketch
 
 ```v
-import viltrum { new, ServerOptions }
+import time
+import viltrum { new, ServerOptions, new_conn_stats }
 
+mut stats := new_conn_stats()
 mut app := new()
 app.server_options(ServerOptions{
 	max_body_bytes: 256 * 1024
 	max_conns:      1024
+	drain_timeout:  10 * time.second
+	stats:          stats
 	send_date:      true
 	server_header:  'viltrum'
 	require_host:   true

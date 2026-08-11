@@ -19,7 +19,32 @@ Upgrade/hijack details: [upgrade.md](./upgrade.md).
 
 ## Accept
 
-`listen_and_serve_opt` binds TCP and `accept`s in a loop. Each accepted conn is handled in its own spawned task (`handle_conn`). SIGINT/SIGTERM (when `handle_signals` is true) close the listener and end the accept loop; in-flight handlers are not drained with a timeout (see roadmap v0.7+).
+`listen_and_serve_opt` binds TCP and `accept`s in a loop. Each accepted conn is handled in its own spawned task (`handle_conn`). SIGINT/SIGTERM (when `handle_signals` is true) close the listener and end the accept loop.
+
+### Graceful drain
+
+After the accept loop stops, if `ServerOptions.drain_timeout` is **> 0**, the engine waits up to that duration for in-flight connections to finish (active count → 0), then returns. Default **0** means no wait (previous behavior): `listen` returns as soon as accept ends while handlers may still run briefly.
+
+```v
+app.server_options(ServerOptions{
+	handle_signals: true
+	drain_timeout:  10 * time.second
+})
+```
+
+### Conn stats (ops)
+
+The engine always tracks live connections for `max_conns` and drain. To **observe** counters from your process, pass a heap `ConnStats`:
+
+```v
+mut stats := new_conn_stats()
+app.server_options(ServerOptions{
+	max_conns: 1024
+	stats:     stats
+})
+// later:
+snap := stats.snapshot() // active, accepted, rejected_max, closed
+```
 
 ## Read
 
@@ -78,6 +103,8 @@ If the request includes `Expect: 100-continue` and a non-negative `Content-Lengt
 | `idle_timeout` | 60s |
 | `read_header_timeout` | 0 (= `read_timeout`) |
 | `max_conns` | 0 (unlimited); excess accepts get **503** + close |
+| `drain_timeout` | 0 — after accept stops, wait for in-flight (0 = no wait) |
+| `stats` | `nil` — optional `&ConnStats` for live counters |
 | `send_date` | false — when true, add `Date` if handler omitted it |
 | `server_header` | `""` — when non-empty, add `Server` if handler omitted it |
 

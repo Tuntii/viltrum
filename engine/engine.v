@@ -22,6 +22,14 @@ pub:
 	read_header_timeout time.Duration
 	// max_conns bounds concurrent connections (0 = unlimited). Excess accepts get 503 then close.
 	max_conns int
+	// drain_timeout: after accept stops, wait for in-flight connections to finish
+	// (up to this duration). 0 (default) = return as soon as the accept loop ends
+	// (in-flight handlers may still be running). Used with SIGINT/SIGTERM shutdown.
+	drain_timeout time.Duration
+	// stats, if non-nil, is updated by the engine (active / accepted / rejected / closed).
+	// Pass a heap ConnStats you own to poll counters from outside the accept loop.
+	// When nil, the engine keeps an internal counter (still used for max_conns + drain).
+	stats &ConnStats = unsafe { nil }
 	// send_date adds Date (HTTP-date, UTC) when the handler did not set Date. Default off.
 	send_date bool
 	// server_header if non-empty sets Server when the handler did not. Default empty (omit).
@@ -45,32 +53,106 @@ pub:
 	use_epoll bool
 }
 
-// ActiveConns tracks live connections for max_conns (mutex, not shared int — portable on V).
-struct ActiveConns {
+// ConnStats is a thread-safe connection counter for max_conns, graceful drain, and ops.
+// Pass one via ServerOptions.stats to observe live numbers from your process.
+pub struct ConnStats {
 mut:
-	mu sync.Mutex
-	n  int
+	mu            sync.Mutex
+	active_       int
+	accepted_     u64
+	rejected_max_ u64
+	closed_       u64
 }
 
-fn (mut a ActiveConns) try_acquire(max int) bool {
-	a.mu.lock()
+// ConnStatsSnapshot is a point-in-time view of ConnStats counters.
+pub struct ConnStatsSnapshot {
+pub:
+	active       int
+	accepted     u64
+	rejected_max u64
+	closed       u64
+}
+
+// new_conn_stats allocates a heap ConnStats for ServerOptions.stats.
+pub fn new_conn_stats() &ConnStats {
+	return &ConnStats{}
+}
+
+// active returns the current number of live connections (accepted and not yet closed).
+pub fn (mut s ConnStats) active() int {
+	s.mu.lock()
 	defer {
-		a.mu.unlock()
+		s.mu.unlock()
 	}
-	if max > 0 && a.n >= max {
+	return s.active_
+}
+
+// snapshot returns accepted / rejected / closed totals plus active.
+pub fn (mut s ConnStats) snapshot() ConnStatsSnapshot {
+	s.mu.lock()
+	defer {
+		s.mu.unlock()
+	}
+	return ConnStatsSnapshot{
+		active:       s.active_
+		accepted:     s.accepted_
+		rejected_max: s.rejected_max_
+		closed:       s.closed_
+	}
+}
+
+fn (mut s ConnStats) try_acquire(max int) bool {
+	s.mu.lock()
+	defer {
+		s.mu.unlock()
+	}
+	if max > 0 && s.active_ >= max {
+		s.rejected_max_++
 		return false
 	}
-	a.n++
+	s.active_++
+	s.accepted_++
 	return true
 }
 
-fn (mut a ActiveConns) release() {
-	a.mu.lock()
+fn (mut s ConnStats) release() {
+	s.mu.lock()
 	defer {
-		a.mu.unlock()
+		s.mu.unlock()
 	}
-	if a.n > 0 {
-		a.n--
+	if s.active_ > 0 {
+		s.active_--
+	}
+	s.closed_++
+}
+
+fn resolve_stats(opts ServerOptions) &ConnStats {
+	if opts.stats != unsafe { nil } {
+		// Caller-owned heap pointer; engine only mutates via ConnStats methods.
+		return unsafe { opts.stats }
+	}
+	return &ConnStats{}
+}
+
+// wait_drain blocks until active connections reach 0 or timeout elapses.
+// timeout <= 0 means no wait (immediate return).
+fn wait_drain(mut stats ConnStats, timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+	start := time.now()
+	for {
+		if stats.active() <= 0 {
+			return
+		}
+		if time.since(start) >= timeout {
+			n := stats.active()
+			if n > 0 {
+				eprintln('[viltrum] drain timeout after ${timeout}: ${n} connection(s) still active')
+			}
+			return
+		}
+		time.sleep(5 * time.millisecond)
 	}
 }
 
@@ -115,8 +197,8 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 	}
 	workers := normalize_accept_workers(opts.accept_workers)
 	shared stopping := SignalStop{}
-	mut active := &ActiveConns{}
-	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, active)
+	mut stats := resolve_stats(opts)
+	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, stats)
 
 	if workers == 1 {
 		mut listener := net.listen_tcp(.ip, addr)!
@@ -134,14 +216,15 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 		}
 		defer {
 			listener.close() or {}
-			pool.close()
 		}
 		if pool.enabled {
 			eprintln('[viltrum] listening on http://${addr} (conn_workers=${pool.n})')
 		} else {
 			eprintln('[viltrum] listening on http://${addr}')
 		}
-		accept_loop(mut listener, handler, upgrades, opts, active, shared stopping, pool)
+		accept_loop(mut listener, handler, upgrades, opts, stats, shared stopping, pool)
+		pool.close()
+		wait_drain(mut stats, opts.drain_timeout)
 		eprintln('[viltrum] stopped')
 		return
 	}
@@ -165,7 +248,6 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 	}
 	defer {
 		set.close_all()
-		pool.close()
 	}
 	if pool.enabled {
 		eprintln('[viltrum] listening on http://${addr} (accept_workers=${workers}, SO_REUSEPORT, conn_workers=${pool.n})')
@@ -175,10 +257,12 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 	// Spawn workers-1 loops; run the last on this thread.
 	for i in 0 .. workers - 1 {
 		mut l := set.items[i]
-		spawn accept_loop(mut l, handler, upgrades, opts, active, shared stopping, pool)
+		spawn accept_loop(mut l, handler, upgrades, opts, stats, shared stopping, pool)
 	}
 	mut main_l := set.items[workers - 1]
-	accept_loop(mut main_l, handler, upgrades, opts, active, shared stopping, pool)
+	accept_loop(mut main_l, handler, upgrades, opts, stats, shared stopping, pool)
+	pool.close()
+	wait_drain(mut stats, opts.drain_timeout)
 	eprintln('[viltrum] stopped')
 }
 
@@ -236,7 +320,7 @@ struct ConnPool {
 	ch      chan Conn
 }
 
-fn start_conn_pool(n int, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns) ConnPool {
+fn start_conn_pool(n int, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, stats &ConnStats) ConnPool {
 	if n <= 0 {
 		return ConnPool{
 			enabled: false
@@ -248,9 +332,8 @@ fn start_conn_pool(n int, handler Handler, upgrades []UpgradeRoute, opts ServerO
 		qcap = 64
 	}
 	ch := chan Conn{cap: qcap}
-	track := opts.max_conns > 0
 	for _ in 0 .. n {
-		spawn conn_worker(ch, handler, upgrades, opts, active, track)
+		spawn conn_worker(ch, handler, upgrades, opts, stats)
 	}
 	return ConnPool{
 		enabled: true
@@ -269,25 +352,24 @@ fn (p ConnPool) submit(c Conn) {
 	p.ch <- c
 }
 
-fn conn_worker(ch chan Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, track bool) {
+fn conn_worker(ch chan Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, stats &ConnStats) {
 	for {
 		c := <-ch or { return }
-		handle_conn(c, handler, upgrades, opts, active, track)
+		handle_conn(c, handler, upgrades, opts, stats)
 	}
 }
 
 // dispatch_conn hands a Conn to the pool or spawns handle_conn (production default).
-fn dispatch_conn(c Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, track bool, pool ConnPool) {
+fn dispatch_conn(c Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, stats &ConnStats, pool ConnPool) {
 	if pool.enabled {
 		pool.submit(c)
 		return
 	}
-	spawn handle_conn(c, handler, upgrades, opts, active, track)
+	spawn handle_conn(c, handler, upgrades, opts, stats)
 }
 
 // accept_loop is one accept + dispatch loop on a single listener.
-fn accept_loop(mut listener net.TcpListener, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, shared stopping SignalStop, pool ConnPool) {
-	track := opts.max_conns > 0
+fn accept_loop(mut listener net.TcpListener, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, stats &ConnStats, shared stopping SignalStop, pool ConnPool) {
 	for {
 		// handle_signals: poll stop flag without using `if shared_bool` (V pitfall).
 		if opts.handle_signals && signal_stop_get(shared stopping) {
@@ -305,39 +387,35 @@ fn accept_loop(mut listener net.TcpListener, handler Handler, upgrades []Upgrade
 			continue
 		}
 
-		if track {
-			mut ok := false
-			unsafe {
-				mut a := &ActiveConns(active)
-				ok = a.try_acquire(opts.max_conns)
-			}
-			if !ok {
-				// Bound reached: short 503 then close (no keep-alive, no handler).
-				mut busy := http.Response.text(503, 'service unavailable')
-				busy.set_connection_close()
-				apply_response_defaults(mut busy, opts)
-				mut busy_c := Conn.wrap(mut tcp, []u8{})
-				busy_c.write_all(busy.to_bytes()) or {}
-				busy_c.close() or {}
-				continue
-			}
+		mut ok := false
+		unsafe {
+			mut s := &ConnStats(stats)
+			ok = s.try_acquire(opts.max_conns)
+		}
+		if !ok {
+			// Bound reached: short 503 then close (no keep-alive, no handler).
+			mut busy := http.Response.text(503, 'service unavailable')
+			busy.set_connection_close()
+			apply_response_defaults(mut busy, opts)
+			mut busy_c := Conn.wrap(mut tcp, []u8{})
+			busy_c.write_all(busy.to_bytes()) or {}
+			busy_c.close() or {}
+			continue
 		}
 
 		c := Conn.wrap(mut tcp, []u8{})
 		// Ownership of the socket moves to a worker (pool) or a new goroutine (spawn).
-		dispatch_conn(c, handler, upgrades, opts, active, track, pool)
+		dispatch_conn(c, handler, upgrades, opts, stats, pool)
 	}
 }
 
-fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, active &ActiveConns, track bool) {
+fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, stats &ConnStats) {
 	mut c := c_in
 	mut hijacked := false
 	defer {
-		if track {
-			unsafe {
-				mut a := &ActiveConns(active)
-				a.release()
-			}
+		unsafe {
+			mut s := &ConnStats(stats)
+			s.release()
 		}
 		if !hijacked {
 			c.close() or {}

@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-08-06 · current release: **v0.7.8**
+Last updated: 2026-08-11 · current release: **v0.7.9**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP accept loop and HTTP/1.1 framing. Not a thin wrapper.
 
@@ -54,6 +54,7 @@ Success looks like:
 | **In-process HTTPS / WSS** (`listen_tls`, mbedtls) | done (v0.7.0 line; design was “v0.6”) |
 | HTTP/1.1 hot-path PR1–PR7 (honest ceiling documented) | done (v0.7.1–0.7.6) |
 | HeaderMap lowered hot path; experimental conn pool / epoll | done (v0.7.7–0.7.8; opt-in / default off) |
+| Graceful drain + ConnStats ops counters | done (`drain_timeout`, `ServerOptions.stats`) |
 | Full-stack teaching starter | done ([full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template)) |
 | Minimal JSON field helpers | done |
 | Unit + integration tests, CI, examples | done |
@@ -193,8 +194,8 @@ Only pull when real use or repeated asks:
 
 | Item | Notes |
 |------|--------|
-| Graceful drain timeout (wait in-flight) | shutdown |
-| `max_conns` + metrics / ops hooks | observability |
+| Graceful drain timeout (wait in-flight) | **done** — `ServerOptions.drain_timeout` |
+| `max_conns` + metrics / ops hooks | **done** — `ConnStats` via `ServerOptions.stats` |
 | Multipart / file upload helpers | keep minimal or example-only |
 | Better JSON (codegen or opt-in) | not a full serde project by default |
 | HTTP/1.1 pipelining stress tests | correctness |
@@ -204,6 +205,11 @@ Only pull when real use or repeated asks:
 | RFC 8441 WS over H2 | almost certainly never |
 | HTTP/2, HTTP/3 | **not planned** unless strategy changes |
 | Middleware ecosystem / plugin repo | community first |
+
+### Shipped under 0.8+ demand
+
+- [x] `drain_timeout` — post-accept wait for active connections (cleartext + TLS)
+- [x] `ConnStats` / `new_conn_stats` / `snapshot()` — active, accepted, rejected_max, closed
 
 ---
 

@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-08-11 · current release: **v0.7.9**
+Last updated: 2026-08-11 · current release: **v0.8.0**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP accept loop and HTTP/1.1 framing. Not a thin wrapper.
 
@@ -39,7 +39,7 @@ Success looks like:
 
 ---
 
-## Current baseline (v0.7.8) — done
+## Current baseline (v0.8.0) — done
 
 | Area | Status |
 |------|--------|
@@ -72,10 +72,11 @@ v0.5    WebSocket (cleartext ws://)     done
 v0.5.x  Engine harden + measured perf   done (epic #3)
 v0.6*   TLS (https://) then WSS         done (shipped on 0.7.0 line)
 v0.7.x  Hot path + polish + starter     done through 0.7.8
-v0.8+   Demand-driven backlog           open
+v0.8.0  Drain + ConnStats (ops)              done
+v0.8+   Further demand-driven backlog        open
 ```
 
-\*Roadmap originally numbered TLS as **v0.6** and hot path as **v0.8**. Releases used **0.7.x** for both after 0.6.x patch history. Treat version themes below as source of truth; do not renumber old tags.
+\*Roadmap originally numbered TLS as **v0.6** and hot path as **v0.8**. Releases used **0.7.x** for both after 0.6.x patch history. Ops hooks shipped as **v0.8.0**. Treat version themes below as source of truth; do not renumber old tags.
 
 ---
 
@@ -198,7 +199,7 @@ Only pull when real use or repeated asks:
 | `max_conns` + metrics / ops hooks | **done** — `ConnStats` via `ServerOptions.stats` |
 | Multipart / file upload helpers | keep minimal or example-only |
 | Better JSON (codegen or opt-in) | not a full serde project by default |
-| HTTP/1.1 pipelining stress tests | correctness |
+| HTTP/1.1 pipelining stress tests | **done** — `engine/pipeline_test.v` |
 | `http.Client` symmetry | separate product decision |
 | Hot reload certs | ops |
 | Runtime-level perf (scheduler / I/O) | only with measured design; epoll spike already documented |
@@ -210,6 +211,7 @@ Only pull when real use or repeated asks:
 
 - [x] `drain_timeout` — post-accept wait for active connections (cleartext + TLS)
 - [x] `ConnStats` / `new_conn_stats` / `snapshot()` — active, accepted, rejected_max, closed
+- [x] HTTP/1.1 pipelining stress tests — leftover-tolerant read path (`engine/pipeline_test.v`)
 
 ---
 
@@ -262,6 +264,7 @@ When asked about WebSockets / TLS / “full stack”:
 | 0.5.x | Harden + measured perf | Epic #3 children |
 | 0.7.0 | https:// + wss:// | TLS smoke + WSS echo |
 | 0.7.1–0.7.8 | Hot path + experiments + starter docs | RESULTS + build green |
-| 0.8+ | Backlog | Demand |
+| 0.8.0 | Drain timeout + ConnStats | Engine tests + release notes |
+| 0.8.x | Pipeline stress tests + remaining backlog | Demand |
 
 Changelog entries should reference this file when a phase opens or closes.

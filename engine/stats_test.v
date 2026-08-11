@@ -66,16 +66,12 @@ fn test_wait_drain_zero_timeout_is_noop() {
 
 fn test_resolve_stats_external_vs_internal() {
 	mut external := new_conn_stats()
-	opts := ServerOptions{
-		stats: external
-	}
-	mut got := resolve_stats(opts)
+	mut got := resolve_stats(external)
 	assert got.try_acquire(0) == true
 	assert external.active() == 1
 	external.release()
 
-	opts2 := ServerOptions{}
-	mut internal := resolve_stats(opts2)
+	mut internal := resolve_stats(unsafe { nil })
 	assert internal.try_acquire(0) == true
 	// Internal counter is independent of external.
 	assert external.active() == 0

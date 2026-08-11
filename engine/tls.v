@@ -47,7 +47,7 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 		read_timeout: opts.read_timeout
 	})!
 	shared stopping := SignalStop{}
-	mut stats := resolve_stats(opts)
+	mut stats := resolve_stats(opts.stats)
 	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, stats)
 
 	if opts.handle_signals {

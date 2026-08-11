@@ -126,10 +126,11 @@ fn (mut s ConnStats) release() {
 	s.closed_++
 }
 
-fn resolve_stats(opts ServerOptions) &ConnStats {
-	if opts.stats != unsafe { nil } {
-		// Caller-owned heap pointer; engine only mutates via ConnStats methods.
-		return unsafe { opts.stats }
+// resolve_stats returns caller-owned stats when set, otherwise a private heap counter.
+// Takes the optional pointer explicitly so ServerOptions need not be mutably borrowed.
+fn resolve_stats(stats &ConnStats) &ConnStats {
+	if stats != unsafe { nil } {
+		return stats
 	}
 	return &ConnStats{}
 }
@@ -197,7 +198,7 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 	}
 	workers := normalize_accept_workers(opts.accept_workers)
 	shared stopping := SignalStop{}
-	mut stats := resolve_stats(opts)
+	mut stats := resolve_stats(opts.stats)
 	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, stats)
 
 	if workers == 1 {

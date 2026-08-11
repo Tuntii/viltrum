@@ -52,7 +52,7 @@ snap := stats.snapshot() // active, accepted, rejected_max, closed
 2. **Headers.** Bytes accumulate until `\r\n\r\n`. Cap: `max_header_bytes` → 413 / error close.
 3. **Body.** Only **`Content-Length`** bodies are read. Size must be ≤ `max_body_bytes`.
 4. **Chunked / Transfer-Encoding.** Not supported. Request is rejected with **400** and the connection is closed (no keep-alive desync).
-5. **Leftover.** Extra bytes after the message stay in a per-conn buffer for the next request (pipelining-tolerant read path). Full HTTP/1.1 pipelining is not a product claim.
+5. **Leftover.** Extra bytes after the message stay in a per-conn buffer for the next request (pipelining-tolerant read path). Full HTTP/1.1 pipelining is not a product claim, but the read path is stress-tested with multi-request bursts (`engine/pipeline_test.v`).
 
 ## Parse and validate
 

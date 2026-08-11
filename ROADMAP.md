@@ -198,7 +198,7 @@ Only pull when real use or repeated asks:
 | `max_conns` + metrics / ops hooks | **done** — `ConnStats` via `ServerOptions.stats` |
 | Multipart / file upload helpers | keep minimal or example-only |
 | Better JSON (codegen or opt-in) | not a full serde project by default |
-| HTTP/1.1 pipelining stress tests | correctness |
+| HTTP/1.1 pipelining stress tests | **done** — `engine/pipeline_test.v` |
 | `http.Client` symmetry | separate product decision |
 | Hot reload certs | ops |
 | Runtime-level perf (scheduler / I/O) | only with measured design; epoll spike already documented |
@@ -210,6 +210,7 @@ Only pull when real use or repeated asks:
 
 - [x] `drain_timeout` — post-accept wait for active connections (cleartext + TLS)
 - [x] `ConnStats` / `new_conn_stats` / `snapshot()` — active, accepted, rejected_max, closed
+- [x] HTTP/1.1 pipelining stress tests — leftover-tolerant read path (`engine/pipeline_test.v`)
 
 ---
 

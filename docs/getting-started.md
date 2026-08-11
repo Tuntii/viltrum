@@ -57,6 +57,14 @@ v run examples/hello
 # curl http://127.0.0.1:8080/
 ```
 
+Want a full app shape (login + SPA + JSON API)? Separate starter repo:
+
+```bash
+git clone https://github.com/Tuntii/full-stack-viltrum-template.git
+cd full-stack-viltrum-template && bash scripts/setup.sh && v run .
+# http://127.0.0.1:8090/
+```
+
 Minimal program:
 
 ```v

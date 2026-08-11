@@ -157,13 +157,31 @@ v test http/ && v test router/ && v test engine/ && v test ws/
 
 ---
 
+## Full-stack starter (separate repo)
+
+Want API + UI + login + CRUD in one process? Use the teaching template:
+
+**[Tuntii/full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template)**
+
+```bash
+git clone https://github.com/Tuntii/full-stack-viltrum-template.git
+cd full-stack-viltrum-template
+bash scripts/setup.sh   # links this Viltrum checkout or clones main
+v run .
+# http://127.0.0.1:8090/  ·  admin@example.com / changethis
+```
+
+Inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template) — **not a port** (no Postgres, Docker, or React toolchain). Engine stays here; the starter lives in its own repo so app code and framework releases stay decoupled.
+
+---
+
 ## Roadmap, in one breath
 
-**Shipped (0.5):** cleartext HTTP + first-party `ws://`.  
-**Next product cut (0.6):** in-process TLS, then `wss://` on the same code. Track use-cases in [#1](https://github.com/Tuntii/viltrum/issues/1).  
-**0.5.x patches:** harden timeouts, soak tests, measured WS/HTTP perf ([epic #3](https://github.com/Tuntii/viltrum/issues/3)).
+**Shipped (0.7.8):** cleartext HTTP/1.1, first-party `ws://`, optional in-process HTTPS/WSS, measured hot-path work with honest benches. Full-stack teaching app: [full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template).
 
-Not on the menu: HTTP/2–3, auth/session platforms, “be Caddy.” Details: [ROADMAP.md](ROADMAP.md).
+**Next:** demand-driven backlog only (drain timeout, ops hooks, optional runtime-level perf) — see [ROADMAP.md](ROADMAP.md).
+
+Not on the menu: HTTP/2–3, auth/session platforms, ORM, “be Caddy.”
 
 ---
 
@@ -172,20 +190,16 @@ Not on the menu: HTTP/2–3, auth/session platforms, “be Caddy.” Details: [R
 Setup and commit style: [CONTRIBUTING.md](CONTRIBUTING.md).  
 Releases: conventional commits → [semantic-release](docs/releasing.md) on `main`.
 
-### Good first issues
+### Where to start
 
-Pick something small, ship a tight PR, leave the API boring.
+| Path | Why |
+|------|-----|
+| [full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template) | End-to-end product shape (API + SPA) |
+| [examples/hello](examples/hello/) | Minimal server |
+| [examples/rest](examples/rest/) | JSON CRUD without a UI |
+| Open issues | https://github.com/Tuntii/viltrum/issues |
 
-| Issue | Why it is a good first step |
-|-------|-----------------------------|
-| [#8 UTF-8 on text frames](https://github.com/Tuntii/viltrum/issues/8) | Clear RFC behavior (close **1007**), opt-in flag, unit tests, short doc note |
-| [#5 Soak / close-storm harness](https://github.com/Tuntii/viltrum/issues/5) | Script or test helper; assert echo correctness and server still alive |
-| [#7 First-party WS bench client](https://github.com/Tuntii/viltrum/issues/7) | Replace Python as the headline loadgen; wire into `benches/run_ws.sh` |
-
-All open GFI:  
-https://github.com/Tuntii/viltrum/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22
-
-Harder work (timeout policy, buffer reuse profiles) lives under the same epic; start there only if you already know the code.
+Harder engine work (timeouts, buffer profiles, runtime I/O) lives in [ROADMAP.md](ROADMAP.md) backlog — start there only if you already know the code.
 
 ---
 

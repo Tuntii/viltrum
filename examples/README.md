@@ -73,6 +73,22 @@ websocat -k wss://127.0.0.1:8444/ws
 
 See [docs/tls.md](../docs/tls.md).
 
+## Full-stack starter — separate repo
+
+Teaching app: same-process JSON API + static SPA, bearer auth, users, items.
+
+**Repo:** [Tuntii/full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template)
+
+```bash
+git clone https://github.com/Tuntii/full-stack-viltrum-template.git
+cd full-stack-viltrum-template
+bash scripts/setup.sh
+v run .
+# open http://127.0.0.1:8090/  ·  admin@example.com / changethis
+```
+
+Inspired by [fastapi/full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template) — not a port.
+
 ## Server options sketch
 
 ```v

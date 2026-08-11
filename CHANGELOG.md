@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.0](https://github.com/Tuntii/viltrum/compare/v0.7.9...v0.8.0) (2026-08-11)
+
+### Features
+
+* **engine:** graceful drain timeout and ConnStats ops hooks ([c8e77d1](https://github.com/Tuntii/viltrum/commit/c8e77d1860b44288f2e5aa358ce6b494e6b00190))
+
 ## [0.7.9](https://github.com/Tuntii/viltrum/compare/v0.7.8...v0.7.9) (2026-08-05)
 
 ### Performance Improvements

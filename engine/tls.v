@@ -12,6 +12,30 @@ pub:
 	cert_file string
 	// PEM private key file path (required).
 	key_file string
+	// reload_on_sighup: SIGHUP re-reads cert/key and replaces the TLS listener.
+	// In-flight connections keep the old cert. Default off.
+	reload_on_sighup bool
+}
+
+// TlsHold is a heap wrapper so signal handlers always close the current listener.
+struct TlsHold {
+mut:
+	l &mbedtls.SSLListener = unsafe { nil }
+}
+
+fn (mut h TlsHold) shutdown() {
+	if h.l != unsafe { nil } {
+		h.l.shutdown() or {}
+	}
+}
+
+fn new_tls_listener(addr string, tls TlsOptions, opts ServerOptions) !&mbedtls.SSLListener {
+	return mbedtls.new_ssl_listener(addr, mbedtls.SSLConnectConfig{
+		cert:         tls.cert_file
+		cert_key:     tls.key_file
+		validate:     false // server does not verify clients (no mTLS in v0.6)
+		read_timeout: opts.read_timeout
+	})
 }
 
 // validate_tls_options checks required paths before binding.
@@ -40,31 +64,36 @@ pub fn listen_and_serve_tls(addr string, handler Handler, tls TlsOptions) ! {
 pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []UpgradeRoute, opts ServerOptions, tls TlsOptions) ! {
 	validate_tls_options(tls)!
 
-	mut listener := mbedtls.new_ssl_listener(addr, mbedtls.SSLConnectConfig{
-		cert:         tls.cert_file
-		cert_key:     tls.key_file
-		validate:     false // server does not verify clients (no mTLS in v0.6)
-		read_timeout: opts.read_timeout
-	})!
+	mut hold := &TlsHold{
+		l: new_tls_listener(addr, tls, opts)!
+	}
 	shared stopping := SignalStop{}
+	shared reloading := SignalStop{}
 	mut stats := resolve_stats(opts.stats)
 	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, stats)
 
 	if opts.handle_signals {
-		os.signal_opt(.int, fn [shared stopping, mut listener] () {
+		os.signal_opt(.int, fn [shared stopping, mut hold] () {
 			signal_stop_set(shared stopping)
 			eprintln('[viltrum] shutting down (SIGINT)')
-			listener.shutdown() or {}
+			hold.shutdown()
 		}) or {}
-		os.signal_opt(.term, fn [shared stopping, mut listener] () {
+		os.signal_opt(.term, fn [shared stopping, mut hold] () {
 			signal_stop_set(shared stopping)
 			eprintln('[viltrum] shutting down (SIGTERM)')
-			listener.shutdown() or {}
+			hold.shutdown()
+		}) or {}
+	}
+	if tls.reload_on_sighup {
+		os.signal_opt(.hup, fn [shared reloading, mut hold] () {
+			signal_stop_set(shared reloading)
+			eprintln('[viltrum] SIGHUP: reloading TLS cert')
+			hold.shutdown()
 		}) or {}
 	}
 
 	defer {
-		listener.shutdown() or {}
+		hold.shutdown()
 	}
 	if pool.enabled {
 		eprintln('[viltrum] listening on https://${addr} (conn_workers=${pool.n})')
@@ -75,13 +104,26 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 		if opts.handle_signals && signal_stop_get(shared stopping) {
 			break
 		}
-		mut ssl := listener.accept() or {
+		mut ssl := hold.l.accept() or {
 			if opts.handle_signals && signal_stop_get(shared stopping) {
 				break
+			}
+			if tls.reload_on_sighup && signal_stop_get(shared reloading) {
+				signal_stop_clear(shared reloading)
+				hold.shutdown()
+				hold.l = new_tls_listener(addr, tls, opts) or {
+					eprintln('[viltrum] tls reload failed: ${err}')
+					break
+				}
+				eprintln('[viltrum] tls cert reloaded')
+				continue
 			}
 			msg := err.msg().to_lower()
 			if msg.contains('closed') || msg.contains('invalid') || msg.contains('bad file')
 				|| msg.contains('shutdown') {
+				if tls.reload_on_sighup && signal_stop_get(shared reloading) {
+					continue
+				}
 				break
 			}
 			// Handshake failures and accept errors: log and keep listening.

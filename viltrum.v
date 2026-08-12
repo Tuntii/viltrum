@@ -298,6 +298,35 @@ pub fn json(status int, body string) http.Response {
 	return http.Response.json(status, body)
 }
 
+// json_escape escapes a string for a JSON string literal (not a full encoder).
+pub fn json_escape(s string) string {
+	return http.json_escape(s)
+}
+
+// FormPart is one multipart field (see Request.form_file / form_parts).
+pub type FormPart = http.FormPart
+
+// ClientOptions configures the minimal cleartext HTTP client (fetch).
+pub type ClientOptions = http.ClientOptions
+
+// fetch is a one-shot cleartext HTTP/1.1 client (no TLS, no redirects).
+pub fn fetch(addr string, req Request) !Response {
+	return http.fetch(addr, req)
+}
+
+pub fn fetch_opt(addr string, req Request, opts ClientOptions) !Response {
+	return http.fetch_opt(addr, req, opts)
+}
+
+// client_get / client_post avoid clashing with App.get / App.post.
+pub fn client_get(addr string, path string) !Response {
+	return http.get(addr, path)
+}
+
+pub fn client_post(addr string, path string, body string, content_type string) !Response {
+	return http.post(addr, path, body, content_type)
+}
+
 pub fn empty(status int) http.Response {
 	return http.Response.empty(status)
 }

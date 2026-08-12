@@ -197,11 +197,11 @@ Only pull when real use or repeated asks:
 |------|--------|
 | Graceful drain timeout (wait in-flight) | **done** — `ServerOptions.drain_timeout` |
 | `max_conns` + metrics / ops hooks | **done** — `ConnStats` via `ServerOptions.stats` |
-| Multipart / file upload helpers | keep minimal or example-only |
-| Better JSON (codegen or opt-in) | not a full serde project by default |
+| Multipart / file upload helpers | **done** — `form_value` / `form_file` / `form_parts` + `examples/upload` |
+| Better JSON (codegen or opt-in) | **done (opt-in helpers)** — `json_float` / `json_raw` / `json_strings` / `json_escape`; still not a serde |
 | HTTP/1.1 pipelining stress tests | **done** — `engine/pipeline_test.v` |
-| `http.Client` symmetry | separate product decision |
-| Hot reload certs | ops |
+| `http.Client` symmetry | **done (minimal)** — cleartext `fetch` / `client_get` / `client_post`; no TLS/redirects |
+| Hot reload certs | **done** — `TlsOptions.reload_on_sighup` |
 | Runtime-level perf (scheduler / I/O) | only with measured design; epoll spike already documented |
 | RFC 8441 WS over H2 | almost certainly never |
 | HTTP/2, HTTP/3 | **not planned** unless strategy changes |
@@ -212,6 +212,10 @@ Only pull when real use or repeated asks:
 - [x] `drain_timeout` — post-accept wait for active connections (cleartext + TLS)
 - [x] `ConnStats` / `new_conn_stats` / `snapshot()` — active, accepted, rejected_max, closed
 - [x] HTTP/1.1 pipelining stress tests — leftover-tolerant read path (`engine/pipeline_test.v`)
+- [x] Multipart + urlencoded form helpers + `examples/upload`
+- [x] Extra JSON helpers (`json_float`, `json_raw`, `json_strings`, `json_escape`)
+- [x] Minimal cleartext HTTP client (`fetch`)
+- [x] TLS cert reload on SIGHUP (`TlsOptions.reload_on_sighup`)
 
 ---
 

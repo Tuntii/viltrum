@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.0](https://github.com/Tuntii/viltrum/compare/v0.8.1...v0.9.0) (2026-08-12)
+
+### Features
+
+* form/multipart, extra JSON helpers, cleartext client, TLS SIGHUP reload ([edcdb4a](https://github.com/Tuntii/viltrum/commit/edcdb4a8e458087fc1d8bd4e52c544f24698f8af))
+
 ## [0.8.1](https://github.com/Tuntii/viltrum/compare/v0.8.0...v0.8.1) (2026-08-11)
 
 ## [0.8.0](https://github.com/Tuntii/viltrum/compare/v0.7.9...v0.8.0) (2026-08-11)

@@ -33,7 +33,7 @@ Then use `Request`, `Response`, `text(...)` without a `viltrum.` prefix. Fully q
 | `params` | Router path params (`:id`, `*path`). Empty until the router matches. |
 | `ctx` | `voidptr` set by the app before the handler runs (`App.set_ctx`). |
 
-Helpers: `param`, `query_param`, `text`, `json_string` / `json_int` / `json_bool` (minimal, not a full JSON codec).
+Helpers: `param`, `query_param`, `text`; JSON (minimal, not a full codec): `json_string` / `json_int` / `json_bool` / `json_float` / `json_raw` / `json_is_null` / `json_strings`. Build helpers: `json_escape`. Forms: `form_value` (urlencoded or multipart text), `form_file`, `form_parts`.
 
 ### Thread-safety
 
@@ -59,6 +59,20 @@ Via `ServerOptions` (default off / empty):
 - `server_header: "viltrum"` → `Server` if the handler did not set `Server`
 
 Handler values always win. Helper: `http_date(time.utc())` after `import viltrum { http_date }`.
+
+## Minimal client
+
+Cleartext only, one request per connection. Not a general HTTP client.
+
+```v
+import viltrum { client_get, client_post, fetch }
+
+r := client_get('127.0.0.1:8080', '/')!
+// or client_post(addr, '/echo', body, 'application/json')
+// or fetch(addr, req) with a hand-built Request
+```
+
+No TLS, redirects, cookies, or connection pooling.
 
 ## Middleware
 

@@ -41,6 +41,7 @@ Browsers need a trusted cert or a local exception; self-signed is fine for tooli
 | Symbol | Role |
 |--------|------|
 | `TlsOptions{ cert_file, key_file }` | PEM paths (required) |
+| `TlsOptions.reload_on_sighup` | If true, **SIGHUP** re-reads PEM files and replaces the listener (in-flight conns keep the old cert). Default off. |
 | `app.listen_tls(addr, tls)` | HTTPS accept loop; WSS if `app.ws` is registered |
 | `engine.listen_and_serve_tls_full(...)` | Advanced / tests |
 
@@ -56,7 +57,7 @@ SSL write deadlines are not available in mbedtls’s API; rely on read timeout a
 
 - ACME / Let’s Encrypt inside Viltrum
 - mTLS / client cert auth
-- Hot-reload certs
+- Automatic filesystem watch (use SIGHUP `reload_on_sighup` instead)
 - HTTP/2
 - OpenSSL (`-d use_openssl`) server listen
 

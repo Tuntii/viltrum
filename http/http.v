@@ -135,6 +135,53 @@ pub fn (r &Request) json_bool(key string) ?bool {
 	}
 }
 
+// json_float extracts a top-level JSON number as f64.
+pub fn (r &Request) json_float(key string) ?f64 {
+	s := json_extract_raw(r.text(), key) or { return none }
+	if s.len == 0 || s.starts_with('"') {
+		return none
+	}
+	return s.f64()
+}
+
+// json_raw returns the raw top-level value text: quoted string contents with
+// quotes, or number/bool/null token, or a `{...}` / `[...]` slice.
+pub fn (r &Request) json_raw(key string) ?string {
+	return json_extract_value(r.text(), key)
+}
+
+// json_is_null is true when the top-level field is JSON null.
+pub fn (r &Request) json_is_null(key string) bool {
+	s := json_extract_raw(r.text(), key) or { return false }
+	return s == 'null'
+}
+
+// json_strings extracts a top-level JSON array of strings ("key":["a","b"]).
+pub fn (r &Request) json_strings(key string) ?[]string {
+	raw := json_extract_value(r.text(), key) or { return none }
+	if !raw.starts_with('[') {
+		return none
+	}
+	return json_parse_string_array(raw)
+}
+
+// json_escape escapes a string for embedding in a JSON string literal.
+pub fn json_escape(s string) string {
+	mut out := ''
+	for i in 0 .. s.len {
+		c := s[i]
+		out += match c {
+			`\\` { '\\\\' }
+			`"` { '\\"' }
+			`\n` { '\\n' }
+			`\r` { '\\r' }
+			`\t` { '\\t' }
+			else { c.ascii_str() }
+		}
+	}
+	return out
+}
+
 pub struct Response {
 pub mut:
 	status  int
@@ -589,6 +636,92 @@ fn json_extract_string(raw string, key string) ?string {
 		}
 		out += c.ascii_str()
 		i++
+	}
+	return none
+}
+
+// json_extract_value is json_extract_raw plus object/array slices.
+fn json_extract_value(raw string, key string) ?string {
+	needle := '"${key}"'
+	idx := raw.index(needle) or { return none }
+	rest := raw[idx + needle.len..].trim_space()
+	if !rest.starts_with(':') {
+		return none
+	}
+	after := rest[1..].trim_space()
+	if after.len == 0 {
+		return none
+	}
+	if after.starts_with('{') || after.starts_with('[') {
+		return json_balanced_slice(after)
+	}
+	return json_extract_raw(raw, key)
+}
+
+fn json_balanced_slice(after string) ?string {
+	open := after[0]
+	close := if open == `{` { `}` } else { `]` }
+	mut depth := 0
+	mut in_str := false
+	mut esc := false
+	for i in 0 .. after.len {
+		c := after[i]
+		if in_str {
+			if esc {
+				esc = false
+			} else if c == `\\` {
+				esc = true
+			} else if c == `"` {
+				in_str = false
+			}
+			continue
+		}
+		if c == `"` {
+			in_str = true
+			continue
+		}
+		if c == open {
+			depth++
+		} else if c == close {
+			depth--
+			if depth == 0 {
+				return after[..i + 1]
+			}
+		}
+	}
+	return none
+}
+
+fn json_parse_string_array(raw string) ?[]string {
+	mut out := []string{}
+	mut i := 1 // skip [
+	for i < raw.len {
+		for i < raw.len && raw[i] in [` `, `\t`, `\n`, `\r`, `,`] {
+			i++
+		}
+		if i < raw.len && raw[i] == `]` {
+			return out
+		}
+		if i >= raw.len || raw[i] != `"` {
+			return none
+		}
+		// reuse string extractor on a fake object
+		frag := '{"k":${raw[i..]}}'
+		s := json_extract_string(frag, 'k') or { return none }
+		out << s
+		// advance past this string in raw
+		i++ // opening quote
+		for i < raw.len {
+			if raw[i] == `\\` && i + 1 < raw.len {
+				i += 2
+				continue
+			}
+			if raw[i] == `"` {
+				i++
+				break
+			}
+			i++
+		}
 	}
 	return none
 }

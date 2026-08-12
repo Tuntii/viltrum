@@ -73,6 +73,14 @@ websocat -k wss://127.0.0.1:8444/ws
 
 See [docs/tls.md](../docs/tls.md).
 
+## upload — `:8085` urlencoded + multipart
+
+```bash
+v run examples/upload
+curl -s -d 'title=urlencoded' http://127.0.0.1:8085/form
+curl -s -F title=hi -F file=@README.md http://127.0.0.1:8085/upload
+```
+
 ## Full-stack starter — separate repo
 
 Teaching app: same-process JSON API + static SPA, bearer auth, users, items.

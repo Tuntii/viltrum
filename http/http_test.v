@@ -280,6 +280,25 @@ fn test_json_string_int_bool() {
 	assert req.json_bool('ok')? == true
 }
 
+fn test_json_float_raw_null_strings_escape() {
+	body := '{"x":1.5,"obj":{"a":1},"tags":["a","b"],"gone":null}'
+	msg := 'POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.len}\r\n\r\n${body}'
+	req := parse_request(msg.bytes()) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.json_float('x')? == 1.5
+	assert req.json_raw('obj')? == '{"a":1}'
+	assert req.json_is_null('gone') == true
+	assert req.json_is_null('x') == false
+	tags := req.json_strings('tags') or {
+		assert false, 'tags'
+		return
+	}
+	assert tags == ['a', 'b']
+	assert json_escape('a"b\\c') == 'a\\"b\\\\c'
+}
+
 // --- v0.3.x correctness ---
 
 fn test_reject_transfer_encoding_chunked() {

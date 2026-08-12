@@ -187,6 +187,12 @@ fn signal_stop_get(shared s SignalStop) bool {
 	return v
 }
 
+fn signal_stop_clear(shared s SignalStop) {
+	lock s {
+		s.stop = false
+	}
+}
+
 // listen_and_serve_full is the full server entry: HTTP handler + optional upgrade routes.
 pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRoute, opts ServerOptions) ! {
 	if opts.use_epoll {

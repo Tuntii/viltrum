@@ -306,6 +306,9 @@ pub fn json_escape(s string) string {
 // FormPart is one multipart field (see Request.form_file / form_parts).
 pub type FormPart = http.FormPart
 
+// FormOptions caps multipart part count / per-part size (see Request.form_parts_opts).
+pub type FormOptions = http.FormOptions
+
 // ClientOptions configures the minimal cleartext HTTP client (fetch).
 pub type ClientOptions = http.ClientOptions
 

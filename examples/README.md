@@ -79,6 +79,7 @@ See [docs/tls.md](../docs/tls.md).
 v run examples/upload
 curl -s -d 'title=urlencoded' http://127.0.0.1:8085/form
 curl -s -F title=hi -F file=@README.md http://127.0.0.1:8085/upload
+# JSON `filename` is FormPart.safe_filename() (path stripped; `..` → unnamed)
 ```
 
 ## Full-stack starter — separate repo

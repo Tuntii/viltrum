@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-08-11 · current release: **v0.8.1**
+Last updated: 2026-08-13 · current release: **v0.9.0**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP accept loop and HTTP/1.1 framing. Not a thin wrapper.
 
@@ -39,7 +39,7 @@ Success looks like:
 
 ---
 
-## Current baseline (v0.8.0) — done
+## Current baseline (v0.9.0) — done
 
 | Area | Status |
 |------|--------|
@@ -55,6 +55,7 @@ Success looks like:
 | HTTP/1.1 hot-path PR1–PR7 (honest ceiling documented) | done (v0.7.1–0.7.6) |
 | HeaderMap lowered hot path; experimental conn pool / epoll | done (v0.7.7–0.7.8; opt-in / default off) |
 | Graceful drain + ConnStats ops counters | done (`drain_timeout`, `ServerOptions.stats`) |
+| Form / multipart + extra JSON + cleartext client + TLS SIGHUP reload | done (v0.9.0) |
 | Full-stack teaching starter | done ([full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template)) |
 | Minimal JSON field helpers | done |
 | Unit + integration tests, CI, examples | done |
@@ -73,7 +74,8 @@ v0.5.x  Engine harden + measured perf   done (epic #3)
 v0.6*   TLS (https://) then WSS         done (shipped on 0.7.0 line)
 v0.7.x  Hot path + polish + starter     done through 0.7.8
 v0.8.0  Drain + ConnStats (ops)              done
-v0.8+   Further demand-driven backlog        open
+v0.9.0  Form/JSON/client/cert SIGHUP         done
+v0.9+   Remaining demand-driven backlog      open
 ```
 
 \*Roadmap originally numbered TLS as **v0.6** and hot path as **v0.8**. Releases used **0.7.x** for both after 0.6.x patch history. Ops hooks shipped as **v0.8.0**. Treat version themes below as source of truth; do not renumber old tags.
@@ -269,6 +271,7 @@ When asked about WebSockets / TLS / “full stack”:
 | 0.7.0 | https:// + wss:// | TLS smoke + WSS echo |
 | 0.7.1–0.7.8 | Hot path + experiments + starter docs | RESULTS + build green |
 | 0.8.0 | Drain timeout + ConnStats | Engine tests + release notes |
-| 0.8.x | Pipeline stress tests + remaining backlog | Demand |
+| 0.8.1 | Pipeline stress tests | Engine tests |
+| 0.9.0 | Form/JSON/client/TLS SIGHUP | Tests + examples |
 
 Changelog entries should reference this file when a phase opens or closes.

@@ -30,7 +30,8 @@ fn main() {
 	app.post('/upload', fn (req Request) Response {
 		title := req.form_value('title') or { '' }
 		f := req.form_file('file') or { return text(400, 'need file field') }
-		return json(200, '{"title":"${json_escape(title)}","filename":"${json_escape(f.filename)}","bytes":${f.data.len}}')
+		name := f.safe_filename() or { 'unnamed' }
+		return json(200, '{"title":"${json_escape(title)}","filename":"${json_escape(name)}","bytes":${f.data.len}}')
 	})
 
 	addr := '127.0.0.1:8085'

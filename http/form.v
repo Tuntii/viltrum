@@ -1,7 +1,18 @@
 module http
 
 // URL-encoded and multipart/form-data helpers.
-// Minimal: no nested multipart, no streaming, no filename sanitizing.
+// Minimal: no nested multipart, no streaming, no disk writes.
+
+const default_max_parts = 64
+const default_max_part_bytes = 1 * 1024 * 1024
+
+// FormOptions caps multipart parsing. 0 on a field means no extra cap
+// (the request body is still bound by ServerOptions.max_body_bytes).
+pub struct FormOptions {
+pub:
+	max_parts      int = default_max_parts
+	max_part_bytes int = default_max_part_bytes
+}
 
 // FormPart is one multipart field. filename empty → ordinary field.
 pub struct FormPart {
@@ -10,6 +21,12 @@ pub:
 	filename     string
 	content_type string
 	data         []u8
+}
+
+// safe_filename is the last path component of filename, or none if empty
+// or the remaining name is `.` / `..`. `a/b.txt` → `b.txt`.
+pub fn (p FormPart) safe_filename() ?string {
+	return sanitize_filename(p.filename)
 }
 
 // form_value returns a urlencoded field or a multipart text field (no filename).
@@ -42,14 +59,19 @@ pub fn (r &Request) form_file(name string) ?FormPart {
 	return none
 }
 
-// form_parts parses multipart/form-data. Errors if Content-Type is not multipart
-// or the body is malformed.
+// form_parts parses multipart/form-data with default FormOptions.
+// Errors if Content-Type is not multipart, the body is malformed, or a limit is hit.
 pub fn (r &Request) form_parts() ![]FormPart {
+	return r.form_parts_opts(FormOptions{})
+}
+
+// form_parts_opts is form_parts with explicit part-count / per-part size caps.
+pub fn (r &Request) form_parts_opts(opts FormOptions) ![]FormPart {
 	ct := r.headers.get_or_lowered('content-type', '')
 	if !ct_has_multipart(ct) {
 		return error('not multipart/form-data')
 	}
-	return parse_multipart(r.body, ct)
+	return parse_multipart_opts(r.body, ct, opts)
 }
 
 fn ct_has_multipart(ct string) bool {
@@ -77,6 +99,10 @@ fn form_urlencoded_get(raw string, name string) ?string {
 }
 
 fn parse_multipart(body []u8, content_type string) ![]FormPart {
+	return parse_multipart_opts(body, content_type, FormOptions{})
+}
+
+fn parse_multipart_opts(body []u8, content_type string, opts FormOptions) ![]FormPart {
 	boundary := multipart_boundary(content_type) or { return error('multipart: missing boundary') }
 	if boundary.len == 0 {
 		return error('multipart: empty boundary')
@@ -108,8 +134,15 @@ fn parse_multipart(body []u8, content_type string) ![]FormPart {
 		if body_end >= 2 && body[body_end - 2] == `\r` && body[body_end - 1] == `\n` {
 			body_end -= 2
 		}
+		part_len := if body_end > body_start { body_end - body_start } else { 0 }
+		if opts.max_part_bytes > 0 && part_len > opts.max_part_bytes {
+			return error('multipart: part too large (max ${opts.max_part_bytes} bytes)')
+		}
+		if opts.max_parts > 0 && parts.len >= opts.max_parts {
+			return error('multipart: too many parts (max ${opts.max_parts})')
+		}
 		mut data := []u8{}
-		if body_end > body_start {
+		if part_len > 0 {
 			data = body[body_start..body_end].clone()
 		}
 		name, filename := parse_content_disposition(hdr)
@@ -125,6 +158,20 @@ fn parse_multipart(body []u8, content_type string) ![]FormPart {
 		pos = next + delim.len
 	}
 	return parts
+}
+
+fn sanitize_filename(raw string) ?string {
+	if raw.len == 0 {
+		return none
+	}
+	mut s := raw.replace('\\', '/')
+	if slash := s.last_index('/') {
+		s = s[slash + 1..]
+	}
+	if s.len == 0 || s == '.' || s == '..' {
+		return none
+	}
+	return s
 }
 
 fn multipart_boundary(content_type string) ?string {

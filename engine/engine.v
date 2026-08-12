@@ -51,6 +51,10 @@ pub:
 	// spawn-per-conn (experimental). Cleartext only; upgrade/WS routes are
 	// not served on this path. Non-Linux returns an error from listen.
 	use_epoll bool
+mut:
+	// listen_break is module-private. Tests close the live listener without
+	// OS signals. Not part of the public API.
+	listen_break &ListenBreak = unsafe { nil }
 }
 
 // ConnStats is a thread-safe connection counter for max_conns, graceful drain, and ops.
@@ -193,6 +197,56 @@ fn signal_stop_clear(shared s SignalStop) {
 	}
 }
 
+// ListenBreak lets same-module tests stop accept without OS signals.
+// Not exported; not part of the public API.
+struct ListenBreak {
+mut:
+	fired      bool
+	reload_req bool
+	tcp        &net.TcpListener = unsafe { nil }
+	tls        &TlsHold         = unsafe { nil }
+}
+
+fn (mut b ListenBreak) fire() {
+	b.fired = true
+	if b.tcp != unsafe { nil } {
+		b.tcp.close() or {}
+	}
+	if b.tls != unsafe { nil } {
+		b.tls.shutdown()
+	}
+}
+
+// request_tls_reload validates PEM first, then shuts the live listener so the
+// accept loop can swap (same sequence as SIGHUP). Safe from another thread.
+fn (mut b ListenBreak) request_tls_reload(tls TlsOptions, opts ServerOptions) ! {
+	tls_files_ready(tls, opts)!
+	b.reload_req = true
+	if b.tls != unsafe { nil } {
+		b.tls.shutdown()
+	}
+}
+
+fn listen_break_take_reload(opts ServerOptions) bool {
+	if opts.listen_break == unsafe { nil } {
+		return false
+	}
+	if !opts.listen_break.reload_req {
+		return false
+	}
+	unsafe {
+		opts.listen_break.reload_req = false
+	}
+	return true
+}
+
+fn listen_break_fired(opts ServerOptions) bool {
+	if opts.listen_break == unsafe { nil } {
+		return false
+	}
+	return opts.listen_break.fired
+}
+
 // listen_and_serve_full is the full server entry: HTTP handler + optional upgrade routes.
 pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRoute, opts ServerOptions) ! {
 	if opts.use_epoll {
@@ -209,6 +263,11 @@ pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRou
 
 	if workers == 1 {
 		mut listener := net.listen_tcp(.ip, addr)!
+		if opts.listen_break != unsafe { nil } {
+			unsafe {
+				opts.listen_break.tcp = listener
+			}
+		}
 		if opts.handle_signals {
 			os.signal_opt(.int, fn [shared stopping, mut listener] () {
 				signal_stop_set(shared stopping)
@@ -382,8 +441,14 @@ fn accept_loop(mut listener net.TcpListener, handler Handler, upgrades []Upgrade
 		if opts.handle_signals && signal_stop_get(shared stopping) {
 			break
 		}
+		if listen_break_fired(opts) {
+			break
+		}
 		mut tcp := listener.accept() or {
 			if opts.handle_signals && signal_stop_get(shared stopping) {
+				break
+			}
+			if listen_break_fired(opts) {
 				break
 			}
 			msg := err.msg().to_lower()

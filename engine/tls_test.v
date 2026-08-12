@@ -367,3 +367,195 @@ fn test_wss_text_echo() {
 	assert out[0] == 0x81 // FIN + text
 	assert out[2..need].bytestr() == 'ping'
 }
+
+fn https_get(addr string) !nhttp.Response {
+	port := addr.all_after_last(':')
+	return nhttp.fetch(
+		method:                     .get
+		url:                        'https://127.0.0.1:${port}/'
+		validate:                   false
+		enable_http2:               false
+		disable_connection_reuse:   true
+	)
+}
+
+fn write_openssl_tls_pair(dir string, name string) !(string, string) {
+	cert := os.join_path(dir, '${name}.crt')
+	key := os.join_path(dir, '${name}.key')
+	cmd := 'openssl req -x509 -newkey rsa:2048 -keyout "${key}" -out "${cert}" -days 1 -nodes -subj "/CN=localhost"'
+	res := os.execute(cmd)
+	if res.exit_code != 0 {
+		return error('openssl ${name}: ${res.output}')
+	}
+	return cert, key
+}
+
+// #39: corrupt PEM must not drop the live listener.
+fn test_try_reload_tls_corrupt_does_not_drop_listener() {
+	dir, cert, key := write_temp_tls_files() or {
+		assert false, err.msg()
+		return
+	}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	addr := free_addr()
+	tls := TlsOptions{
+		cert_file: cert
+		key_file:  key
+	}
+	opts := ServerOptions{
+		handle_signals: false
+		read_timeout:   2 * time.second
+	}
+	mut hold := &TlsHold{
+		l: new_tls_listener(addr, tls, opts)!
+	}
+	defer {
+		hold.shutdown()
+	}
+	old := hold.l
+	os.write_file(cert, 'this is not a pem\n') or {
+		assert false, err.msg()
+		return
+	}
+	if _ := try_reload_tls(mut hold, addr, tls, opts) {
+		assert false, 'corrupt PEM should fail reload'
+		return
+	}
+	assert hold.l == old
+	assert hold.l != unsafe { nil }
+}
+
+// #39 / #40: missing PEM keeps serving the old cert over the real accept loop.
+fn test_tls_reload_missing_pem_keeps_serving() {
+	dir, cert, key := write_temp_tls_files() or {
+		assert false, err.msg()
+		return
+	}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	addr := free_addr()
+	mut br := &ListenBreak{}
+	opts := ServerOptions{
+		handle_signals: false
+		read_timeout:   3 * time.second
+		write_timeout:  3 * time.second
+		idle_timeout:   3 * time.second
+		listen_break:   br
+	}
+	tls := TlsOptions{
+		cert_file: cert
+		key_file:  key
+	}
+	spawn fn [addr, opts, tls] () {
+		listen_and_serve_tls_full(addr, fn (req http.Request) http.Response {
+			return http.Response.text(200, 'still-a')
+		}, []UpgradeRoute{}, opts, tls) or {}
+	}()
+	wait_listen()
+
+	first := https_get(addr) or {
+		assert false, 'https before reload: ${err}'
+		return
+	}
+	assert first.status_code == 200
+	assert first.body.contains('still-a')
+
+	os.rm(cert) or {}
+	br.request_tls_reload(tls, opts) or {
+		second := https_get(addr) or {
+			assert false, 'https after failed reload: ${err}'
+			return
+		}
+		assert second.status_code == 200
+		assert second.body.contains('still-a')
+		br.fire()
+		return
+	}
+	br.fire()
+	assert false, 'missing cert should fail reload'
+}
+
+// #40: valid replacement PEM is picked up; next handshake still works.
+// Process-level SIGHUP is not sent here (flaky under `v test`); this covers try_reload_tls.
+fn test_tls_reload_valid_replacement_serves() {
+	dir, cert, key := write_temp_tls_files() or {
+		assert false, err.msg()
+		return
+	}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	addr := free_addr()
+	mut br := &ListenBreak{}
+	opts := ServerOptions{
+		handle_signals: false
+		read_timeout:   3 * time.second
+		write_timeout:  3 * time.second
+		idle_timeout:   3 * time.second
+		listen_break:   br
+	}
+	tls := TlsOptions{
+		cert_file: cert
+		key_file:  key
+	}
+	spawn fn [addr, opts, tls] () {
+		listen_and_serve_tls_full(addr, fn (req http.Request) http.Response {
+			return http.Response.text(200, 'reloaded')
+		}, []UpgradeRoute{}, opts, tls) or {}
+	}()
+	wait_listen()
+
+	before := https_get(addr) or {
+		assert false, 'https before reload: ${err}'
+		return
+	}
+	assert before.status_code == 200
+
+	alt_cert, alt_key := write_openssl_tls_pair(dir, 'b') or {
+		// openssl missing: rewrite the same embedded PEM (still exercises swap).
+		os.write_file(cert, test_tls_cert) or {
+			assert false, err.msg()
+			return
+		}
+		os.write_file(key, test_tls_key) or {
+			assert false, err.msg()
+			return
+		}
+		br.request_tls_reload(tls, opts) or {
+			assert false, 'reload same pem: ${err}'
+			return
+		}
+		wait_listen()
+		after := https_get(addr) or {
+			assert false, 'https after same-pem reload: ${err}'
+			return
+		}
+		assert after.status_code == 200
+		assert after.body.contains('reloaded')
+		br.fire()
+		return
+	}
+	os.cp(alt_cert, cert) or {
+		assert false, err.msg()
+		return
+	}
+	os.cp(alt_key, key) or {
+		assert false, err.msg()
+		return
+	}
+	br.request_tls_reload(tls, opts) or {
+		assert false, 'reload replacement: ${err}'
+		return
+	}
+	wait_listen()
+	after := https_get(addr) or {
+		assert false, 'https after replacement: ${err}'
+		return
+	}
+	assert after.status_code == 200
+	assert after.body.contains('reloaded')
+	br.fire()
+}

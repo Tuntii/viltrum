@@ -19,7 +19,7 @@ Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP
 
 | Doc | Topic |
 |-----|--------|
-| [../ROADMAP.md](../ROADMAP.md) | Phases through **v0.7.8** + backlog |
+| [../ROADMAP.md](../ROADMAP.md) | Phases through **v0.11.0** + remaining backlog |
 | [../CHANGELOG.md](../CHANGELOG.md) | Shipped releases |
 | [../benches/RESULTS.md](../benches/RESULTS.md) | Honest laptop numbers |
 

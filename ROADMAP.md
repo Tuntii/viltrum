@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-08-13 · current release: **v0.9.0**
+Last updated: 2026-09-05 · current release: **v0.11.0**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP accept loop and HTTP/1.1 framing. Not a thin wrapper.
 
@@ -39,7 +39,7 @@ Success looks like:
 
 ---
 
-## Current baseline (v0.9.0) — done
+## Current baseline (v0.11.0) — done
 
 | Area | Status |
 |------|--------|
@@ -54,8 +54,10 @@ Success looks like:
 | **In-process HTTPS / WSS** (`listen_tls`, mbedtls) | done (v0.7.0 line; design was “v0.6”) |
 | HTTP/1.1 hot-path PR1–PR7 (honest ceiling documented) | done (v0.7.1–0.7.6) |
 | HeaderMap lowered hot path; experimental conn pool / epoll | done (v0.7.7–0.7.8; opt-in / default off) |
-| Graceful drain + ConnStats ops counters | done (`drain_timeout`, `ServerOptions.stats`) |
+| Graceful drain + ConnStats ops counters | done (`drain_timeout`, `ServerOptions.stats`, `requests`) |
 | Form / multipart + extra JSON + cleartext client + TLS SIGHUP reload | done (v0.9.0) |
+| Multipart part limits + `safe_filename`; failed SIGHUP keeps old cert | done (v0.10.0) |
+| HTTPS client, Host polish, `json_i64`, form binary tests, runtime plan | done (v0.11.0) |
 | Full-stack teaching starter | done ([full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template)) |
 | Minimal JSON field helpers | done |
 | Unit + integration tests, CI, examples | done |
@@ -75,7 +77,9 @@ v0.6*   TLS (https://) then WSS         done (shipped on 0.7.0 line)
 v0.7.x  Hot path + polish + starter     done through 0.7.8
 v0.8.0  Drain + ConnStats (ops)              done
 v0.9.0  Form/JSON/client/cert SIGHUP         done
-v0.9+   Remaining demand-driven backlog      open
+v0.10.0 TLS reload harden + multipart limits done
+v0.11.0 HTTPS client + json_i64 + stats      done
+next    Demand-driven (runtime I/O if measured)
 ```
 
 \*Roadmap originally numbered TLS as **v0.6** and hot path as **v0.8**. Releases used **0.7.x** for both after 0.6.x patch history. Ops hooks shipped as **v0.8.0**. Treat version themes below as source of truth; do not renumber old tags.
@@ -202,9 +206,9 @@ Only pull when real use or repeated asks:
 | Multipart / file upload helpers | **done** — `form_value` / `form_file` / `form_parts` + `examples/upload` |
 | Better JSON (codegen or opt-in) | **done (opt-in helpers)** — `json_float` / `json_raw` / `json_strings` / `json_escape`; still not a serde |
 | HTTP/1.1 pipelining stress tests | **done** — `engine/pipeline_test.v` |
-| `http.Client` symmetry | **done (minimal)** — cleartext `fetch` / `client_get` / `client_post`; no TLS/redirects |
-| Hot reload certs | **done** — `TlsOptions.reload_on_sighup` |
-| Runtime-level perf (scheduler / I/O) | only with measured design; epoll spike already documented |
+| `http.Client` symmetry | **done (minimal)** — `fetch` / `fetch_tls`; no redirects/cookies/HTTP/2 |
+| Hot reload certs | **done** — `TlsOptions.reload_on_sighup` (failed reload keeps the old cert) |
+| Runtime-level perf (scheduler / I/O) | plan only (`benches/compare/RUNTIME.md`); no third reactor until measured |
 | RFC 8441 WS over H2 | almost certainly never |
 | HTTP/2, HTTP/3 | **not planned** unless strategy changes |
 | Middleware ecosystem / plugin repo | community first |
@@ -212,11 +216,11 @@ Only pull when real use or repeated asks:
 ### Shipped under 0.8+ demand
 
 - [x] `drain_timeout` — post-accept wait for active connections (cleartext + TLS)
-- [x] `ConnStats` / `new_conn_stats` / `snapshot()` — active, accepted, rejected_max, closed
+- [x] `ConnStats` / `new_conn_stats` / `snapshot()` — active, accepted, rejected_max, closed, requests
 - [x] HTTP/1.1 pipelining stress tests — leftover-tolerant read path (`engine/pipeline_test.v`)
-- [x] Multipart + urlencoded form helpers + `examples/upload`
-- [x] Extra JSON helpers (`json_float`, `json_raw`, `json_strings`, `json_escape`)
-- [x] Minimal cleartext HTTP client (`fetch`)
+- [x] Multipart + urlencoded form helpers + `examples/upload` + part limits / `safe_filename`
+- [x] Extra JSON helpers (`json_float`, `json_raw`, `json_strings`, `json_escape`, `json_i64`)
+- [x] Minimal HTTP client (`fetch` / `fetch_tls`)
 - [x] TLS cert reload on SIGHUP (`TlsOptions.reload_on_sighup`)
 
 ---
@@ -243,7 +247,8 @@ Unless this file is explicitly revised:
 5. ~~TLS + WSS~~ **done** (0.7.0)
 6. ~~HTTP/1.1 hot path PR1–PR7~~ **done**
 7. ~~Full-stack teaching starter~~ **done**
-8. **Next:** demand-driven items from **v0.8+ backlog** only
+8. ~~v0.9.x harden (P1 TLS/drain + P2 client/JSON/docs)~~ **done** (v0.10.0 / v0.11.0)
+9. **Next:** remaining **v0.8+ backlog** only (runtime I/O after the RUNTIME.md bar)
 
 Do not open a parallel mega-epic without closing criteria and honest benches.
 
@@ -273,5 +278,7 @@ When asked about WebSockets / TLS / “full stack”:
 | 0.8.0 | Drain timeout + ConnStats | Engine tests + release notes |
 | 0.8.1 | Pipeline stress tests | Engine tests |
 | 0.9.0 | Form/JSON/client/TLS SIGHUP | Tests + examples |
+| 0.10.0 | TLS reload harden + multipart limits | Engine + form tests |
+| 0.11.0 | HTTPS client, json_i64, ConnStats.requests | Tests + examples + RUNTIME.md |
 
 Changelog entries should reference this file when a phase opens or closes.

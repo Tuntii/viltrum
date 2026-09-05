@@ -177,9 +177,9 @@ Inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-
 
 ## Roadmap, in one breath
 
-**Shipped (0.7.8):** cleartext HTTP/1.1, first-party `ws://`, optional in-process HTTPS/WSS, measured hot-path work with honest benches. Full-stack teaching app: [full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template).
+**Shipped (v0.11.0):** cleartext HTTP/1.1, first-party `ws://`, optional in-process HTTPS/WSS, forms/JSON helpers, one-shot `fetch` / `fetch_tls`, drain + `ConnStats`, SIGHUP cert reload. Full-stack teaching app: [full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template).
 
-**Next:** demand-driven backlog only (drain timeout, ops hooks, optional runtime-level perf) — see [ROADMAP.md](ROADMAP.md).
+**Next:** demand-driven only (runtime/scheduler I/O after a measured plan) — see [ROADMAP.md](ROADMAP.md).
 
 Not on the menu: HTTP/2–3, auth/session platforms, ORM, “be Caddy.”
 

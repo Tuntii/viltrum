@@ -50,6 +50,45 @@ fn test_multipart_quoted_boundary() {
 	assert req.form_value('n')? == 'v'
 }
 
+fn test_multipart_binary_roundtrip() {
+	boundary := '----Bin'
+	payload := [u8(0), 1, 255, 10]
+	mut part := '--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="x.bin"\r\nContent-Type: application/octet-stream\r\n\r\n'.bytes()
+	part << payload
+	part << '\r\n--${boundary}--\r\n'.bytes()
+	mut msg := 'POST /up HTTP/1.1\r\nHost: x\r\nContent-Type: multipart/form-data; boundary=${boundary}\r\nContent-Length: ${part.len}\r\n\r\n'.bytes()
+	msg << part
+	req := parse_request(msg) or {
+		assert false, err.msg()
+		return
+	}
+	f := req.form_file('file') or {
+		assert false, 'missing file'
+		return
+	}
+	assert f.data == payload
+}
+
+fn test_multipart_malformed_unterminated() {
+	body := '------B\r\nContent-Disposition: form-data; name="n"\r\n\r\nv\r\n'
+	req := multipart_req(body, '----B')
+	req.form_parts() or {
+		assert err.msg().contains('unterminated')
+		return
+	}
+	assert false, 'missing close delimiter should error'
+}
+
+fn test_multipart_malformed_empty_name() {
+	body := '------B\r\nContent-Disposition: form-data\r\n\r\nv\r\n------B--\r\n'
+	req := multipart_req(body, '----B')
+	req.form_parts() or {
+		assert err.msg().contains('name')
+		return
+	}
+	assert false, 'empty name should error'
+}
+
 fn test_form_parts_rejects_non_multipart() {
 	msg := 'POST / HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nhi'
 	req := parse_request(msg.bytes()) or {

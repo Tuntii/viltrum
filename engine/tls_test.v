@@ -610,3 +610,71 @@ fn test_tls_reload_valid_replacement_serves() {
 	assert after.body.contains('reloaded')
 	br.fire()
 }
+
+fn test_fetch_tls_get_and_post() {
+	dir, cert, key := write_temp_tls_files() or {
+		assert false, err.msg()
+		return
+	}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	addr := free_addr()
+	opts := ServerOptions{
+		handle_signals: false
+		read_timeout:   3 * time.second
+		write_timeout:  3 * time.second
+		idle_timeout:   3 * time.second
+	}
+	tls := TlsOptions{
+		cert_file: cert
+		key_file:  key
+	}
+	spawn fn [addr, opts, tls] () {
+		listen_and_serve_tls_full(addr, fn (req http.Request) http.Response {
+			if req.method == 'POST' {
+				return http.Response.text(201, 'got:${req.text()}')
+			}
+			return http.Response.text(200, 'tls-client-ok')
+		}, []UpgradeRoute{}, opts, tls) or {}
+	}()
+	wait_listen()
+
+	ct := http.ClientTls{
+		insecure_skip_verify: true
+	}
+	g := http.get_tls(addr, '/', ct) or {
+		assert false, 'get_tls: ${err}'
+		return
+	}
+	assert g.status == 200
+	assert g.body.bytestr().contains('tls-client-ok')
+
+	p := http.post_tls(addr, '/echo', 'xyz', 'text/plain', ct) or {
+		assert false, 'post_tls: ${err}'
+		return
+	}
+	assert p.status == 201
+	assert p.body.bytestr() == 'got:xyz'
+}
+
+fn test_fetch_tls_against_cleartext_fails() {
+	addr := free_addr()
+	opts := ServerOptions{
+		handle_signals: false
+		read_timeout:   2 * time.second
+		write_timeout:  2 * time.second
+		idle_timeout:   2 * time.second
+	}
+	spawn fn [addr, opts] () {
+		listen_and_serve_full(addr, fn (req http.Request) http.Response {
+			return http.Response.text(200, 'plain')
+		}, []UpgradeRoute{}, opts) or {}
+	}()
+	wait_listen()
+	http.get_tls(addr, '/', http.ClientTls{}) or {
+		assert err.msg().len > 0
+		return
+	}
+	assert false, 'TLS client against cleartext should fail'
+}

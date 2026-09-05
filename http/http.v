@@ -112,7 +112,7 @@ pub fn (r &Request) json_string(key string) ?string {
 	return json_extract_string(r.text(), key)
 }
 
-// json_int extracts a top-level JSON number field ("key":123).
+// json_int extracts a top-level JSON number field ("key":123) as platform int.
 pub fn (r &Request) json_int(key string) ?int {
 	s := json_extract_raw(r.text(), key) or { return none }
 	if s.len == 0 {
@@ -123,6 +123,15 @@ pub fn (r &Request) json_int(key string) ?int {
 		return none
 	}
 	return s.int()
+}
+
+// json_i64 extracts a top-level JSON number as i64 (IDs that overflow int).
+pub fn (r &Request) json_i64(key string) ?i64 {
+	s := json_extract_raw(r.text(), key) or { return none }
+	if s.len == 0 || s.starts_with('"') {
+		return none
+	}
+	return s.i64()
 }
 
 // json_bool extracts true/false.
@@ -166,6 +175,7 @@ pub fn (r &Request) json_strings(key string) ?[]string {
 }
 
 // json_escape escapes a string for embedding in a JSON string literal.
+// ASCII controls other than \n \r \t become \u00XX. Not a full JSON encoder.
 pub fn json_escape(s string) string {
 	mut out := ''
 	for i in 0 .. s.len {
@@ -176,10 +186,21 @@ pub fn json_escape(s string) string {
 			`\n` { '\\n' }
 			`\r` { '\\r' }
 			`\t` { '\\t' }
-			else { c.ascii_str() }
+			else {
+				if c < 0x20 {
+					json_u00(c)
+				} else {
+					c.ascii_str()
+				}
+			}
 		}
 	}
 	return out
+}
+
+fn json_u00(c u8) string {
+	hex := '0123456789abcdef'
+	return '\\u00${hex[c >> 4].ascii_str()}${hex[c & 0xf].ascii_str()}'
 }
 
 pub struct Response {

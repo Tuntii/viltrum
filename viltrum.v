@@ -309,8 +309,11 @@ pub type FormPart = http.FormPart
 // FormOptions caps multipart part count / per-part size (see Request.form_parts_opts).
 pub type FormOptions = http.FormOptions
 
-// ClientOptions configures the minimal cleartext HTTP client (fetch).
+// ClientOptions configures the minimal HTTP client (fetch / fetch_tls).
 pub type ClientOptions = http.ClientOptions
+
+// ClientTls is mbedtls options for fetch_tls (insecure skip-verify default).
+pub type ClientTls = http.ClientTls
 
 // fetch is a one-shot cleartext HTTP/1.1 client (no TLS, no redirects).
 pub fn fetch(addr string, req Request) !Response {
@@ -321,6 +324,14 @@ pub fn fetch_opt(addr string, req Request, opts ClientOptions) !Response {
 	return http.fetch_opt(addr, req, opts)
 }
 
+pub fn fetch_tls(addr string, req Request, tls ClientTls) !Response {
+	return http.fetch_tls(addr, req, tls)
+}
+
+pub fn fetch_tls_opt(addr string, req Request, opts ClientOptions, tls ClientTls) !Response {
+	return http.fetch_tls_opt(addr, req, opts, tls)
+}
+
 // client_get / client_post avoid clashing with App.get / App.post.
 pub fn client_get(addr string, path string) !Response {
 	return http.get(addr, path)
@@ -328,6 +339,14 @@ pub fn client_get(addr string, path string) !Response {
 
 pub fn client_post(addr string, path string, body string, content_type string) !Response {
 	return http.post(addr, path, body, content_type)
+}
+
+pub fn client_get_tls(addr string, path string, tls ClientTls) !Response {
+	return http.get_tls(addr, path, tls)
+}
+
+pub fn client_post_tls(addr string, path string, body string, content_type string, tls ClientTls) !Response {
+	return http.post_tls(addr, path, body, content_type, tls)
 }
 
 pub fn empty(status int) http.Response {

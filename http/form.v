@@ -171,6 +171,9 @@ fn sanitize_filename(raw string) ?string {
 	if s.len == 0 || s == '.' || s == '..' {
 		return none
 	}
+	if s.contains('\0') {
+		return none
+	}
 	return s
 }
 

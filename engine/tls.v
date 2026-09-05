@@ -64,16 +64,10 @@ fn tls_files_ready(tls TlsOptions, opts ServerOptions) ! {
 }
 
 // swap_tls_listener drops the current listener and binds a replacement.
-// On bind failure it tries once more so a transient error can restore service.
+// PEM must already have been validated; this only rebinds the live address.
 fn swap_tls_listener(mut hold TlsHold, addr string, tls TlsOptions, opts ServerOptions) ! {
 	hold.shutdown()
-	hold.l = new_tls_listener(addr, tls, opts) or {
-		bind_err := err
-		hold.l = new_tls_listener(addr, tls, opts) or {
-			return error('tls reload bind failed: ${bind_err}; restore failed: ${err}')
-		}
-		return error('tls reload bind failed; restored listener: ${bind_err}')
-	}
+	hold.l = new_tls_listener(addr, tls, opts)!
 }
 
 // try_reload_tls validates the PEM pair before dropping the live listener.

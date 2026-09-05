@@ -146,6 +146,11 @@ fn test_safe_filename_rejects_dotdot_and_empty() {
 	}.safe_filename() {
 		assert false, 'empty must be rejected'
 	}
+	if _ := FormPart{
+		filename: 'x\0y.txt'
+	}.safe_filename() {
+		assert false, 'NUL must be rejected'
+	}
 	// path stripped first, leftover is a real name
 	assert FormPart{
 		filename: '../x.txt'

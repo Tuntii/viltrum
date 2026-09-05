@@ -42,7 +42,8 @@ Browsers need a trusted cert or a local exception; self-signed is fine for tooli
 |--------|------|
 | `TlsOptions{ cert_file, key_file }` | PEM paths (required) |
 | `TlsOptions.reload_on_sighup` | If true, **SIGHUP** re-reads PEM files and replaces the listener (in-flight conns keep the old cert). Default off. A **failed** reload (missing or corrupt PEM) logs and keeps the previous cert; the process stays up. |
-| `app.listen_tls(addr, tls)` | HTTPS accept loop; WSS if `app.ws` is registered |
+| `app.listen_tls(addr, tls)` | HTTPS accept loop; WSS if `app.ws` is registered. `examples/https_hello` prints `kill -HUP` when `VILTRUM_RELOAD=1`. |
+| `fetch_tls` / `client_get_tls` | Minimal one-shot HTTPS client (`ClientTls`). Not a browser. |
 | `engine.listen_and_serve_tls_full(...)` | Advanced / tests |
 
 Empty or missing paths return an error **before** bind.

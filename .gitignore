@@ -28,6 +28,7 @@ vls.log
 !/benches/compare/REUSEPORT.md
 !/benches/compare/CONN_POOL.md
 !/benches/compare/REACTOR.md
+!/benches/compare/RUNTIME.md
 !/benches/compare/run_vs_axum.sh
 !/benches/compare/run_reuseport_exp.sh
 !/benches/compare/run_conn_pool_exp.sh

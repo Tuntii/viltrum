@@ -41,6 +41,10 @@ Own HTTP stack kept (`http.parse_request`, `to_bytes_for_method_into`). Not pico
 | Keep code? | **Yes** — opt-in experiment + platform for multi-reactor follow-up |
 | Next if chasing 120k+ | N epoll threads + SO_REUSEPORT (one loop per core), or drop reactor and accept ~100k ceiling |
 
+## Drain / ConnStats
+
+The reactor does **not** share `wait_drain` or `ConnStats` with the spawn-per-conn path. `max_conns` is a local slot count only. Listen log: `epoll reactor; drain_timeout/ConnStats unused`. Default `use_epoll: false` is unchanged. See [RUNTIME.md](./RUNTIME.md) before any new I/O spike.
+
 ## Opt-in
 
 ```v

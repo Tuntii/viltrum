@@ -61,6 +61,15 @@ See [docs/ws.md](../docs/ws.md).
 bash scripts/dev-cert.sh
 v run examples/https_hello
 curl -k https://127.0.0.1:8443/
+# cert reload: VILTRUM_RELOAD=1 v run examples/https_hello
+# then replace certs/dev.crt + certs/dev.key and: kill -HUP <pid>
+```
+
+## client — cleartext GET against `:8080`
+
+```bash
+v run examples/hello
+v run examples/client
 ```
 
 ## wss_echo — `:8444` WebSocket over TLS

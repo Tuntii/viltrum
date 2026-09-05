@@ -45,12 +45,17 @@ fn main() {
 		return json(200, '{"status":"ok","tls":true}')
 	})
 
+	reload := os.getenv('VILTRUM_RELOAD') == '1'
 	addr := '127.0.0.1:8443'
 	println('Viltrum https_hello → https://${addr}')
 	println('  cert=${cert} key=${key}')
 	println('  curl -k https://${addr}/')
+	if reload {
+		println('  SIGHUP reload on (replace PEM files, then: kill -HUP <pid>)')
+	}
 	app.listen_tls(addr, TlsOptions{
-		cert_file: cert
-		key_file:  key
+		cert_file:        cert
+		key_file:         key
+		reload_on_sighup: reload
 	}) or { panic(err) }
 }

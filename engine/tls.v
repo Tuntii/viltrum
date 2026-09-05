@@ -3,6 +3,7 @@ module engine
 // TLS listen path (v0.6). mbedtls only; WSS reuses app.ws over the same Conn.
 import net.mbedtls
 import os
+import time
 import viltrum.http
 
 // TlsOptions configures in-process HTTPS (PEM file paths).
@@ -13,7 +14,8 @@ pub:
 	// PEM private key file path (required).
 	key_file string
 	// reload_on_sighup: SIGHUP re-reads cert/key and replaces the TLS listener.
-	// In-flight connections keep the old cert. Default off.
+	// In-flight connections keep the old cert. A failed reload (missing or
+	// corrupt PEM) logs and keeps serving the previous cert. Default off.
 	reload_on_sighup bool
 }
 
@@ -54,6 +56,28 @@ pub fn validate_tls_options(tls TlsOptions) ! {
 	}
 }
 
+// tls_files_ready checks paths and that mbedtls can load the PEM pair.
+// Binds a throwaway listener on 127.0.0.1:0 so the live socket is untouched.
+fn tls_files_ready(tls TlsOptions, opts ServerOptions) ! {
+	validate_tls_options(tls)!
+	mut probe := new_tls_listener('127.0.0.1:0', tls, opts)!
+	probe.shutdown() or {}
+}
+
+// swap_tls_listener drops the current listener and binds a replacement.
+// PEM must already have been validated; this only rebinds the live address.
+fn swap_tls_listener(mut hold TlsHold, addr string, tls TlsOptions, opts ServerOptions) ! {
+	hold.shutdown()
+	hold.l = new_tls_listener(addr, tls, opts)!
+}
+
+// try_reload_tls validates the PEM pair before dropping the live listener.
+// On validation failure the current listener is left serving.
+fn try_reload_tls(mut hold TlsHold, addr string, tls TlsOptions, opts ServerOptions) ! {
+	tls_files_ready(tls, opts)!
+	swap_tls_listener(mut hold, addr, tls, opts)!
+}
+
 // listen_and_serve_tls is TLS with default options and no upgrade routes.
 pub fn listen_and_serve_tls(addr string, handler Handler, tls TlsOptions) ! {
 	listen_and_serve_tls_full(addr, handler, []UpgradeRoute{}, ServerOptions{}, tls)!
@@ -67,8 +91,14 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 	mut hold := &TlsHold{
 		l: new_tls_listener(addr, tls, opts)!
 	}
+	if opts.listen_break != unsafe { nil } {
+		unsafe {
+			opts.listen_break.tls = hold
+		}
+	}
 	shared stopping := SignalStop{}
 	shared reloading := SignalStop{}
+	shared rebind := SignalStop{}
 	mut stats := resolve_stats(opts.stats)
 	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, stats)
 
@@ -85,9 +115,13 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 		}) or {}
 	}
 	if tls.reload_on_sighup {
-		os.signal_opt(.hup, fn [shared reloading, mut hold] () {
-			signal_stop_set(shared reloading)
+		os.signal_opt(.hup, fn [shared reloading, mut hold, tls, opts] () {
 			eprintln('[viltrum] SIGHUP: reloading TLS cert')
+			tls_files_ready(tls, opts) or {
+				eprintln('[viltrum] tls reload failed: ${err}')
+				return
+			}
+			signal_stop_set(shared reloading)
 			hold.shutdown()
 		}) or {}
 	}
@@ -104,24 +138,41 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 		if opts.handle_signals && signal_stop_get(shared stopping) {
 			break
 		}
+		if listen_break_fired(opts) {
+			break
+		}
 		mut ssl := hold.l.accept() or {
 			if opts.handle_signals && signal_stop_get(shared stopping) {
 				break
 			}
-			if tls.reload_on_sighup && signal_stop_get(shared reloading) {
-				signal_stop_clear(shared reloading)
-				hold.shutdown()
-				hold.l = new_tls_listener(addr, tls, opts) or {
+			if listen_break_fired(opts) {
+				break
+			}
+			if listen_break_take_reload(opts) {
+				swap_tls_listener(mut hold, addr, tls, opts) or {
 					eprintln('[viltrum] tls reload failed: ${err}')
-					break
+					continue
 				}
+				eprintln('[viltrum] tls cert reloaded')
+				continue
+			}
+			if tls.reload_on_sighup && (signal_stop_get(shared reloading)
+				|| signal_stop_get(shared rebind)) {
+				signal_stop_clear(shared reloading)
+				signal_stop_set(shared rebind)
+				swap_tls_listener(mut hold, addr, tls, opts) or {
+					eprintln('[viltrum] tls reload failed: ${err}')
+					time.sleep(20 * time.millisecond)
+					continue
+				}
+				signal_stop_clear(shared rebind)
 				eprintln('[viltrum] tls cert reloaded')
 				continue
 			}
 			msg := err.msg().to_lower()
 			if msg.contains('closed') || msg.contains('invalid') || msg.contains('bad file')
 				|| msg.contains('shutdown') {
-				if tls.reload_on_sighup && signal_stop_get(shared reloading) {
+				if tls.reload_on_sighup && signal_stop_get(shared rebind) {
 					continue
 				}
 				break

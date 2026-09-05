@@ -41,11 +41,15 @@ Browsers need a trusted cert or a local exception; self-signed is fine for tooli
 | Symbol | Role |
 |--------|------|
 | `TlsOptions{ cert_file, key_file }` | PEM paths (required) |
-| `TlsOptions.reload_on_sighup` | If true, **SIGHUP** re-reads PEM files and replaces the listener (in-flight conns keep the old cert). Default off. |
+| `TlsOptions.reload_on_sighup` | If true, **SIGHUP** re-reads PEM files and replaces the listener (in-flight conns keep the old cert). Default off. A **failed** reload (missing or corrupt PEM) logs and keeps the previous cert; the process stays up. |
 | `app.listen_tls(addr, tls)` | HTTPS accept loop; WSS if `app.ws` is registered |
 | `engine.listen_and_serve_tls_full(...)` | Advanced / tests |
 
 Empty or missing paths return an error **before** bind.
+
+SIGHUP reload validates the new PEM pair (file exists + mbedtls can load it) **before** dropping the live listener. Only then does the accept loop bind the replacement. In-flight connections keep the cert they handshake'd with.
+
+Engine tests cover that path via `try_reload_tls` / a test-only accept stop hook rather than `kill -HUP` on the test process (`v test` shares one process; a real SIGHUP would be flaky).
 
 ## Architecture
 

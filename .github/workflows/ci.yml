@@ -13,9 +13,10 @@ jobs:
 
       - name: Install V
         run: |
-          git clone --depth 1 https://github.com/vlang/v /tmp/v
-          cd /tmp/v && make
+          curl -fsSL -o /tmp/v_linux.zip https://github.com/vlang/v/releases/download/0.5.2/v_linux.zip
+          unzip -q /tmp/v_linux.zip -d /tmp
           echo /tmp/v >> "$GITHUB_PATH"
+          /tmp/v/v version
           mkdir -p ~/.vmodules
           ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
 

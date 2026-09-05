@@ -59,6 +59,7 @@ mut:
 
 // ConnStats is a thread-safe connection counter for max_conns, graceful drain, and ops.
 // Pass one via ServerOptions.stats to observe live numbers from your process.
+// `requests` counts HTTP messages (keep-alive: many per connection), not connections.
 pub struct ConnStats {
 mut:
 	mu            sync.Mutex
@@ -66,6 +67,7 @@ mut:
 	accepted_     u64
 	rejected_max_ u64
 	closed_       u64
+	requests_     u64
 }
 
 // ConnStatsSnapshot is a point-in-time view of ConnStats counters.
@@ -75,6 +77,7 @@ pub:
 	accepted     u64
 	rejected_max u64
 	closed       u64
+	requests     u64
 }
 
 // new_conn_stats allocates a heap ConnStats for ServerOptions.stats.
@@ -91,7 +94,7 @@ pub fn (mut s ConnStats) active() int {
 	return s.active_
 }
 
-// snapshot returns accepted / rejected / closed totals plus active.
+// snapshot returns accepted / rejected / closed / requests totals plus active.
 pub fn (mut s ConnStats) snapshot() ConnStatsSnapshot {
 	s.mu.lock()
 	defer {
@@ -102,7 +105,14 @@ pub fn (mut s ConnStats) snapshot() ConnStatsSnapshot {
 		accepted:     s.accepted_
 		rejected_max: s.rejected_max_
 		closed:       s.closed_
+		requests:     s.requests_
 	}
+}
+
+fn (mut s ConnStats) add_request() {
+	s.mu.lock()
+	s.requests_++
+	s.mu.unlock()
 }
 
 fn (mut s ConnStats) try_acquire(max int) bool {
@@ -539,6 +549,10 @@ fn handle_conn(c_in Conn, handler Handler, upgrades []UpgradeRoute, opts ServerO
 			apply_response_defaults(mut resp, opts)
 			c.write_all(resp.to_bytes()) or {}
 			return
+		}
+		unsafe {
+			mut s := &ConnStats(stats)
+			s.add_request()
 		}
 
 		if opts.require_host && req.version.starts_with('HTTP/1.1') {

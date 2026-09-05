@@ -97,7 +97,7 @@ fn serve_epoll(addr string, handler Handler, opts ServerOptions) ! {
 		}) or {}
 	}
 
-	eprintln('[viltrum] listening on http://${addr} (epoll reactor)')
+	eprintln('[viltrum] listening on http://${addr} (epoll reactor; drain_timeout/ConnStats unused)')
 
 	mut events := [reactor_max_events]C.epoll_event{}
 	mut tmp := []u8{len: reactor_read_chunk}

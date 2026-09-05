@@ -37,6 +37,7 @@ jobs:
           v -o /tmp/viltrum-https-hello examples/https_hello
           v -o /tmp/viltrum-wss-echo examples/wss_echo
           v -o /tmp/viltrum-upload examples/upload
+          v -o /tmp/viltrum-client examples/client
 
       - name: Build WS load client
         run: v -o /tmp/viltrum-ws-load benches/ws_load_client.v

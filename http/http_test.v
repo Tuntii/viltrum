@@ -297,6 +297,20 @@ fn test_json_float_raw_null_strings_escape() {
 	}
 	assert tags == ['a', 'b']
 	assert json_escape('a"b\\c') == 'a\\"b\\\\c'
+	assert json_escape('\x01hi') == '\\u0001hi'
+}
+
+fn test_json_i64_large_id() {
+	body := '{"id":4294967296}'
+	msg := 'POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.len}\r\n\r\n${body}'
+	req := parse_request(msg.bytes()) or {
+		assert false, err.msg()
+		return
+	}
+	assert req.json_i64('id')? == i64(4294967296)
+	if _ := req.json_i64('missing') {
+		assert false
+	}
 }
 
 // --- v0.3.x correctness ---

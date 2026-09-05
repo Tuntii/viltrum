@@ -33,7 +33,7 @@ Then use `Request`, `Response`, `text(...)` without a `viltrum.` prefix. Fully q
 | `params` | Router path params (`:id`, `*path`). Empty until the router matches. |
 | `ctx` | `voidptr` set by the app before the handler runs (`App.set_ctx`). |
 
-Helpers: `param`, `query_param`, `text`; JSON (minimal, not a full codec): `json_string` / `json_int` / `json_bool` / `json_float` / `json_raw` / `json_is_null` / `json_strings`. Build helpers: `json_escape`. Forms: `form_value` (urlencoded or multipart text), `form_file`, `form_parts` / `form_parts_opts`. Multipart parse defaults: 64 parts, 1 MiB per part (raise via `FormOptions`; `0` = no extra cap). `form_parts` errors on over-limit (no silent truncate). `form_value` / `form_file` still return `none` on any parse error, including those limits — use `form_parts` when you need the reason. Still no nested multipart and no streaming-to-disk. `FormPart.safe_filename()` is the last path component (`a/b.txt` → `b.txt`); empty, `.`, `..`, and embedded NUL return none.
+Helpers: `param`, `query_param`, `text`; JSON (minimal, not a full codec): `json_string` / `json_int` / `json_i64` / `json_bool` / `json_float` / `json_raw` / `json_is_null` / `json_strings`. Build helpers: `json_escape`. Forms: `form_value` (urlencoded or multipart text), `form_file`, `form_parts` / `form_parts_opts`. Multipart parse defaults: 64 parts, 1 MiB per part (raise via `FormOptions`; `0` = no extra cap). `form_parts` errors on over-limit (no silent truncate). `form_value` / `form_file` still return `none` on any parse error, including those limits — use `form_parts` when you need the reason. Still no nested multipart, no streaming-to-disk, and no `filename*` (RFC 5987; only `filename` is read). `FormPart.safe_filename()` is the last path component (`a/b.txt` → `b.txt`); empty, `.`, `..`, and embedded NUL return none.
 
 ### Thread-safety
 
@@ -62,17 +62,22 @@ Handler values always win. Helper: `http_date(time.utc())` after `import viltrum
 
 ## Minimal client
 
-Cleartext only, one request per connection. Not a general HTTP client.
+One request per connection (`Connection: close`). Not a general HTTP client: no redirects, cookies, pooling, or HTTP/2. No default `User-Agent`.
+
+`Host` is derived from `addr`: IPv4/`hostname:port` as given, except `:80` / `:443` are stripped; IPv6 uses brackets (`[::1]:8080`). `127.0.0.1:<ephemeral>` is unchanged.
 
 ```v
-import viltrum { client_get, client_post, fetch }
+import viltrum { client_get, client_post, fetch, client_get_tls, ClientTls }
 
 r := client_get('127.0.0.1:8080', '/')!
-// or client_post(addr, '/echo', body, 'application/json')
-// or fetch(addr, req) with a hand-built Request
+// client_post(addr, '/echo', body, 'application/json')
+// fetch(addr, req)
+https := client_get_tls('127.0.0.1:8443', '/', ClientTls{ insecure_skip_verify: true })!
 ```
 
-No TLS, redirects, cookies, or connection pooling.
+Cleartext `fetch` against an HTTPS port fails the handshake (and the reverse). Production TLS still belongs at the reverse proxy; `fetch_tls` is for same-process / lab HTTPS.
+
+JSON helpers stay minimal: `json_int` is platform `int`; `json_i64` is for large IDs. `json_escape` turns other ASCII controls into `\u00XX`.
 
 ## Middleware
 

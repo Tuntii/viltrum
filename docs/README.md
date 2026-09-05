@@ -35,6 +35,7 @@ Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP
 | `examples/https_hello` | 8443 | HTTPS (dev cert) |
 | `examples/wss_echo` | 8444 | WSS echo |
 | `examples/upload` | 8085 | urlencoded + multipart |
+| `examples/client` | (out) | cleartext `client_get` against hello |
 | **[full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template)** | **8090** | API + SPA + auth + items (separate repo) |
 
 Full-stack starter is inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template); it lives outside this engine repo. Example index: [examples/README.md](../examples/README.md).

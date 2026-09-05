@@ -21,6 +21,8 @@ Upgrade/hijack details: [upgrade.md](./upgrade.md).
 
 `listen_and_serve_opt` binds TCP and `accept`s in a loop. Each accepted conn is handled in its own spawned task (`handle_conn`). SIGINT/SIGTERM (when `handle_signals` is true) close the listener and end the accept loop.
 
+Experimental `use_epoll` (Linux, default off) does **not** apply `drain_timeout` or `ConnStats`. The listen line says so; see [benches/compare/REACTOR.md](../benches/compare/REACTOR.md).
+
 ### Graceful drain
 
 After the accept loop stops, if `ServerOptions.drain_timeout` is **> 0**, the engine waits up to that duration for in-flight connections to finish (active count → 0), then returns. Default **0** means no wait (previous behavior): `listen` returns as soon as accept ends while handlers may still run briefly.
@@ -43,7 +45,7 @@ app.server_options(ServerOptions{
 	stats:     stats
 })
 // later:
-snap := stats.snapshot() // active, accepted, rejected_max, closed
+snap := stats.snapshot() // active, accepted, rejected_max, closed, requests
 ```
 
 ## Read
@@ -104,7 +106,7 @@ If the request includes `Expect: 100-continue` and a non-negative `Content-Lengt
 | `read_header_timeout` | 0 (= `read_timeout`) |
 | `max_conns` | 0 (unlimited); excess accepts get **503** + close |
 | `drain_timeout` | 0 — after accept stops, wait for in-flight (0 = no wait) |
-| `stats` | `nil` — optional `&ConnStats` for live counters |
+| `stats` | `nil` — optional `&ConnStats` for live counters (`requests` = HTTP messages on the spawn path) |
 | `send_date` | false — when true, add `Date` if handler omitted it |
 | `server_header` | `""` — when non-empty, add `Server` if handler omitted it |
 

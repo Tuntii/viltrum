@@ -27,6 +27,8 @@ bash benches/compare/run_conn_pool_exp.sh
 # see CONN_POOL.md — default remains conn_workers=0
 
 # Epoll reactor spike (Linux): ServerOptions.use_epoll — see REACTOR.md (default off)
+
+# Next I/O experiment (plan only): RUNTIME.md — no third reactor until measured
 ```
 
 Needs: `v`, `cargo`, `oha`, `curl`.

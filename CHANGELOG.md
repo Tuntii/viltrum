@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/Tuntii/viltrum/compare/v0.9.0...v0.10.0) (2026-09-05)
+
+### Features
+
+* **http:** multipart part limits and safe_filename ([#38](https://github.com/Tuntii/viltrum/issues/38)) ([24e86c2](https://github.com/Tuntii/viltrum/commit/24e86c2cef3df5e4aafde08e9a70fb652ff17305))
+
+### Bug Fixes
+
+* **tls:** drop misleading swap retry; reject NUL in safe_filename ([700b310](https://github.com/Tuntii/viltrum/commit/700b3107d279d5f42b269a88d4d03e363023e4e0))
+* **tls:** failed SIGHUP reload keeps the old cert ([#39](https://github.com/Tuntii/viltrum/issues/39)) ([4ddf683](https://github.com/Tuntii/viltrum/commit/4ddf683ebe9da54a1748e6cf4463fb4db47d6a9c)), closes [#40](https://github.com/Tuntii/viltrum/issues/40) [#41](https://github.com/Tuntii/viltrum/issues/41)
+* **tls:** retry rebind after drop so a failed swap cannot exit ([bec528a](https://github.com/Tuntii/viltrum/commit/bec528ac3cabe4fd50b830212001ef2db7e6ed9a))
+
 ## [0.9.0](https://github.com/Tuntii/viltrum/compare/v0.8.1...v0.9.0) (2026-08-12)
 
 ### Features

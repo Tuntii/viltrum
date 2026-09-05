@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/Tuntii/viltrum/compare/v0.10.0...v0.11.0) (2026-09-05)
+
+### Features
+
+* **engine:** ConnStats.requests; skip drain/stats on epoll ([1ee3985](https://github.com/Tuntii/viltrum/commit/1ee398511521ffb00f0edb2c95750a36fd726296)), closes [#50](https://github.com/Tuntii/viltrum/issues/50) [#46](https://github.com/Tuntii/viltrum/issues/46)
+* **http:** fetch_tls, Host polish, json_i64, multipart binary tests ([349faca](https://github.com/Tuntii/viltrum/commit/349facad679af295f95243aef599c024c87ab936)), closes [#42](https://github.com/Tuntii/viltrum/issues/42) [#43](https://github.com/Tuntii/viltrum/issues/43) [#44](https://github.com/Tuntii/viltrum/issues/44) [#49](https://github.com/Tuntii/viltrum/issues/49)
+
 ## [0.10.0](https://github.com/Tuntii/viltrum/compare/v0.9.0...v0.10.0) (2026-09-05)
 
 ### Features

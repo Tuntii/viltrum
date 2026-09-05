@@ -68,6 +68,21 @@ fn multipart_req(body string, boundary string) Request {
 	return parse_request(msg.bytes()) or { panic(err) }
 }
 
+fn test_multipart_max_parts_at_limit_ok() {
+	boundary := '----Ok'
+	mut body := ''
+	for i in 0 .. 64 {
+		body += '--${boundary}\r\nContent-Disposition: form-data; name="f${i}"\r\n\r\nx\r\n'
+	}
+	body += '--${boundary}--\r\n'
+	req := multipart_req(body, boundary)
+	parts := req.form_parts() or {
+		assert false, err.msg()
+		return
+	}
+	assert parts.len == 64
+}
+
 fn test_multipart_too_many_parts() {
 	boundary := '----Lim'
 	mut body := ''

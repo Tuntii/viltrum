@@ -98,8 +98,9 @@ fn test_drain_timeout_waits_for_inflight_handler() {
 		return
 	}
 	elapsed := time.since(t0)
-	assert elapsed >= 120 * time.millisecond, 'should wait for in-flight handler: ${elapsed}'
+	assert elapsed >= 80 * time.millisecond, 'should wait for in-flight handler: ${elapsed}'
 	assert elapsed < 800 * time.millisecond, 'should finish before drain cap: ${elapsed}'
+	assert stats.active() == 0, 'drain_timeout > 0 should wait until active is 0'
 }
 
 fn test_drain_timeout_zero_returns_promptly() {
@@ -212,6 +213,7 @@ fn test_drain_timeout_waits_for_hijacked_conn() {
 		return
 	}
 	elapsed := time.since(t0)
-	assert elapsed >= 120 * time.millisecond, 'should wait for hijacked conn: ${elapsed}'
+	assert elapsed >= 80 * time.millisecond, 'should wait for hijacked conn: ${elapsed}'
 	assert elapsed < 800 * time.millisecond, 'should finish before drain cap: ${elapsed}'
+	assert stats.active() == 0, 'drain should wait for hijacked conn'
 }

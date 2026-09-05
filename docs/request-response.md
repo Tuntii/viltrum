@@ -33,7 +33,7 @@ Then use `Request`, `Response`, `text(...)` without a `viltrum.` prefix. Fully q
 | `params` | Router path params (`:id`, `*path`). Empty until the router matches. |
 | `ctx` | `voidptr` set by the app before the handler runs (`App.set_ctx`). |
 
-Helpers: `param`, `query_param`, `text`; JSON (minimal, not a full codec): `json_string` / `json_int` / `json_bool` / `json_float` / `json_raw` / `json_is_null` / `json_strings`. Build helpers: `json_escape`. Forms: `form_value` (urlencoded or multipart text), `form_file`, `form_parts` / `form_parts_opts`. Multipart parse defaults: 64 parts, 1 MiB per part (raise via `FormOptions`; `0` = no extra cap). Over-limit is an error, not a silent truncate. Still no nested multipart and no streaming-to-disk. `FormPart.safe_filename()` is the last path component (`a/b.txt` → `b.txt`); empty, `.`, and `..` return none.
+Helpers: `param`, `query_param`, `text`; JSON (minimal, not a full codec): `json_string` / `json_int` / `json_bool` / `json_float` / `json_raw` / `json_is_null` / `json_strings`. Build helpers: `json_escape`. Forms: `form_value` (urlencoded or multipart text), `form_file`, `form_parts` / `form_parts_opts`. Multipart parse defaults: 64 parts, 1 MiB per part (raise via `FormOptions`; `0` = no extra cap). `form_parts` errors on over-limit (no silent truncate). `form_value` / `form_file` still return `none` on any parse error, including those limits — use `form_parts` when you need the reason. Still no nested multipart and no streaming-to-disk. `FormPart.safe_filename()` is the last path component (`a/b.txt` → `b.txt`); empty, `.`, `..`, and embedded NUL return none.
 
 ### Thread-safety
 

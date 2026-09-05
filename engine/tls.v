@@ -3,6 +3,7 @@ module engine
 // TLS listen path (v0.6). mbedtls only; WSS reuses app.ws over the same Conn.
 import net.mbedtls
 import os
+import time
 import viltrum.http
 
 // TlsOptions configures in-process HTTPS (PEM file paths).
@@ -97,6 +98,7 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 	}
 	shared stopping := SignalStop{}
 	shared reloading := SignalStop{}
+	shared rebind := SignalStop{}
 	mut stats := resolve_stats(opts.stats)
 	pool := start_conn_pool(opts.conn_workers, handler, upgrades, opts, stats)
 
@@ -154,19 +156,23 @@ pub fn listen_and_serve_tls_full(addr string, handler Handler, upgrades []Upgrad
 				eprintln('[viltrum] tls cert reloaded')
 				continue
 			}
-			if tls.reload_on_sighup && signal_stop_get(shared reloading) {
+			if tls.reload_on_sighup && (signal_stop_get(shared reloading)
+				|| signal_stop_get(shared rebind)) {
 				signal_stop_clear(shared reloading)
+				signal_stop_set(shared rebind)
 				swap_tls_listener(mut hold, addr, tls, opts) or {
 					eprintln('[viltrum] tls reload failed: ${err}')
+					time.sleep(20 * time.millisecond)
 					continue
 				}
+				signal_stop_clear(shared rebind)
 				eprintln('[viltrum] tls cert reloaded')
 				continue
 			}
 			msg := err.msg().to_lower()
 			if msg.contains('closed') || msg.contains('invalid') || msg.contains('bad file')
 				|| msg.contains('shutdown') {
-				if tls.reload_on_sighup && signal_stop_get(shared reloading) {
+				if tls.reload_on_sighup && signal_stop_get(shared rebind) {
 					continue
 				}
 				break

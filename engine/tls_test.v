@@ -478,6 +478,57 @@ fn test_tls_reload_missing_pem_keeps_serving() {
 	assert false, 'missing cert should fail reload'
 }
 
+fn test_tls_reload_corrupt_pem_keeps_serving() {
+	dir, cert, key := write_temp_tls_files() or {
+		assert false, err.msg()
+		return
+	}
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	addr := free_addr()
+	mut br := &ListenBreak{}
+	opts := ServerOptions{
+		handle_signals: false
+		read_timeout:   3 * time.second
+		write_timeout:  3 * time.second
+		idle_timeout:   3 * time.second
+		listen_break:   br
+	}
+	tls := TlsOptions{
+		cert_file: cert
+		key_file:  key
+	}
+	spawn fn [addr, opts, tls] () {
+		listen_and_serve_tls_full(addr, fn (req http.Request) http.Response {
+			return http.Response.text(200, 'still-a')
+		}, []UpgradeRoute{}, opts, tls) or {}
+	}()
+	wait_listen()
+
+	first := https_get(addr) or {
+		assert false, 'https before reload: ${err}'
+		return
+	}
+	assert first.status_code == 200
+	os.write_file(cert, 'not-a-pem\n') or {
+		assert false, err.msg()
+		return
+	}
+	br.request_tls_reload(tls, opts) or {
+		second := https_get(addr) or {
+			assert false, 'https after corrupt reload: ${err}'
+			return
+		}
+		assert second.status_code == 200
+		assert second.body.contains('still-a')
+		br.fire()
+		return
+	}
+	br.fire()
+	assert false, 'corrupt PEM should fail reload'
+}
+
 // #40: valid replacement PEM is picked up; next handshake still works.
 // Process-level SIGHUP is not sent here (flaky under `v test`); this covers try_reload_tls.
 fn test_tls_reload_valid_replacement_serves() {

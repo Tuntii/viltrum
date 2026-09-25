@@ -121,7 +121,8 @@ pub fn (mut s ConnStats) snapshot() ConnStatsSnapshot {
 // add_request counts one parsed HTTP message. It does not take mu: keep-alive
 // calls this on every request, from every connection thread.
 fn (mut s ConnStats) add_request() {
-	stdatomic.fetch_add_u64(&s.requests_, 1)
+	// add_u64 is the V 0.5.2 name (fetch_add_u64 arrived later). The add is atomic.
+	stdatomic.add_u64(&s.requests_, 1)
 }
 
 fn (mut s ConnStats) try_acquire(max int) bool {

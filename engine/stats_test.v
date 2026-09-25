@@ -79,7 +79,7 @@ fn test_add_request_does_not_lock_stats_mutex() {
 	body := rest[..end]
 	assert !body.contains('.lock(')
 	assert !body.contains('mu.')
-	assert body.contains('fetch_add_u64')
+	assert body.contains('add_u64')
 }
 
 fn test_add_request_counts_without_snapshot_lock() {

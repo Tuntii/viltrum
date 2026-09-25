@@ -29,9 +29,13 @@ vls.log
 !/benches/compare/CONN_POOL.md
 !/benches/compare/REACTOR.md
 !/benches/compare/RUNTIME.md
+!/benches/compare/SCHEDULER.md
+!/benches/compare/CORES.md
 !/benches/compare/run_vs_axum.sh
 !/benches/compare/run_reuseport_exp.sh
 !/benches/compare/run_conn_pool_exp.sh
+!/benches/compare/run_sched_exp.sh
+!/benches/compare/run_hotpath_exp.sh
 !/benches/compare/axum/
 /benches/compare/axum/**
 !/benches/compare/axum/Cargo.toml

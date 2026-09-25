@@ -375,8 +375,9 @@ pub fn recover(next Handler) Handler {
 			resp.set_connection_close()
 			return resp
 		}
-		if resp.headers.get_or('content-length', '') == '' {
-			resp.headers.set('Content-Length', '${resp.body.len}')
+		// Key is already stored lowercased. Look it up without to_lower.
+		if resp.headers.get_or_lowered('content-length', '') == '' {
+			resp.headers.set_lowered('content-length', '${resp.body.len}')
 		}
 		return resp
 	}

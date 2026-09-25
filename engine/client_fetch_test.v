@@ -49,6 +49,60 @@ fn test_client_get_and_post() {
 	assert r2.body.bytestr() == 'got:abc'
 }
 
+fn test_conn_stats_requests_concurrent_keepalive() {
+	addr := client_free_addr()
+	mut stats := new_conn_stats()
+	opts := ServerOptions{
+		handle_signals: false
+		read_timeout:   2 * time.second
+		write_timeout:  2 * time.second
+		idle_timeout:   2 * time.second
+		stats:          stats
+	}
+	spawn fn [addr, opts] () {
+		listen_and_serve_full(addr, fn (_ http.Request) http.Response {
+			return http.Response.text(200, 'k')
+		}, [], opts) or {}
+	}()
+	time.sleep(80 * time.millisecond)
+
+	conns := 4
+	per := 3
+	mut threads := []thread{}
+	for _ in 0 .. conns {
+		threads << spawn fn [addr, per] () {
+			mut c := net.dial_tcp(addr) or { return }
+			defer {
+				c.close() or {}
+			}
+			c.set_read_timeout(2 * time.second)
+			c.set_write_timeout(2 * time.second)
+			for i in 0 .. per {
+				extra := if i == per - 1 { 'Connection: close\r\n' } else { '' }
+				req := 'GET /k HTTP/1.1\r\nHost: localhost\r\n${extra}\r\n'
+				c.write(req.bytes()) or { return }
+				mut buf := []u8{len: 2048}
+				_ := c.read(mut buf) or { return }
+			}
+		}()
+	}
+	threads.wait()
+
+	want := u64(conns * per)
+	start := time.now()
+	for {
+		snap := stats.snapshot()
+		if snap.requests == want && snap.accepted == u64(conns) {
+			return
+		}
+		if time.since(start) > 2 * time.second {
+			assert false, 'requests=${stats.snapshot().requests} accepted=${stats.snapshot().accepted} want=${want}'
+			return
+		}
+		time.sleep(5 * time.millisecond)
+	}
+}
+
 fn test_conn_stats_requests_two_keepalive() {
 	addr := client_free_addr()
 	mut stats := new_conn_stats()

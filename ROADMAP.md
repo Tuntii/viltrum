@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-09-05 · current release: **v0.11.0**
+Last updated: 2026-09-25 · current release: **v0.11.0** (next cut records the hot-path measurement; default I/O unchanged)
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP accept loop and HTTP/1.1 framing. Not a thin wrapper.
 
@@ -79,7 +79,7 @@ v0.8.0  Drain + ConnStats (ops)              done
 v0.9.0  Form/JSON/client/cert SIGHUP         done
 v0.10.0 TLS reload harden + multipart limits done
 v0.11.0 HTTPS client + json_i64 + stats      done
-next    Demand-driven (runtime I/O if measured)
+next    Hot path measured (SO_RCVTIMEO, epoll_cores); default stays spawn
 ```
 
 \*Roadmap originally numbered TLS as **v0.6** and hot path as **v0.8**. Releases used **0.7.x** for both after 0.6.x patch history. Ops hooks shipped as **v0.8.0**. Treat version themes below as source of truth; do not renumber old tags.
@@ -208,7 +208,7 @@ Only pull when real use or repeated asks:
 | HTTP/1.1 pipelining stress tests | **done** — `engine/pipeline_test.v` |
 | `http.Client` symmetry | **done (minimal)** — `fetch` / `fetch_tls`; no redirects/cookies/HTTP/2 |
 | Hot reload certs | **done** — `TlsOptions.reload_on_sighup` (failed reload keeps the old cert) |
-| Runtime-level perf (scheduler / I/O) | plan only (`benches/compare/RUNTIME.md`); no third reactor until measured |
+| Runtime-level perf (scheduler / I/O) | **measured** — spawn stays default. `epoll_cores=16` E +0.3% with recover ([CORES.md](benches/compare/CORES.md)). Cleartext reads use one `SO_RCVTIMEO` then `recv`. |
 | RFC 8441 WS over H2 | almost certainly never |
 | HTTP/2, HTTP/3 | **not planned** unless strategy changes |
 | Middleware ecosystem / plugin repo | community first |
@@ -248,7 +248,8 @@ Unless this file is explicitly revised:
 6. ~~HTTP/1.1 hot path PR1–PR7~~ **done**
 7. ~~Full-stack teaching starter~~ **done**
 8. ~~v0.9.x harden (P1 TLS/drain + P2 client/JSON/docs)~~ **done** (v0.10.0 / v0.11.0)
-9. **Next:** remaining **v0.8+ backlog** only (runtime I/O after the RUNTIME.md bar)
+9. ~~Runtime scheduler A/B (RUNTIME.md bar)~~ **measured 2026-09-25** — bar not met, default unchanged ([SCHEDULER.md](benches/compare/SCHEDULER.md))
+10. ~~Hot-path slices + `epoll_cores`~~ **measured 2026-09-25** — E +0.3%, default stays spawn ([CORES.md](benches/compare/CORES.md))
 
 Do not open a parallel mega-epic without closing criteria and honest benches.
 

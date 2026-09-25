@@ -21,7 +21,7 @@ Upgrade/hijack details: [upgrade.md](./upgrade.md).
 
 `listen_and_serve_opt` binds TCP and `accept`s in a loop. Each accepted conn is handled in its own spawned task (`handle_conn`). SIGINT/SIGTERM (when `handle_signals` is true) close the listener and end the accept loop.
 
-Experimental `use_epoll` (Linux, default off) does **not** apply `drain_timeout` or `ConnStats`. The listen line says so; see [benches/compare/REACTOR.md](../benches/compare/REACTOR.md).
+`epoll_cores` (and `use_epoll`, which is one core) is Linux-only and **off** by default. The loop counts requests on `ConnStats` without taking the stats mutex, and a matched upgrade/WS connection is handed to its own thread. See [benches/compare/CORES.md](../benches/compare/CORES.md).
 
 ### Graceful drain
 

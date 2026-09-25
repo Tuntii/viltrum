@@ -28,7 +28,13 @@ bash benches/compare/run_conn_pool_exp.sh
 
 # Epoll reactor spike (Linux): ServerOptions.use_epoll — see REACTOR.md (default off)
 
-# Next I/O experiment (plan only): RUNTIME.md — no third reactor until measured
+# Runtime scheduler A/B (measured 2026-09-25): no default change
+bash benches/compare/run_sched_exp.sh
+# see SCHEDULER.md — V spawn has no thread cap; accept_workers=8 missed the 15% bar
+
+# Multi-core epoll vs the SO_RCVTIMEO spawn path (measured 2026-09-25)
+bash benches/compare/run_hotpath_exp.sh
+# see CORES.md — epoll_cores=16 E +0.3% with recover; default stays spawn
 ```
 
 Needs: `v`, `cargo`, `oha`, `curl`.

@@ -179,7 +179,7 @@ Inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-
 
 **Shipped (v0.11.0):** cleartext HTTP/1.1, first-party `ws://`, optional in-process HTTPS/WSS, forms/JSON helpers, one-shot `fetch` / `fetch_tls`, drain + `ConnStats`, SIGHUP cert reload. Full-stack teaching app: [full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template).
 
-**Next:** demand-driven only (runtime/scheduler I/O after a measured plan) — see [ROADMAP.md](ROADMAP.md).
+**Next:** default I/O stays spawn-per-conn. A 16-loop epoll path missed the keep-alive bar (E +0.3% with `recover`). See [ROADMAP.md](ROADMAP.md) and [benches/compare/CORES.md](benches/compare/CORES.md).
 
 Not on the menu: HTTP/2–3, auth/session platforms, ORM, “be Caddy.”
 

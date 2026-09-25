@@ -21,6 +21,11 @@ mut:
 	ssl    &mbedtls.SSLConn = unsafe { nil }
 	rbuf   []u8 // unread bytes (HTTP leftover / pushback)
 	closed bool
+	// rcv_installed is set after SO_RCVTIMEO matches rcv_dur. Cleartext reads
+	// then call recv directly. A later set_read_timeout with a new duration
+	// installs the deadline once more; it does not select on every read.
+	rcv_installed bool
+	rcv_dur       time.Duration
 }
 
 // wrap takes ownership of an accepted TCP conn.
@@ -114,11 +119,7 @@ pub fn (mut c Conn) read(mut buf []u8) !int {
 	}
 	match c.kind {
 		.tcp {
-			n := c.tcp.read(mut buf) or { return err }
-			if n < 0 {
-				return error('negative read')
-			}
-			return n
+			return c.read_tcp(mut buf)
 		}
 		.ssl {
 			n := c.ssl.read(mut buf) or { return err }

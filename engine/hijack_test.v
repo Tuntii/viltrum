@@ -698,6 +698,119 @@ fn test_use_epoll_serves_get() {
 	}
 }
 
+fn test_epoll_cores_two_serves_get() {
+	$if !linux {
+		return
+	}
+	addr := free_addr()
+	opts := ServerOptions{
+		handle_signals: false
+		epoll_cores:    2
+		idle_timeout:   2 * time.second
+		read_timeout:   2 * time.second
+		write_timeout:  2 * time.second
+	}
+	handler := fn (_ http.Request) http.Response {
+		return http.Response.text(200, 'cores-ok')
+	}
+	spawn fn [handler, opts, addr] () {
+		listen_and_serve_full(addr, handler, [], opts) or {}
+	}()
+	wait_listen()
+
+	for i in 0 .. 4 {
+		mut client := net.dial_tcp(addr) or {
+			assert false, 'dial ${i}: ${err}'
+			return
+		}
+		client.set_read_timeout(2 * time.second)
+		client.set_write_timeout(2 * time.second)
+		client.write('GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n'.bytes()) or {
+			client.close() or {}
+			assert false, 'write ${i}'
+			return
+		}
+		mut buf := []u8{len: 4096}
+		n := client.read(mut buf) or {
+			client.close() or {}
+			assert false, 'read ${i}: ${err}'
+			return
+		}
+		client.close() or {}
+		body := buf[..n].bytestr()
+		assert body.contains('200'), 'resp ${i}: ${body}'
+		assert body.contains('cores-ok'), 'resp ${i}: ${body}'
+	}
+}
+
+fn test_epoll_cores_upgrade_echo() {
+	$if !linux {
+		return
+	}
+	addr := free_addr()
+	opts := ServerOptions{
+		handle_signals: false
+		epoll_cores:    2
+		idle_timeout:   2 * time.second
+		read_timeout:   2 * time.second
+		write_timeout:  2 * time.second
+	}
+	upgrades := [
+		UpgradeRoute{
+			method:  'GET'
+			pattern: '/echo'
+			handler: fn (mut c Conn, _ http.Request) {
+				resp := http.Response.switching_protocols('echo')
+				c.write_all(resp.to_bytes()) or { return }
+				mut buf := []u8{len: 4}
+				c.read_exact(mut buf) or { return }
+				c.write_all(buf) or { return }
+				c.close() or {}
+			}
+		},
+	]
+	spawn fn [upgrades, opts, addr] () {
+		listen_and_serve_full(addr, fn (_ http.Request) http.Response {
+			return http.Response.text(200, 'http')
+		}, upgrades, opts) or {}
+	}()
+	wait_listen()
+	time.sleep(50 * time.millisecond)
+
+	mut client := net.dial_tcp(addr) or {
+		assert false, 'dial: ${err}'
+		return
+	}
+	defer {
+		client.close() or {}
+	}
+	client.set_read_timeout(2 * time.second)
+	client.set_write_timeout(2 * time.second)
+	req := 'GET /echo HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n'
+	client.write(req.bytes()) or {
+		assert false, 'write: ${err}'
+		return
+	}
+	mut buf := []u8{len: 1024}
+	n := client.read(mut buf) or {
+		assert false, 'read 101: ${err}'
+		return
+	}
+	head := buf[..n].bytestr()
+	assert head.contains('101'), 'want 101, got ${head}'
+	client.write('ping'.bytes()) or {
+		assert false, 'write ping: ${err}'
+		return
+	}
+	mut echo := []u8{len: 4}
+	n_echo := client.read(mut echo) or {
+		assert false, 'echo: ${err}'
+		return
+	}
+	assert n_echo == 4
+	assert echo.bytestr() == 'ping'
+}
+
 // Worker-pool spike: conn_workers > 0 still serves keep-alive HTTP correctly.
 fn test_conn_workers_pool_serves_get() {
 	addr := free_addr()

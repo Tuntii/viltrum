@@ -2,6 +2,7 @@ module engine
 
 // Unit tests for ConnStats + wait_drain (graceful shutdown / ops hooks).
 
+import os
 import time
 
 fn test_conn_stats_acquire_release_and_reject() {
@@ -62,6 +63,31 @@ fn test_wait_drain_zero_timeout_is_noop() {
 	assert time.since(start) < 30 * time.millisecond
 	assert s.active() == 1
 	s.release()
+}
+
+fn test_add_request_does_not_lock_stats_mutex() {
+	src := os.read_file(os.dir(@FILE) + '/engine.v') or {
+		assert false, 'read engine.v: ${err}'
+		return
+	}
+	start := src.index('fn (mut s ConnStats) add_request()') or {
+		assert false, 'add_request missing'
+		return
+	}
+	rest := src[start..]
+	end := rest.index('\nfn ') or { rest.len }
+	body := rest[..end]
+	assert !body.contains('.lock(')
+	assert !body.contains('mu.')
+	assert body.contains('fetch_add_u64')
+}
+
+fn test_add_request_counts_without_snapshot_lock() {
+	mut s := new_conn_stats()
+	s.add_request()
+	s.add_request()
+	s.add_request()
+	assert s.snapshot().requests == 3
 }
 
 fn test_resolve_stats_external_vs_internal() {

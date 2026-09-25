@@ -26,6 +26,7 @@ jobs:
           v test router/
           v test engine/
           v test ws/
+          v test tests/recover_test.v
 
       - name: Build examples
         run: |

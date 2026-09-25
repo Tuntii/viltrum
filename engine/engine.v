@@ -5,6 +5,7 @@ module engine
 import net
 import os
 import sync
+import sync.stdatomic
 import time
 import viltrum.http
 
@@ -47,10 +48,13 @@ pub:
 	// N > 0 = accept enqueues Conn onto a channel; N workers run handle_conn
 	// (keep-alive stays on that worker). Experimental spike toward ~120k E.
 	conn_workers int
-	// use_epoll enables the Linux epoll single-thread reactor instead of
-	// spawn-per-conn (experimental). Cleartext only; upgrade/WS routes are
-	// not served on this path. Non-Linux returns an error from listen.
+	// use_epoll enables one Linux epoll loop (same as epoll_cores: 1).
+	// Cleartext. Upgrade/WS conns are handed off a thread. Non-Linux errors.
 	use_epoll bool
+	// epoll_cores is how many nonblocking epoll loops to run. 0 is off unless
+	// use_epoll is set. N>1 binds SO_REUSEPORT, one loop per listener (one per
+	// core when N is the CPU count). Default stays 0: spawn-per-conn.
+	epoll_cores int
 mut:
 	// listen_break is module-private. Tests close the live listener without
 	// OS signals. Not part of the public API.
@@ -62,12 +66,15 @@ mut:
 // `requests` counts HTTP messages (keep-alive: many per connection), not connections.
 pub struct ConnStats {
 mut:
+	// requests_ is incremented on the keep-alive success path with an atomic
+	// add, not mu. Snapshot loads it the same way. The mutex covers only the
+	// connection gauges (active / accepted / rejected / closed).
+	requests_     u64
 	mu            sync.Mutex
 	active_       int
 	accepted_     u64
 	rejected_max_ u64
 	closed_       u64
-	requests_     u64
 }
 
 // ConnStatsSnapshot is a point-in-time view of ConnStats counters.
@@ -97,22 +104,24 @@ pub fn (mut s ConnStats) active() int {
 // snapshot returns accepted / rejected / closed / requests totals plus active.
 pub fn (mut s ConnStats) snapshot() ConnStatsSnapshot {
 	s.mu.lock()
-	defer {
-		s.mu.unlock()
-	}
+	active := s.active_
+	accepted := s.accepted_
+	rejected := s.rejected_max_
+	closed := s.closed_
+	s.mu.unlock()
 	return ConnStatsSnapshot{
-		active:       s.active_
-		accepted:     s.accepted_
-		rejected_max: s.rejected_max_
-		closed:       s.closed_
-		requests:     s.requests_
+		active:       active
+		accepted:     accepted
+		rejected_max: rejected
+		closed:       closed
+		requests:     stdatomic.load_u64(&s.requests_)
 	}
 }
 
+// add_request counts one parsed HTTP message. It does not take mu: keep-alive
+// calls this on every request, from every connection thread.
 fn (mut s ConnStats) add_request() {
-	s.mu.lock()
-	s.requests_++
-	s.mu.unlock()
+	stdatomic.fetch_add_u64(&s.requests_, 1)
 }
 
 fn (mut s ConnStats) try_acquire(max int) bool {
@@ -258,12 +267,24 @@ fn listen_break_fired(opts ServerOptions) bool {
 }
 
 // listen_and_serve_full is the full server entry: HTTP handler + optional upgrade routes.
-pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRoute, opts ServerOptions) ! {
+fn epoll_core_count(opts ServerOptions) int {
+	if opts.epoll_cores > 0 {
+		return opts.epoll_cores
+	}
 	if opts.use_epoll {
+		return 1
+	}
+	return 0
+}
+
+pub fn listen_and_serve_full(addr string, handler Handler, upgrades []UpgradeRoute, opts ServerOptions) ! {
+	cores := epoll_core_count(opts)
+	if cores > 0 {
 		if upgrades.len > 0 {
-			eprintln('[viltrum] use_epoll: upgrade/WS routes are not served on the reactor path')
+			eprintln('[viltrum] epoll: upgrade/WS is handed off its own thread')
 		}
-		serve_epoll(addr, handler, opts)!
+		mut stats := resolve_stats(opts.stats)
+		serve_epoll_cores(addr, handler, upgrades, opts, stats, cores)!
 		return
 	}
 	workers := normalize_accept_workers(opts.accept_workers)

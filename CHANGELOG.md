@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.1](https://github.com/Tuntii/viltrum/compare/v0.12.0...v0.12.1) (2026-09-25)
+
+### Bug Fixes
+
+* **engine:** count requests with stdatomic.add_u64 for the V 0.5.2 release compiler ([9e52fdd](https://github.com/Tuntii/viltrum/commit/9e52fddb30a3e7fc7112d80fbb5d9f6319eb909f))
+
 ## [0.12.0](https://github.com/Tuntii/viltrum/compare/v0.11.0...v0.12.0) (2026-09-25)
 
 ### Features

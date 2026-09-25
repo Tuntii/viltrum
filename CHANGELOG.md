@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.0](https://github.com/Tuntii/viltrum/compare/v0.11.0...v0.12.0) (2026-09-25)
+
+### Features
+
+* **engine:** default I/O stays spawn; E/F medians spawn+recover 243532/207436, bare 226385/208933, epoll_cores=16+recover 244358/261497, bare 245334/264815 (E +0.3%, under +15%) ([77abd55](https://github.com/Tuntii/viltrum/commit/77abd552a9e55f4008daf9cf94045701f6b97d17))
+
 ## [0.11.0](https://github.com/Tuntii/viltrum/compare/v0.10.0...v0.11.0) (2026-09-05)
 
 ### Features

@@ -45,6 +45,24 @@ Needs: `v`, `cargo`, `oha`, `curl`.
 
 | | |
 |--|--|
+| **Date** | 2026-09-25 |
+| **Viltrum** | v0.12.1 (`-prod`, spawn, `recover` on) |
+| **Peer** | same Axum release binary |
+| **Machine** | CachyOS, Ryzen 7 4800H (16 thr) |
+| **oha** | 1.15.0 |
+| **Runs** | E and F, 3 each, median. Success 100% |
+
+| Scenario | Viltrum | Peer | Peer / Viltrum |
+|----------|--------:|-----:|---------------:|
+| **E GET `/` 10s c=50** | **216785** | **220973** | **1.02×** |
+| F GET `/` 10s c=100 | 193848 | 246777 | 1.27× |
+
+Full note: [RESULTS.md](../RESULTS.md). The table below is the 2026-08-05 lock, kept so the old ratio is not rewritten.
+
+## 2026-08-05 lock
+
+| | |
+|--|--|
 | **Date** | 2026-08-05 |
 | **Viltrum** | v0.7.6 (main after PR1–PR6) |
 | **Peer** | release + LTO |
@@ -62,7 +80,7 @@ Needs: `v`, `cargo`, `oha`, `curl`.
 | F GET `/` 10s c=100 | ~91k | ~225k | ~2.5× |
 | C POST `/echo` n=5k c=100 | ~72k | ~167k | ~2.3× |
 
-**Headline (honest):** on this laptop, cleartext `GET /` sustains roughly **~90–100k req/s** for Viltrum and **~190–225k req/s** for the peer at moderate concurrency. Peer ~**2×**. Not a lab guarantee; re-run after code changes.
+**August headline:** cleartext `GET /` was roughly **~90–100k req/s** for Viltrum and **~190–225k req/s** for the peer. Peer ~**2×**. Superseded by the 2026-09-25 lock above.
 
 ### Latency sketch (scenario E, 10s c=50)
 

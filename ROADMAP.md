@@ -175,11 +175,12 @@ Shipped on the **v0.7.0** release line (see CHANGELOG). Design: [docs/design/v0.
 
 ### Exit (epic #16)
 
-- [x] League bar checked: **not met** (E ~98k / ~0.51× Axum on 2026-08-05 laptop run)
+- [x] League bar checked on 2026-08-05: **not met** then (E ~98k / ~0.51× Axum)
+- [x] Re-lock 2026-09-25, v0.12.1: **met** on this laptop (E 216785 / 0.98× Axum 220973). See [benches/RESULTS.md](./benches/RESULTS.md)
 - [x] Honest ceiling in [benches/RESULTS.md](./benches/RESULTS.md)
 - [x] No public API break
 
-**Remaining gap** is largely runtime / scheduler / syscall stack (V spawn-per-conn + std `net` vs Tokio multi-thread), not a single missing clone on the HTTP path. Further absolute gains need runtime-level work, not another HTTP-only clone epic.
+The August gap was mostly the per-read readiness wait in front of `recv`. v0.12 removed that. On the 2026-09-25 re-lock, E is next to the Axum peer and F is about 1.27× behind. `epoll_cores` did not clear +15% on E against this spawn path, so spawn stays the default.
 
 ---
 

@@ -115,12 +115,13 @@ Nothing here pretends to replace your reverse proxy.
 
 ## Numbers (laptop, not a lab)
 
-v0.5, `-prod`, developer machine (Ryzen 7 class). Re-run yourself.
+v0.12.1, `-prod`, this developer machine (Ryzen 7 4800H). Three-run median, 2026-09-25. Re-run yourself.
 
 | Workload | Rough result |
 |----------|----------------|
-| `GET /` sustained (oha, 10s, c=50) | ~60–85k req/s |
-| WebSocket echo (Python client) | ~11–23k msg/s (client-bound; lower bound) |
+| `GET /` sustained (oha, 10s, c=50) | ~217k req/s (Axum peer ~221k on the same run) |
+| `GET /` sustained (oha, 10s, c=100) | ~194k req/s (Axum peer ~247k) |
+| WebSocket echo (Python client) | ~11–23k msg/s (2026-07-23, client-bound; not re-run) |
 
 ```bash
 bash benches/run.sh
@@ -177,7 +178,7 @@ Inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-
 
 ## Roadmap, in one breath
 
-**Shipped (v0.11.0):** cleartext HTTP/1.1, first-party `ws://`, optional in-process HTTPS/WSS, forms/JSON helpers, one-shot `fetch` / `fetch_tls`, drain + `ConnStats`, SIGHUP cert reload. Full-stack teaching app: [full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template).
+**Shipped (v0.12.1):** cleartext HTTP/1.1, first-party `ws://`, optional in-process HTTPS/WSS, forms/JSON helpers, one-shot `fetch` / `fetch_tls`, drain + `ConnStats`, SIGHUP cert reload, cleartext reads that arm `SO_RCVTIMEO` once. Full-stack teaching app: [full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template).
 
 **Next:** default I/O stays spawn-per-conn. A 16-loop epoll path missed the keep-alive bar (E +0.3% with `recover`). See [ROADMAP.md](ROADMAP.md) and [benches/compare/CORES.md](benches/compare/CORES.md).
 

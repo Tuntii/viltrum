@@ -2,8 +2,8 @@
 
 | | |
 |--|--|
-| **Version** | Viltrum **v0.7.6** (`-prod` server binary) |
-| **Date** | 2026-08-05 (HTTP peer re-baseline after hot-path PR1–PR6); WS table still 2026-07-23 |
+| **Version** | Viltrum **v0.12.1** (`-prod` server binary) |
+| **Date** | 2026-09-25 peer re-lock (E/F only). August table below is history. WS table still 2026-07-23 |
 | **Machine** | local CachyOS Linux (developer laptop), not a dedicated lab |
 | **CPU** | AMD Ryzen 7 4800H (16 threads), ~14 GiB RAM |
 | **Tools** | [oha](https://github.com/hatoo/oha) **1.15.0** (HTTP); **V first-party** masked WS load client (`benches/ws_load_client.v`) |
@@ -21,6 +21,26 @@ bash benches/soak_ws.sh  # WS multi-conn echo + close-storm (correctness)
 bash benches/compare/run_vs_axum.sh   # peer benchmark (see compare/README.md)
 bash benches/compare/run_reuseport_exp.sh  # PR6 multi-listener experiment
 ```
+
+---
+
+## HTTP engine (v0.12.1, 2026-09-25)
+
+Same laptop, oha 1.15.0, `recover` on, logging off, cleartext, spawn default. Three runs, median. Peer is the Axum release binary in `benches/compare/axum`. Success 100%.
+
+| Scenario | Viltrum | Axum | Axum / Viltrum |
+|----------|--------:|-----:|---------------:|
+| **E GET 10s c=50** | **216785** | 220973 | **1.02×** |
+| F GET 10s c=100 | 193848 | 246777 | 1.27× |
+
+Raw E Viltrum: 170374, 218519, 216785. Raw E Axum: 215730, 220973, 228832.
+Raw F Viltrum: 197034, 193848, 191914. Raw F Axum: 239813, 251537, 246777.
+
+The first Viltrum E sample (170k) is the low one. The median is the middle sample.
+
+**Headline:** keep-alive `GET /` at c=50 sits next to the Axum peer on this box (about **0.98×**). At c=100 the peer is about **1.27×**. The August ~2× gap was the per-read `select` in front of `recv`. v0.12 installs `SO_RCVTIMEO` once.
+
+League bar from epic #16 (E ≥ ~150k or ≥ ~0.75× peer): **both met** on this run (E ~217k, ~0.98×). Laptop variance is real. Not a lab guarantee. A, D, and C were not re-run.
 
 ---
 

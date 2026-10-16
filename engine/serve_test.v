@@ -19,11 +19,21 @@ fn h_big(mut c http1.Ctx) {
 	c.text(200, big_body)
 }
 
+fn h_delay_done(mut c http1.Ctx, ms u64) {
+	c.text_int(200, i64(ms))
+}
+
+fn h_delay(mut c http1.Ctx) {
+	ms := c.param_int('ms') or { 0 }
+	c.after(int(ms), h_delay_done, u64(ms))
+}
+
 fn make_router() &router.Router {
 	mut r := &router.Router{}
 	r.add(.get, '/p/*rest', [http1.Handler(h_path)]) or { panic(err) }
 	r.add(.post, '/echo', [http1.Handler(h_echo)]) or { panic(err) }
 	r.add(.get, '/big', [http1.Handler(h_big)]) or { panic(err) }
+	r.add(.get, '/delay/:ms', [http1.Handler(h_delay)]) or { panic(err) }
 	return r
 }
 
@@ -295,4 +305,67 @@ fn test_stop_closes_listeners() {
 	mut c := net.dial_tcp(addr) or { return } // refused: what we want
 	c.close() or {}
 	assert false, 'still accepting after stop'
+}
+
+fn delay_for(i int) int {
+	return 50 + (i * 13) % 150
+}
+
+// Many connections wait at once, each on its own delay: every one gets its own value
+// no sooner than it asked, and the workers stay free to serve others meanwhile.
+fn test_deferred_responses_concurrently() {
+	addr, mut stop := start(Options{})
+	defer {
+		stop.request()
+	}
+	n := 300
+	mut conns := []&net.TcpConn{}
+	mut sent := []u64{}
+	for i in 0 .. n {
+		mut c := dial(addr)
+		c.write_string('GET /delay/${delay_for(i)} HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
+		conns << c
+		sent << time.sys_mono_now()
+	}
+	mut q := dial(addr)
+	t0 := time.sys_mono_now()
+	q.write_string('GET /p/now HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
+	mut rq := Reader{}
+	_, now_body := rq.response(mut q) or { panic(err) }
+	assert now_body == '/p/now'
+	assert time.sys_mono_now() - t0 < 40 * u64(time.millisecond), 'a worker was held by a waiting request'
+	for i in 0 .. n {
+		mut r := Reader{}
+		status, body := r.response(mut conns[i]) or { panic(err) }
+		assert status == 200 && body == delay_for(i).str()
+		assert time.sys_mono_now() - sent[i] >= u64(delay_for(i)) * u64(time.millisecond)
+	}
+	for mut c in conns {
+		c.close() or {}
+	}
+}
+
+// A request pipelined behind a deferred one is answered after it, in order; a
+// connection closed while waiting leaves a timer that must not answer anybody else.
+fn test_deferred_pipeline_and_closed_waiter() {
+	addr, mut stop := start(Options{})
+	defer {
+		stop.request()
+	}
+	for _ in 0 .. 20 {
+		mut gone := dial(addr)
+		gone.write_string('GET /delay/30 HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
+		gone.close() or {}
+	}
+	mut c := dial(addr)
+	c.write_string('GET /delay/60 HTTP/1.1\r\nHost: x\r\n\r\nGET /p/after HTTP/1.1\r\nHost: x\r\n\r\n') or {
+		panic(err)
+	}
+	t0 := time.sys_mono_now()
+	mut r := Reader{}
+	_, first := r.response(mut c) or { panic(err) }
+	assert first == '60' && time.sys_mono_now() - t0 >= 50 * u64(time.millisecond)
+	_, second := r.response(mut c) or { panic(err) }
+	assert second == '/p/after'
+	c.close() or {}
 }

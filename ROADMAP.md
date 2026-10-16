@@ -244,6 +244,7 @@ None are smuggling or correctness bugs on valid traffic; pull when touched or as
 | API | `Ctx` exposes internals as `pub mut` (`buf`, `out`, `chain`, `idx`, …); request counter not on `App`; groups lack `head`/`options` |
 | Buffers | Shrink only on close, not when a grown connection goes idle |
 | Tests | Positive control for `allocated_bytes()`; alloc guard around `DateCache.format`; `%`-escape in the zero-alloc gate; cumulative chunked cap across chunks; trailers split across reads; exact-32-fields accept; EMFILE path; suite under `-d viltrum_debug`; CI `v fmt -verify` |
+| Deferred | A client that half-closes (shutdown write) while its response is deferred is closed and gets nothing; timers round up to whole ms (`epoll_pwait2` would give µs) |
 | Lint | `router/` not linted; map/array literals not linted (the zero-alloc gate is the real enforcement) |
 
 ---

@@ -3,7 +3,7 @@
 # opt out with a trailing "// cold:" comment explaining why it is off the hot path.
 set -uo pipefail
 files="http1/bytes.v http1/frame.v http1/chunked.v http1/parse.v http1/writer.v http1/date.v
-http1/ctx.v http1/gzip.c.v jsonenc/encode.v engine/process.v engine/worker_linux.c.v"
+http1/ctx.v http1/gzip.c.v jsonenc/encode.v engine/process.v engine/timers.v engine/worker_linux.c.v"
 pattern='\$\{|\.str\(\)|\.split\(|\.to_lower\(|\.to_upper\(|\.trim|\.bytestr\(\)|\.clone\(\)|\[([^]]*[^. ])?\.\.[^]]*\]'
 bad=0
 for f in $files; do

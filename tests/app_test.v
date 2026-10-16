@@ -1,5 +1,6 @@
 module main
 
+import time
 import viltrum
 
 fn hello(mut c viltrum.Ctx) {
@@ -26,6 +27,16 @@ fn big(mut c viltrum.Ctx) {
 	c.text(200, 'z'.repeat(1000))
 }
 
+fn waited(mut c viltrum.Ctx, ms u64) {
+	c.set_header('X-Waited', 'yes')
+	c.text(200, 'waited ${ms}')
+}
+
+fn wait(mut c viltrum.Ctx) {
+	ms := c.param_int('ms') or { 0 }
+	c.after(int(ms), waited, u64(ms))
+}
+
 fn build_app() &viltrum.App {
 	mut a := viltrum.new()
 	a.use(viltrum.cors('*'))
@@ -35,6 +46,7 @@ fn build_app() &viltrum.App {
 	a.get('/r', redirect)
 	a.get('/silent', viltrum.recover, silent)
 	a.get('/big', viltrum.gzip, big)
+	a.get('/wait/:ms', viltrum.recover, wait)
 	return a
 }
 
@@ -70,4 +82,14 @@ fn test_bad_pattern_is_reported() {
 		return
 	}
 	assert false, 'bad pattern accepted'
+}
+
+// recover leaves a deferred response alone, and handle_raw waits it out.
+fn test_deferred_response() {
+	app := build_app()
+	t0 := time.ticks()
+	res := app.handle_raw('GET /wait/30 HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
+	assert time.ticks() - t0 >= 30
+	assert res.starts_with('HTTP/1.1 200 OK\r\n') && res.contains('X-Waited: yes\r\n')
+	assert res.ends_with('waited 30') && !res.contains('Connection: close')
 }

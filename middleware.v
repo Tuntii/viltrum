@@ -4,10 +4,10 @@ import time
 import viltrum.http1
 
 // recover answers 500 and closes the connection when the rest of the chain wrote
-// no response. It cannot catch panics (V exits the process on one): run under a supervisor.
+// no response and deferred none (see Ctx.after). It cannot catch panics (V exits the process on one): run under a supervisor.
 pub fn recover(mut c Ctx) {
 	c.next()
-	if !c.responded {
+	if !c.responded && !c.deferred {
 		c.close()
 		c.text(500, 'internal error')
 	}

@@ -4,6 +4,9 @@ import viltrum.jsonenc
 
 pub type Handler = fn (mut c Ctx)
 
+// Resume writes a deferred response; see Ctx.after.
+pub type Resume = fn (mut c Ctx, arg u64)
+
 pub const ct_text = 'text/plain; charset=utf-8'
 pub const ct_json = 'application/json'
 
@@ -32,6 +35,11 @@ pub mut:
 	responded   bool
 	capture     bool // gzip and other body-rewriting middleware set this around next()
 	cap_type    string
+	// deferred response (after): the engine reads these once the chain returns
+	deferred  bool
+	defer_ms  int
+	defer_cb  Resume = unsafe { nil }
+	defer_arg u64
 	// chain
 	chain []Handler
 	idx   int
@@ -65,6 +73,7 @@ pub fn (mut c Ctx) begin(msg []u8) {
 	c.nparams = 0
 	c.status = 0
 	c.responded = false
+	c.deferred = false
 	c.capture = false
 	c.close_after = !c.head.keep_alive
 	c.idx = 0
@@ -259,6 +268,20 @@ fn (mut c Ctx) decoded(s int, e int) string {
 	return str_view(c.qbuf, start, c.qbuf.len - start)
 }
 
+// begin_resumed resets the Ctx for a response written after its request is gone
+// (see after). Only the request's method, version and keep-alive survive.
+pub fn (mut c Ctx) begin_resumed(method Method, minor int, keep_alive bool) {
+	c.head.method = method
+	c.head.minor = minor
+	c.head.keep_alive = keep_alive
+	c.head.method_raw = Span{}
+	c.head.target = Span{}
+	c.head.path = Span{}
+	c.head.query = Span{}
+	c.head.nfields = 0
+	c.begin(view(c.buf, 0, 0))
+}
+
 // --- chain ---
 
 // next runs the rest of the chain. Middleware calls it; the final handler does not.
@@ -270,6 +293,30 @@ pub fn (mut c Ctx) next() {
 }
 
 // --- response ---
+
+// after answers this request later without holding the worker: the handler returns
+// at once, and no sooner than ms milliseconds on, cb(mut c, arg) runs on the same
+// worker to write the response (it may call after again). By then the request is
+// gone: path, params, headers and body read empty, and headers set before after
+// are dropped, so pass what cb needs in arg. Requests pipelined behind this one
+// wait their turn. Middleware that runs after next() sees no response yet, so a
+// deferred response is not gzipped. ms <= 0 calls cb right away.
+pub fn (mut c Ctx) after(ms int, cb Resume, arg u64) {
+	if c.responded || c.deferred {
+		$if viltrum_debug ? {
+			panic('viltrum: after() on a request that already has a response')
+		}
+		return
+	}
+	if ms <= 0 {
+		cb(mut c, arg)
+		return
+	}
+	c.deferred = true
+	c.defer_ms = ms
+	c.defer_cb = cb
+	c.defer_arg = arg
+}
 
 // close asks the engine to close the connection after this response. Call it
 // before writing the response so the Connection header says so.

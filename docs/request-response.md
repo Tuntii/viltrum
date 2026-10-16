@@ -26,6 +26,31 @@ to close the connection after the response. One response per request; a second c
 The framework writes `Content-Length`, `Date` (on by default) and `Server` (if `Options.server_header` is set).
 HEAD answers keep `Content-Length` and drop the body.
 
+## Deferred responses
+
+`c.after(ms, cb, arg)` answers later without holding the worker: the handler returns at once, and no sooner
+than `ms` milliseconds on, `cb(mut c, arg)` runs on the same worker and writes the response (it may call
+`after` again). `cb` has the type `fn (mut c Ctx, arg u64)`; a plain function or a closure without captures
+keeps the path allocation-free.
+
+```v
+fn done(mut c viltrum.Ctx, ms u64) {
+	c.text_int(200, i64(ms))
+}
+
+app.get('/delay/:ms', fn (mut c viltrum.Ctx) {
+	ms := c.param_int('ms') or { 0 }
+	c.after(int(ms), done, u64(ms))
+})
+```
+
+By the time `cb` runs the request is gone: path, params, headers and body read empty, and headers set before
+`after` are dropped, so pass what `cb` needs in `arg` (a value, or an index into your own per-worker state).
+Requests pipelined behind a deferred one wait their turn, the connection's timeouts pause while it waits, and
+a connection that closes first simply drops its response. Middleware that runs after `c.next()` sees no
+response yet, so a deferred response is not gzipped. `ms <= 0` calls `cb` right away. Timers have millisecond
+granularity and round up.
+
 ## Middleware
 
 `recover`, `gzip`, `cors` and `logger` are plain `fn (mut c Ctx)` middleware. V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).

@@ -78,7 +78,7 @@ fn run_worker(index int, lfd int, r &router.Router, opts Options, mut stop Stop,
 fn (mut l Loop) run() {
 	mut events := [max_events]C.epoll_event{}
 	for !l.stop.requested() {
-		n := C.epoll_wait(l.epfd, &events[0], max_events, 1000)
+		n := C.epoll_wait(l.epfd, &events[0], max_events, l.wait_ms())
 		l.now = time.ticks()
 		for i in 0 .. n {
 			fd := unsafe { events[i].data.fd }
@@ -88,6 +88,7 @@ fn (mut l Loop) run() {
 				l.on_event(fd, events[i].events)
 			}
 		}
+		l.fire()
 		if l.now - l.last_sweep >= 1000 {
 			l.sweep()
 			l.last_sweep = l.now
@@ -100,6 +101,49 @@ fn (mut l Loop) run() {
 		}
 	}
 	C.close(l.epfd)
+}
+
+// wait_ms is the epoll timeout: until the next deferred response is due, rounded up
+// so none fires early, and at most a second so stop and sweep are noticed.
+fn (l &Loop) wait_ms() int {
+	if l.w.timers.a.len == 0 {
+		return 1000
+	}
+	due := l.w.timers.due_at()
+	now := time.sys_mono_now()
+	if due <= now {
+		return 0
+	}
+	ms := (due - now + 999_999) / 1_000_000
+	return if ms > 1000 { 1000 } else { int(ms) }
+}
+
+// fire writes every deferred response that is due, then serves what was pipelined
+// behind each. A timer whose connection has closed (or been reused) is dropped.
+fn (mut l Loop) fire() {
+	if l.w.timers.a.len == 0 {
+		return
+	}
+	now := time.sys_mono_now()
+	for l.w.timers.a.len > 0 && l.w.timers.due_at() <= now {
+		t := l.w.timers.pop()
+		if t.fd >= l.conns.len || isnil(l.conns[t.fd]) {
+			continue
+		}
+		mut c := l.conns[t.fd]
+		if c.fd != t.fd || c.gen != t.gen || !c.waiting {
+			continue
+		}
+		l.w.resume(mut c)
+		l.drain(mut c)
+		if c.fd >= 0 && !c.out_armed {
+			c.deadline_ms = l.now + if c.reading {
+				l.opts.read_timeout.milliseconds()
+			} else {
+				l.opts.idle_timeout.milliseconds()
+			}
+		}
+	}
 }
 
 fn (mut l Loop) ctl(op int, fd int, events u32) bool {
@@ -290,7 +334,9 @@ fn (mut l Loop) sweep() {
 		l.paused = !l.ctl(C.EPOLL_CTL_ADD, l.lfd, u32(C.EPOLLIN))
 	}
 	for i in 0 .. l.conns.len {
-		if isnil(l.conns[i]) || l.conns[i].fd < 0 || l.now <= l.conns[i].deadline_ms {
+		// a waiting connection is answered by its timer, not timed out
+		if isnil(l.conns[i]) || l.conns[i].fd < 0 || l.conns[i].waiting
+			|| l.now <= l.conns[i].deadline_ms {
 			continue
 		}
 		mut c := l.conns[i]

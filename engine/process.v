@@ -1,5 +1,6 @@
 module engine
 
+import time
 import viltrum.http1
 import viltrum.router
 
@@ -21,6 +22,20 @@ pub mut:
 	reading     bool // part of a request is buffered
 	deadline_ms i64
 	counted     bool // holds a max_conns slot
+	gen         u32  // bumped per connection, so a stale timer cannot answer a newer one
+	waiting     bool // a deferred response is pending; requests behind it wait
+	pending     Pending
+}
+
+// Pending is what survives of a request whose response was deferred (Ctx.after).
+struct Pending {
+mut:
+	cb     http1.Resume = unsafe { nil }
+	arg    u64
+	method http1.Method
+	minor  int
+	close  bool
+	due    u64 // time.sys_mono_now() ns
 }
 
 pub fn new_conn() &Conn {
@@ -43,6 +58,8 @@ pub fn (mut c Conn) reset(fd int) {
 	c.out_armed = false
 	c.reading = false
 	c.counted = false
+	c.waiting = false
+	c.gen++
 }
 
 // Worker serves the requests of one event loop. It owns the Ctx, the Date cache
@@ -55,6 +72,7 @@ pub mut:
 	opts     Options
 	m        router.Match
 	requests u64
+	timers   Timers // deferred responses, earliest first
 }
 
 pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
@@ -84,7 +102,7 @@ fn is_http10(buf []u8, off int) bool {
 // c.wbuf, and compacts what is left. It never touches the socket.
 pub fn (mut w Worker) process(mut c Conn) {
 	mut off := 0
-	for !c.close_after && off < c.rbuf.len && c.wbuf.len < w.opts.max_pending {
+	for !c.close_after && !c.waiting && off < c.rbuf.len && c.wbuf.len < w.opts.max_pending {
 		msg := http1.view(c.rbuf, off, c.rbuf.len - off)
 		n := http1.frame(msg, mut c.frame, w.opts.limits) or {
 			w.refuse(mut c, err)
@@ -154,6 +172,57 @@ fn (mut w Worker) serve(mut c Conn, msg []u8) {
 	if x.chain.len > 0 {
 		x.chain[0](mut x)
 	}
+	w.finish(mut c, idx)
+	w.requests++
+	$if viltrum_debug ? {
+		// Poison the request so a handler that kept a view reads garbage in tests.
+		unsafe { C.memset(msg.data, 0xA5, msg.len) }
+	}
+}
+
+// resume writes the response deferred on c; the caller then serves what was
+// pipelined behind it (process).
+pub fn (mut w Worker) resume(mut c Conn) {
+	c.waiting = false
+	mut x := &w.ctx
+	x.out = c.wbuf
+	x.begin_resumed(c.pending.method, c.pending.minor, !c.pending.close)
+	c.pending.cb(mut x, c.pending.arg)
+	w.finish(mut c, 0)
+}
+
+// process_waiting is process that sleeps out deferred responses in place. For
+// handle_raw and tests only: the event loop never blocks a worker like this.
+pub fn (mut w Worker) process_waiting(mut c Conn) {
+	w.process(mut c)
+	for c.waiting {
+		now := time.sys_mono_now()
+		if c.pending.due > now {
+			time.sleep(time.Duration(i64(c.pending.due - now)))
+		}
+		w.resume(mut c)
+		w.process(mut c)
+	}
+	w.timers = Timers{}
+}
+
+// finish takes the Ctx's response, or its deferral, back into c. idx is the route
+// lookup result, which picks the answer for a handler that wrote nothing.
+fn (mut w Worker) finish(mut c Conn, idx int) {
+	mut x := &w.ctx
+	if x.deferred {
+		// the connection stays open until the deferred response is out
+		c.waiting = true
+		c.pending.cb = x.defer_cb
+		c.pending.arg = x.defer_arg
+		c.pending.method = x.head.method
+		c.pending.minor = x.head.minor
+		c.pending.close = x.close_after
+		c.pending.due = time.sys_mono_now() + u64(x.defer_ms) * 1_000_000
+		w.timers.push(c.pending.due, c.fd, c.gen)
+		c.wbuf = x.out
+		return
+	}
 	if !x.responded {
 		if idx == router.not_found {
 			x.text(404, 'not found')
@@ -166,11 +235,6 @@ fn (mut w Worker) serve(mut c Conn, msg []u8) {
 	}
 	c.wbuf = x.out
 	c.close_after = x.close_after
-	w.requests++
-	$if viltrum_debug ? {
-		// Poison the request so a handler that kept a view reads garbage in tests.
-		unsafe { C.memset(msg.data, 0xA5, msg.len) }
-	}
 }
 
 // refuse answers a framing or parse error after any earlier pipelined responses and

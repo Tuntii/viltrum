@@ -126,7 +126,8 @@ fn mutate(b []u8) []u8 {
 			}
 		}
 		2 {
-			out.insert(pos, fuzz_tokens[rand.intn(fuzz_tokens.len) or { 0 }].bytes())
+			tok := fuzz_tokens[rand.intn(fuzz_tokens.len) or { 0 }].bytes()
+			out.insert(pos, tok)
 		}
 		3 {
 			end := pos + (rand.intn(16) or { 0 })

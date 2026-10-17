@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.2](https://github.com/Tuntii/viltrum/compare/v1.0.1...v1.0.2) (2026-10-17)
+
+### Bug Fixes
+
+* **test:** fix parser fuzz double-eval crash and add non-Linux engine stubs ([4bb5d65](https://github.com/Tuntii/viltrum/commit/4bb5d659767de86095425d0a976d38ed764cf59d))
+
 ## [1.0.1](https://github.com/Tuntii/viltrum/compare/v1.0.0...v1.0.1) (2026-10-15)
 
 ### Performance Improvements

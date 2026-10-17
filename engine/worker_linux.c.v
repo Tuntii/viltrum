@@ -40,7 +40,8 @@ mut:
 	w          &Worker
 	epfd       int
 	lfd        int
-	conns      []&Conn // indexed by fd; a Conn outlives its connection and is reused
+	conns      []&Conn // open connections, indexed by fd
+	free       []&Conn // closed connections, kept with their buffers for the next accept
 	opts       Options
 	stop       &Stop
 	count      &ConnCount
@@ -191,10 +192,11 @@ fn (mut l Loop) conn_for(fd int) &Conn {
 	for l.conns.len <= fd {
 		l.conns << unsafe { &Conn(nil) } // cold: once per new highest fd
 	}
-	if isnil(l.conns[fd]) {
-		l.conns[fd] = new_conn() // cold: once per fd number
-	}
-	return l.conns[fd]
+	// fd numbers are shared by all workers, so a Conn is pooled per worker rather than
+	// kept per fd: a worker holds as many as it ever had open at once.
+	mut c := if l.free.len > 0 { l.free.pop() } else { new_conn() } // cold: new_conn only past the worker's peak
+	l.conns[fd] = c
+	return c
 }
 
 fn (mut l Loop) on_event(fd int, ev u32) {
@@ -322,6 +324,7 @@ fn (mut l Loop) close(mut c Conn) {
 		l.count.release()
 		c.counted = false
 	}
+	l.conns[c.fd] = unsafe { nil }
 	c.fd = -1
 	if c.rbuf.cap > shrink_rbuf_above {
 		c.rbuf = []u8{cap: read_buf_size} // cold: give back what one large request grew
@@ -329,6 +332,7 @@ fn (mut l Loop) close(mut c Conn) {
 	if c.wbuf.cap > shrink_wbuf_above {
 		c.wbuf = []u8{cap: write_buf_size} // cold
 	}
+	l.free << c // cold: grows only past the worker's peak
 }
 
 fn (mut l Loop) sweep() {

@@ -126,7 +126,10 @@ fn mutate(b []u8) []u8 {
 			}
 		}
 		2 {
-			out.insert(pos, fuzz_tokens[rand.intn(fuzz_tokens.len) or { 0 }].bytes())
+			// a local, not inline: V 0.5.2 emits the argument twice for insert_many (data
+			// and len), so an inline rand call took data from one token and len from another
+			tok := fuzz_tokens[rand.intn(fuzz_tokens.len) or { 0 }].bytes()
+			out.insert(pos, tok)
 		}
 		3 {
 			end := pos + (rand.intn(16) or { 0 })

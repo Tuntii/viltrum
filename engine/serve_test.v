@@ -296,3 +296,44 @@ fn test_stop_closes_listeners() {
 	c.close() or {}
 	assert false, 'still accepting after stop'
 }
+
+fn C.socketpair(domain int, typ int, protocol int, sv &int) int
+
+// fd numbers are process-wide, so with SO_REUSEPORT any worker sees any of them.
+// A worker must pool its closed Conns, not keep one per fd number it ever saw:
+// under connection churn that was a Conn per fd per worker (GBs at 64 workers).
+fn test_closed_conns_are_pooled_per_worker() {
+	mut stop := new_stop()
+	mut count := &ConnCount{}
+	mut l := &Loop{
+		w:     new_worker(make_router(), Options{}, 0)
+		epfd:  C.epoll_create1(0)
+		lfd:   -1
+		stop:  stop
+		count: count
+	}
+	mut peers := []int{}
+	mut first := unsafe { &Conn(nil) }
+	mut last_fd := -1
+	for _ in 0 .. 100 {
+		sv := [2]int{}
+		assert C.socketpair(C.AF_UNIX, C.SOCK_STREAM, 0, &sv[0]) == 0
+		// the kept end holds the fd number just freed, so every connection gets a new one
+		peers << sv[0]
+		assert sv[1] > last_fd
+		last_fd = sv[1]
+		mut c := l.conn_for(sv[1])
+		c.reset(sv[1])
+		if isnil(first) {
+			first = c
+		}
+		assert voidptr(c) == voidptr(first)
+		l.close(mut c)
+		assert isnil(l.conns[sv[1]])
+	}
+	assert l.free.len == 1
+	for fd in peers {
+		C.close(fd)
+	}
+	C.close(l.epfd)
+}

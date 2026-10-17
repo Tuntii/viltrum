@@ -22,7 +22,7 @@ pub mut:
 	reading     bool // part of a request is buffered
 	deadline_ms i64
 	counted     bool // holds a max_conns slot
-	gen         u32  // bumped per connection, so a stale timer cannot answer a newer one
+	gen         u32  // per worker, unique per connection, so a stale timer cannot answer a newer one
 	waiting     bool // a deferred response is pending; requests behind it wait
 	pending     Pending
 }
@@ -59,7 +59,6 @@ pub fn (mut c Conn) reset(fd int) {
 	c.reading = false
 	c.counted = false
 	c.waiting = false
-	c.gen++
 }
 
 // Worker serves the requests of one event loop. It owns the Ctx, the Date cache
@@ -73,6 +72,7 @@ pub mut:
 	m        router.Match
 	requests u64
 	timers   Timers // deferred responses, earliest first
+	gen      u32    // last Conn.gen handed out
 }
 
 pub fn new_worker(r &router.Router, opts Options, index int) &Worker {

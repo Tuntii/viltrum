@@ -178,6 +178,9 @@ fn (mut l Loop) accept_all() {
 		C.setsockopt(fd, C.IPPROTO_TCP, C.TCP_NODELAY, &one, sizeof(int))
 		mut c := l.conn_for(fd)
 		c.reset(fd)
+		// a Conn is not tied to one fd, so its generation comes from the worker
+		l.w.gen++
+		c.gen = l.w.gen
 		c.counted = counted
 		c.deadline_ms = l.now + l.opts.idle_timeout.milliseconds()
 		l.ctl(C.EPOLL_CTL_ADD, fd, u32(C.EPOLLIN | C.EPOLLRDHUP))

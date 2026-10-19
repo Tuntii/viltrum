@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.3](https://github.com/Tuntii/viltrum/compare/v1.0.2...v1.0.3) (2026-10-19)
+
+### Bug Fixes
+
+* **engine:** pool closed connections per worker instead of keeping one per fd ([8a6d52c](https://github.com/Tuntii/viltrum/commit/8a6d52c18141bce0d4e67e97841c7b82f108521d))
+
 ## [1.0.2](https://github.com/Tuntii/viltrum/compare/v1.0.1...v1.0.2) (2026-10-17)
 
 ### Bug Fixes

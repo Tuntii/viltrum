@@ -7,7 +7,7 @@ pub const read_buf_size = 8 * 1024
 pub const write_buf_size = 16 * 1024
 
 // Conn is one client connection. A worker keeps the Conn after the connection
-// closes and reuses it, buffers included, for the next connection on the same fd.
+// closes and reuses it, buffers included, for its next accepted connection.
 @[heap]
 pub struct Conn {
 pub mut:

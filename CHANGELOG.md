@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.0](https://github.com/Tuntii/viltrum/compare/v1.0.3...v1.1.0) (2026-10-19)
+
+### Features
+
+* **engine:** deferred responses with Ctx.after, answered from per-worker timers ([b6f1967](https://github.com/Tuntii/viltrum/commit/b6f1967d290c62d1f4135358fc976979071c6481))
+
+### Bug Fixes
+
+* **engine:** take a connection's timer generation from its worker ([8a42b86](https://github.com/Tuntii/viltrum/commit/8a42b867e5249ec0c428aa91e8721915cab13b26))
+
 ## [1.0.3](https://github.com/Tuntii/viltrum/compare/v1.0.2...v1.0.3) (2026-10-19)
 
 ### Bug Fixes

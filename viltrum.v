@@ -183,7 +183,7 @@ pub fn (app &App) handle_raw(raw string) !string {
 	}, 0)
 	mut c := engine.new_conn()
 	unsafe { c.rbuf.push_many(raw.str, raw.len) }
-	w.process(mut c)
+	w.process_waiting(mut c)
 	return c.wbuf.bytestr()
 }
 

@@ -57,6 +57,15 @@ fn json_page(mut c http1.Ctx) {
 
 fn silent(mut c http1.Ctx) {}
 
+fn delay_done(mut c http1.Ctx, ms u64) {
+	c.text_int(200, i64(ms))
+}
+
+fn delay(mut c http1.Ctx) {
+	ms := c.param_int('ms') or { 0 }
+	c.after(int(ms), delay_done, u64(ms))
+}
+
 fn make_router() &router.Router {
 	mut r := &router.Router{}
 	r.add(.get, '/baseline11', [http1.Handler(baseline)]) or { panic(err) }
@@ -67,6 +76,10 @@ fn make_router() &router.Router {
 		panic(err)
 	}
 	r.add(.get, '/silent', [http1.Handler(silent)]) or { panic(err) }
+	r.add(.get, '/delay/:ms', [http1.Handler(delay)]) or { panic(err) }
+	r.add(.get, '/rdelay/:ms', [http1.Handler(http1.gzip_middleware), http1.Handler(delay)]) or {
+		panic(err)
+	}
 	return r
 }
 
@@ -207,4 +220,55 @@ fn test_pipelining_pauses_at_max_pending() {
 		total += c.wbuf.bytestr().count('\r\n\r\nok')
 	}
 	assert total == 16 && c.rbuf.len == 0
+}
+
+fn test_deferred_response_keeps_pipeline_order() {
+	mut w := new_worker(make_router(), Options{ send_date: false }, 0)
+	mut c := new_conn()
+	run(mut w, mut c,
+		'GET /delay/5 HTTP/1.1\r\nHost: x\r\n\r\nGET /pipeline HTTP/1.1\r\nHost: x\r\n\r\n'.bytes())
+	assert c.waiting && c.wbuf.len == 0 && c.rbuf.len > 0 && !c.close_after
+	assert w.timers.a.len == 1 && w.timers.a[0].fd == c.fd && w.timers.a[0].gen == c.gen
+	w.resume(mut c)
+	w.process(mut c)
+	assert c.wbuf.bytestr() ==
+		'HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 1\r\n\r\n5' +
+		'HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\n\r\nok'
+	assert !c.waiting && c.rbuf.len == 0
+}
+
+// Connection: close holds until the deferred response is written, then applies.
+fn test_deferred_response_with_close() {
+	mut w := new_worker(make_router(), Options{ send_date: false }, 0)
+	mut c := new_conn()
+	run(mut w, mut c, 'GET /rdelay/7 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'.bytes())
+	assert c.waiting && !c.close_after
+	w.resume(mut c)
+	s := c.wbuf.bytestr()
+	assert s.contains('Connection: close\r\n') && s.ends_with('\r\n\r\n7') && c.close_after
+}
+
+fn test_deferred_zero_answers_at_once() {
+	mut w := new_worker(make_router(), Options{ send_date: false }, 0)
+	mut c := new_conn()
+	run(mut w, mut c, 'GET /delay/0 HTTP/1.1\r\nHost: x\r\n\r\n'.bytes())
+	assert !c.waiting && c.wbuf.bytestr().ends_with('\r\n\r\n0') && w.timers.a.len == 0
+}
+
+fn test_deferred_response_allocates_nothing() {
+	mut w := new_worker(make_router(), Options{}, 0)
+	mut c := new_conn()
+	req := 'GET /delay/10 HTTP/1.1\r\nHost: x\r\n\r\n'.bytes()
+	for _ in 0 .. 200 {
+		run(mut w, mut c, req)
+		w.resume(mut c)
+		_ = w.timers.pop()
+	}
+	before := http1.allocated_bytes()
+	for _ in 0 .. 10000 {
+		run(mut w, mut c, req)
+		w.resume(mut c)
+		_ = w.timers.pop()
+	}
+	assert http1.allocated_bytes() - before == 0
 }

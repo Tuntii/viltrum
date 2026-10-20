@@ -1,228 +1,107 @@
 # Viltrum Roadmap
 
-Last updated: 2026-09-25 · current release: **v0.11.0** (next cut records the hot-path measurement; default I/O unchanged)
+Last updated: 2026-10-21 · current release: **v1.1.0**
 
-Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** TCP accept loop and HTTP/1.1 framing. Not a thin wrapper.
+Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** HTTP/1.1 engine: one `SO_REUSEPORT`
+epoll worker per CPU, pipelining, and no allocation per request inside the framework. Not a thin wrapper.
 
-This document is the product plan. Dates are ordered phases, not calendar promises. Ship when green; skip vanity milestones.
+This document is the product plan. Phases are ordered, not calendar promises. Ship when green; skip vanity
+milestones.
 
 ---
 
 ## North star
 
-**When someone says “Viltrum,” they mean a first-party engine stack:** own TCP accept, own HTTP/1.1, own connection model, own WebSocket framing, own optional TLS path — not a wrapper around another framework’s runtime.
-
-Own the bytes on the wire for tools and services. Tiny public API. Zero third-party deps. Honest benches. Optional `https://` / `wss://` on the **same** Conn story. Never become a full application platform (sessions, ORM, templates).
+**When someone says “Viltrum,” they mean a first-party engine stack:** own accept loop, own HTTP/1.1, own
+connection model, own WebSocket framing, own TLS integration — not a wrapper around another framework’s runtime.
 
 Success looks like:
 
 - Clone → `bash scripts/install.sh` → `v run examples/*` in minutes
-- One mental model from Hello World → mounts → upgrade → `app.ws` → TLS
-- Predictable connection lifecycle (keep-alive, idle, limits, graceful stop)
-- WebSocket that feels native: `app.ws('/path', handler)` on the hijack foundation
-- Performance **and** ergonomics both non-negotiable (see Principles)
+- One mental model from Hello World → middleware → TLS → WebSocket
+- Predictable connection lifecycle (keep-alive, timeouts, limits, graceful stop)
+- Measured performance on independent benches, with the method written down
 - Docs that state what we will **not** do as clearly as what we do
-- A full-stack teaching starter (separate repo) so new users see API + UI without bloating the engine
 
 ---
 
 ## Principles
 
 1. **Small surface** — every public symbol must earn its place.
-2. **Own engine, end to end** — accept loop, HTTP framing, Conn, WS frames, and TLS wrap stay first-party. No silent swap to another stack. No protocol “helpers” that hide a foreign engine.
-3. **Performance without DX sacrifice** — speed is a goal; ergonomics and scalable DX are **constraints**. Internal fast paths (pools, codec, experimental reactor) may grow; the public happy path stays short (`new` → routes → `listen` / `ws`). Never ship “only the ugly path is fast” as the product story.
-4. **Honest status** — benches local + method noted; “production” only with evidence.
-5. **Proxy-friendly first** — reverse proxy remains valid forever; in-process TLS is additive, not mandatory.
-6. **Security before checkboxes** — TLS/WSS land only with tests, limits, and clear failure modes.
-7. **No name-drop positioning** — product stands alone in public docs.
+2. **Own engine, end to end** — accept loop, HTTP framing, connections, WS frames and the TLS integration stay
+   first-party. Crypto comes from the TLS library V ships (mbedtls); no foreign server runtime underneath.
+3. **Zero allocation on the hot path** — enforced by a test in CI. New features keep the gate green or say why not.
+4. **Performance without DX sacrifice** — the public happy path stays short (`new` → routes → `listen`).
+5. **Honest status** — benches with the method noted; “production” only with evidence.
+6. **Proxy-friendly first** — a reverse proxy remains valid forever; in-process TLS is additive.
+7. **Security before checkboxes** — TLS and WSS land only with tests, limits and clear failure modes.
 8. **YAGNI between phases** — do not start N+1 while N is half-done.
 
 ---
 
-## Current baseline (v0.11.0) — done
+## Where 1.1 stands
 
 | Area | Status |
 |------|--------|
-| TCP accept + spawn per conn | done (`engine/`) |
-| HTTP/1.1 parse/serialize, keep-alive, Host check | done (`http/`) |
-| Limits: header/body size, read/write/idle/header timeouts, `max_conns` | done |
-| Graceful shutdown (SIGINT/SIGTERM), `handle_signals` | done |
-| Router: method, `:param`, `*wildcard`, slash normalize, HEAD→GET | done |
-| App facade, mount, chain, cors, static, logger, recover | done |
-| **`engine.Conn` + `app.upgrade` hijack** | done (v0.4) |
-| **`app.ws` + `viltrum.ws` RFC 6455** (`ws://`) | done (v0.5) |
-| **In-process HTTPS / WSS** (`listen_tls`, mbedtls) | done (v0.7.0 line; design was “v0.6”) |
-| HTTP/1.1 hot-path PR1–PR7 (honest ceiling documented) | done (v0.7.1–0.7.6) |
-| HeaderMap lowered hot path; experimental conn pool / epoll | done (v0.7.7–0.7.8; opt-in / default off) |
-| Graceful drain + ConnStats ops counters | done (`drain_timeout`, `ServerOptions.stats`, `requests`) |
-| Form / multipart + extra JSON + cleartext client + TLS SIGHUP reload | done (v0.9.0) |
-| Multipart part limits + `safe_filename`; failed SIGHUP keeps old cert | done (v0.10.0) |
-| HTTPS client, Host polish, `json_i64`, form binary tests, runtime plan | done (v0.11.0) |
-| Full-stack teaching starter | done ([full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template)) |
-| Minimal JSON field helpers | done |
-| Unit + integration tests, CI, examples | done |
+| HTTP/1.1 engine: epoll worker per CPU, pipelining, backpressure, timeouts, `max_conns`, graceful stop | done (1.0) |
+| Zero-allocation request path, enforced in CI; parser fuzzed in CI | done (1.0) |
+| Router (`:param`, `*rest`, groups), middleware chain, `recover` / `gzip` / `cors` / `logger` | done (1.0) |
+| Compile-time JSON encoder | done (1.0) |
+| Closed connections pooled per worker | done (1.0.3) |
+| Deferred responses (`c.after`) from per-worker timers | done (1.1.0) |
+| TLS, WebSocket and upgrade, static files, forms and uploads, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
 
-**Explicitly not in tree as product:** ORM, sessions platform, templates engine, HTTP/2–3, edge ACME terminator.
+Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
+[benches/httparena](benches/httparena). On the 2026-10-20 run viltrum was near the top on baseline,
+limited-conn, async and the latency profiles, mid-field on json-comp, and absent from every TLS profile.
 
 ---
 
-## Phase map (overview)
+## Phase 1 — TLS on the 1.0 core
 
-```
-v0.3.x  Harden + docs + DX              done
-v0.4    Conn + hijack / upgrade         done
-v0.5    WebSocket (cleartext ws://)     done
-v0.5.x  Engine harden + measured perf   done (epic #3)
-v0.6*   TLS (https://) then WSS         done (shipped on 0.7.0 line)
-v0.7.x  Hot path + polish + starter     done through 0.7.8
-v0.8.0  Drain + ConnStats (ops)              done
-v0.9.0  Form/JSON/client/cert SIGHUP         done
-v0.10.0 TLS reload harden + multipart limits done
-v0.11.0 HTTPS client + json_i64 + stats      done
-next    Hot path measured (SO_RCVTIMEO, epoll_cores); default stays spawn
-```
+**Goal:** `https://` on the same epoll workers as cleartext, with no allocation added per request.
 
-\*Roadmap originally numbered TLS as **v0.6** and hot path as **v0.8**. Releases used **0.7.x** for both after 0.6.x patch history. Ops hooks shipped as **v0.8.0**. Treat version themes below as source of truth; do not renumber old tags.
+- [ ] Design doc: mbedtls in non-blocking mode inside the epoll loop (handshake state, `WANT_READ` /
+      `WANT_WRITE` mapped to epoll interest, partial writes, `close_notify` on close)
+- [ ] Several listeners in one process (cleartext and TLS side by side), e.g. `app.listen_tls(addr, TlsOptions)`
+- [ ] Policy: TLS 1.3 preferred, TLS 1.2 minimum, AEAD ciphers only, ALPN `http/1.1`, works without SNI
+- [ ] Certificate reload without a restart: `stat` the files at most once a second on handshake, reload on
+      change, keep the last good pair when the new one fails to load (half-swapped files)
+- [ ] Check that AES-NI is used by the mbedtls build; measure TLS against cleartext
+- [ ] Tests: handshake, pipelining over TLS, partial writes, `close_notify`, reload, rejected old protocols,
+      zero-alloc gate on the TLS path
+- [ ] CI, `docs/tls.md` for 1.x, README status
+- [ ] Release (minor)
+- [ ] HttpArena: `json-tls` and `8gbit` (`POST /echo`, 10–100 KB bodies including chunked), `tls_check`
 
----
+## Phase 2 — Compressed JSON throughput
 
-## v0.3.x — Harden, document, adopt — **done**
+**Goal:** close most of the json-comp gap without leaving the framework's gzip middleware.
 
-**Goal:** Make 0.3.x the boring, trustworthy base. No protocol expansion.
+- [ ] Profile json-comp on Linux: share of time in gzip vs the JSON encoder
+- [ ] Faster deflate path (compression level, buffer reuse, or a faster deflate implementation)
+- [ ] Re-measure, release
 
-### Docs and product
+## Phase 3 — WebSocket on the 1.0 core
 
-- [x] README: link this roadmap; short **Non-goals** / **Later** blurb
-- [x] `docs/connection.md`, `docs/deploy.md`, `docs/request-response.md`
-- [x] Interest issues: WebSocket (#2), TLS (#1)
+- [ ] Upgrade / hijack on the epoll worker
+- [ ] RFC 6455 frames, non-blocking, with limits; WSS on top of Phase 1
+- [ ] HttpArena echo-ws profiles
 
-### Engine / HTTP polish
+## Phase 4 — 1.0 hardening and the missing pieces
 
-- [x] Chunked / TE reject with 400; Expect: 100-continue; HEAD body omit
-- [x] Absolute-form request-target + OPTIONS `*`
-- [x] Optional `Date` / `Server`; finer error taxonomy for logs
+- [ ] The known gaps below that matter in production first (lingering close, 413 at the read cap, EINTR)
+- [ ] Static files, forms and uploads back on the new core
 
-### API / DX
+## Phase 5 — HTTP/2 (decision needed)
 
-- [x] `patch` / `options` / `head` convenience
-- [x] CI: unit tests + example builds
+Not planned today. Revisit after Phases 1–3: cleartext h2 first, then h2 over TLS via ALPN.
 
----
+## Phase 6 — Community
 
-## v0.4 — Engine foundation (pre-WS / pre-TLS) — **done**
-
-**Goal:** Connection model that can leave pure request/response without hacks.
-
-- [x] `engine.Conn`, `app.upgrade`, leftover pushback
-- [x] `max_conns`, `read_header_timeout`, `send_date` / `server_header`, `peer_ip`
-- [x] Docs: `docs/upgrade.md`; example: `examples/upgrade_echo`
-- [x] Tag **v0.4.0**
-
----
-
-## v0.5 — WebSockets (cleartext `ws://`) — **done**
-
-**Goal:** First-party RFC 6455 **server** on the v0.4 Conn/hijack path.
-
-- [x] `viltrum.ws`, handshake, frames, limits, `app.ws` / `app.ws_opts`
-- [x] Example `examples/ws_echo`, docs `docs/ws.md`, tests
-- [x] Tag **v0.5.0**
-
-### Out of scope for v0.5 (still)
-
-- permessage-deflate; full subprotocol matrix; Socket.IO; client-mode WS; RFC 8441
-
----
-
-## v0.5.x — Engine harden + measured perf — **done**
-
-Epic [#3](https://github.com/Tuntii/viltrum/issues/3): timeouts, soak, first-party WS load client, HTTP profile micro-opts. No architecture rewrite.
-
----
-
-## v0.6 theme — TLS (`https://`) then WSS (`wss://`) — **done**
-
-Shipped on the **v0.7.0** release line (see CHANGELOG). Design: [docs/design/v0.6-tls-wss.md](docs/design/v0.6-tls-wss.md).
-
-### HTTPS + WSS
-
-- [x] `TlsOptions`, `app.listen_tls`, Conn dual transport (tcp | ssl)
-- [x] Same WS path over TLS (`examples/wss_echo`)
-- [x] Dev cert script, docs `docs/tls.md`
-
-### Out of scope (still)
-
-- ACME inside Viltrum; full mTLS management UI; competing with Caddy as edge terminator
-
----
-
-## v0.7.x — HTTP/1.1 hot path + ops spikes — **done** (through 0.7.8)
-
-**Goal:** Own-stack cleartext HTTP/1.1 throughput toward a competitive peer band; document honesty when the bar is not met.
-
-| PR / work | Status |
-|-----------|--------|
-| PR1 Instrument + baseline lock | done |
-| PR2 Byte-level `parse_request` | done |
-| PR3 Single message ownership | done |
-| PR4 Response `[]u8` builder + header casing cache | done |
-| PR5 Conn-local buffer reuse | done |
-| PR6 `SO_REUSEPORT` multi-listener experiment | done (default off) |
-| PR7 Honest RESULTS closeout | done |
-| HeaderMap lowered hot path | done (0.7.8) |
-| Experimental `conn_workers` pool | done (opt-in; 0.7.7) |
-| Experimental Linux epoll reactor | done (opt-in; default off; A/B notes) |
-
-### Exit (epic #16)
-
-- [x] League bar checked on 2026-08-05: **not met** then (E ~98k / ~0.51× Axum)
-- [x] Re-lock 2026-09-25, v0.12.1: **met** on this laptop (E 216785 / 0.98× Axum 220973). See [benches/RESULTS.md](./benches/RESULTS.md)
-- [x] Honest ceiling in [benches/RESULTS.md](./benches/RESULTS.md)
-- [x] No public API break
-
-The August gap was mostly the per-read readiness wait in front of `recv`. v0.12 removed that. On the 2026-09-25 re-lock, E is next to the Axum peer and F is about 1.27× behind. `epoll_cores` did not clear +15% on E against this spawn path, so spawn stays the default.
-
----
-
-## Teaching surface — full-stack starter — **done** (separate repo)
-
-Inspired by [fastapi/full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template); **not a port**.
-
-- [x] **[Tuntii/full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template)** — same-process API + static SPA, bearer auth, users, items, in-memory store
-- [x] Own git history, MIT license, `scripts/setup.sh` to link Viltrum
-- [x] Linked from this repo’s README / docs / examples index
-
-Lives **outside** the engine tree so app churn does not couple to framework releases. Does **not** add ORM, Docker Compose, or React toolchain to Viltrum.
-
----
-
-## v0.8+ — Backlog (demand-driven)
-
-Only pull when real use or repeated asks:
-
-| Item | Notes |
-|------|--------|
-| Graceful drain timeout (wait in-flight) | **done** — `ServerOptions.drain_timeout` |
-| `max_conns` + metrics / ops hooks | **done** — `ConnStats` via `ServerOptions.stats` |
-| Multipart / file upload helpers | **done** — `form_value` / `form_file` / `form_parts` + `examples/upload` |
-| Better JSON (codegen or opt-in) | **done (opt-in helpers)** — `json_float` / `json_raw` / `json_strings` / `json_escape`; still not a serde |
-| HTTP/1.1 pipelining stress tests | **done** — `engine/pipeline_test.v` |
-| `http.Client` symmetry | **done (minimal)** — `fetch` / `fetch_tls`; no redirects/cookies/HTTP/2 |
-| Hot reload certs | **done** — `TlsOptions.reload_on_sighup` (failed reload keeps the old cert) |
-| Runtime-level perf (scheduler / I/O) | **measured** — spawn stays default. `epoll_cores=16` E +0.3% with recover ([CORES.md](benches/compare/CORES.md)). Cleartext reads use one `SO_RCVTIMEO` then `recv`. |
-| RFC 8441 WS over H2 | almost certainly never |
-| HTTP/2, HTTP/3 | **not planned** unless strategy changes |
-| Middleware ecosystem / plugin repo | community first |
-
-### Shipped under 0.8+ demand
-
-- [x] `drain_timeout` — post-accept wait for active connections (cleartext + TLS)
-- [x] `ConnStats` / `new_conn_stats` / `snapshot()` — active, accepted, rejected_max, closed, requests
-- [x] HTTP/1.1 pipelining stress tests — leftover-tolerant read path (`engine/pipeline_test.v`)
-- [x] Multipart + urlencoded form helpers + `examples/upload` + part limits / `safe_filename`
-- [x] Extra JSON helpers (`json_float`, `json_raw`, `json_strings`, `json_escape`, `json_i64`)
-- [x] Minimal HTTP client (`fetch` / `fetch_tls`)
-- [x] TLS cert reload on SIGHUP (`TlsOptions.reload_on_sighup`)
+- [ ] Examples and the [full-stack starter](https://github.com/Tuntii/full-stack-viltrum-template) on 1.x
+- [ ] Write-ups of the engine design and the benchmark method
+- [ ] Answer issues quickly; credit outside contributions in release notes
 
 ---
 
@@ -244,7 +123,6 @@ None are smuggling or correctness bugs on valid traffic; pull when touched or as
 | API | `Ctx` exposes internals as `pub mut` (`buf`, `out`, `chain`, `idx`, …); request counter not on `App`; groups lack `head`/`options` |
 | Buffers | Shrink only on close, not when a grown connection goes idle |
 | Tests | Positive control for `allocated_bytes()`; alloc guard around `DateCache.format`; `%`-escape in the zero-alloc gate; cumulative chunked cap across chunks; trailers split across reads; exact-32-fields accept; EMFILE path; suite under `-d viltrum_debug`; CI `v fmt -verify` |
-| Deferred | A client that half-closes (shutdown write) while its response is deferred is closed and gets nothing; timers round up to whole ms (`epoll_pwait2` would give µs) |
 | Lint | `router/` not linted; map/array literals not linted (the zero-alloc gate is the real enforcement) |
 
 ---
@@ -253,57 +131,16 @@ None are smuggling or correctness bugs on valid traffic; pull when touched or as
 
 Unless this file is explicitly revised:
 
-- Competing as edge TLS terminator / multi-tenant gateway
+- Competing as edge TLS terminator / multi-tenant gateway (no ACME inside viltrum)
 - Application platform: sessions, auth providers, template engine, ORM
 - Wrapping another language’s framework
-- Guaranteeing multi-hundred-k RPS on laptop benches as product claim
 - Implementing full RFC surface “for completeness”
-- Shipping the FastAPI monorepo feature list inside Viltrum
 
 ---
 
-## Suggested implementation order (historical)
+## History
 
-1. ~~README + non-goals + interest issues~~ **done**
-2. ~~v0.3.x correctness~~ **done**
-3. ~~v0.4 conn + hijack~~ **done**
-4. ~~v0.5 `ws`~~ **done**
-5. ~~TLS + WSS~~ **done** (0.7.0)
-6. ~~HTTP/1.1 hot path PR1–PR7~~ **done**
-7. ~~Full-stack teaching starter~~ **done**
-8. ~~v0.9.x harden (P1 TLS/drain + P2 client/JSON/docs)~~ **done** (v0.10.0 / v0.11.0)
-9. ~~Runtime scheduler A/B (RUNTIME.md bar)~~ **measured 2026-09-25** — bar not met, default unchanged ([SCHEDULER.md](benches/compare/SCHEDULER.md))
-10. ~~Hot-path slices + `epoll_cores`~~ **measured 2026-09-25** — E +0.3%, default stays spawn ([CORES.md](benches/compare/CORES.md))
-
-Do not open a parallel mega-epic without closing criteria and honest benches.
-
----
-
-## Public reply stance (community)
-
-When asked about WebSockets / TLS / “full stack”:
-
-- **WS and TLS are shipped** (`app.ws`, `app.listen_tls`). Proxy + cleartext remains first-class.
-- **Full-stack starter:** [full-stack-viltrum-template](https://github.com/Tuntii/full-stack-viltrum-template) — inspired by the FastAPI full-stack template, not a clone of its infrastructure.
-- **Hijack foundation** is `app.upgrade` + `Conn` (since 0.4).
-- **Performance:** honest numbers in `benches/RESULTS.md`; we do not invent parity with Tokio.
-
----
-
-## Tracking
-
-| Version / theme | Theme | Gate |
-|-----------------|--------|------|
-| 0.3.x | Docs, DX, HTTP polish | Suite green, honest README |
-| 0.4.0 | Hijack / conn layer | Upgrade echo test |
-| 0.5.0 | ws:// | Echo example + frame tests |
-| 0.5.x | Harden + measured perf | Epic #3 children |
-| 0.7.0 | https:// + wss:// | TLS smoke + WSS echo |
-| 0.7.1–0.7.8 | Hot path + experiments + starter docs | RESULTS + build green |
-| 0.8.0 | Drain timeout + ConnStats | Engine tests + release notes |
-| 0.8.1 | Pipeline stress tests | Engine tests |
-| 0.9.0 | Form/JSON/client/TLS SIGHUP | Tests + examples |
-| 0.10.0 | TLS reload harden + multipart limits | Engine + form tests |
-| 0.11.0 | HTTPS client, json_i64, ConnStats.requests | Tests + examples + RUNTIME.md |
-
-Changelog entries should reference this file when a phase opens or closes.
+The 0.x line (2026-07 to 2026-10) built the first engine: spawn-per-connection accept, HTTP/1.1, hijack /
+upgrade, WebSocket, in-process TLS on mbedtls with SIGHUP reload, forms, a minimal client, and the hot-path
+work that ended in v0.13. 1.0 replaced that engine with the zero-allocation epoll core and dropped what had
+not been ported yet. Details per release: [CHANGELOG.md](CHANGELOG.md); the 0.x roadmap is in git history.

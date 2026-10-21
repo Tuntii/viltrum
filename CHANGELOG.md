@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.1](https://github.com/Tuntii/viltrum/compare/v1.2.0...v1.2.1) (2026-10-21)
+
+### Performance Improvements
+
+* **jsonenc:** append in place behind one capacity check ([cdb0328](https://github.com/Tuntii/viltrum/commit/cdb0328655685e37a8cfd95e7be16629aeee414f))
+
 ## [1.2.0](https://github.com/Tuntii/viltrum/compare/v1.1.0...v1.2.0) (2026-10-21)
 
 ### Features

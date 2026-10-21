@@ -25,9 +25,26 @@ fn h_big(mut c http1.Ctx) {
 	c.text(200, big_body)
 }
 
+fn ws_echo(mut s http1.Ws, m http1.WsMessage) {
+	if m.binary {
+		s.send_binary(m.data)
+	} else {
+		s.send_text(m.text())
+	}
+}
+
+const ws_h = &http1.WsHandler{
+	on_message: ws_echo
+}
+
+fn h_ws(mut c http1.Ctx) {
+	c.ws_upgrade(ws_h)
+}
+
 fn make_router() &router.Router {
 	mut r := &router.Router{}
 	r.add(.get, '/p/*rest', [http1.Handler(h_path)]) or { panic(err) }
+	r.add(.get, '/ws', [http1.Handler(h_ws)]) or { panic(err) }
 	r.add(.post, '/echo', [http1.Handler(h_echo)]) or { panic(err) }
 	r.add(.get, '/big', [http1.Handler(h_big)]) or { panic(err) }
 	return r
@@ -452,5 +469,45 @@ fn test_certificate_reload() {
 	s.write_string('GET /p/still HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
 	st, body := r.response(mut s) or { panic(err) }
 	assert st == 200 && body == '/p/still'
+	s.close() or {}
+}
+
+// wss: the same WebSocket frames over a TLS session, messages spanning records.
+fn test_websocket_over_tls() {
+	addrs, mut stop := start_tls([tls_opts(tls_testdata, 'a')], Options{})
+	defer {
+		stop.request()
+	}
+	mut s := tls_dial(addrs[0])
+	s.write_string('GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n') or {
+		panic(err)
+	}
+	mut buf := []u8{}
+	mut tmp := []u8{len: 64 * 1024}
+	for head_end(buf) < 0 {
+		n := s.read(mut tmp) or { panic(err) }
+		buf << tmp[..n]
+	}
+	he := head_end(buf)
+	assert buf[..he].bytestr().starts_with('HTTP/1.1 101 ')
+	buf = buf[he + 4..].clone()
+	// one 100 KB binary message, unmasked with an all-zero mask
+	msg := []u8{len: 100 * 1024, init: u8(index * 31)}
+	mut f := [u8(0x82), 0x80 | 127, 0, 0, 0, 0, 0, u8(msg.len >> 16), u8(msg.len >> 8), u8(msg.len),
+		0, 0, 0, 0]
+	f << msg
+	s.write(f) or { panic(err) }
+	for buf.len < 10 + msg.len {
+		n := s.read(mut tmp) or { panic(err) }
+		buf << tmp[..n]
+	}
+	assert buf[0] == 0x82 && buf[1] == 127 && buf[10..10 + msg.len] == msg
+	s.write([u8(0x88), 0x82, 0, 0, 0, 0, 0x03, 0xe8]) or { panic(err) }
+	buf = buf[10 + msg.len..].clone()
+	for buf.len < 4 {
+		n := s.read(mut tmp) or { panic(err) }
+		buf << tmp[..n]
+	}
+	assert buf[..4] == [u8(0x88), 2, 0x03, 0xe8]
 	s.close() or {}
 }

@@ -1,5 +1,6 @@
 module viltrum
 
+import time
 import viltrum.engine
 import viltrum.http1
 import viltrum.router
@@ -16,6 +17,36 @@ pub type Method = http1.Method
 pub type Options = engine.Options
 pub type TlsOptions = engine.TlsOptions
 pub type Listener = engine.Listener
+
+// Ws is one WebSocket connection inside its callbacks: send_text, send_binary,
+// ping, close, protocol, worker_id, and `data` for the connection's own state.
+pub type Ws = http1.Ws
+
+// WsMessage is one whole message; data is valid until the callback returns.
+pub type WsMessage = http1.WsMessage
+
+// WsHandler is what a WebSocket route does. Every callback runs on the worker that
+// owns the connection, one at a time, so per-connection state needs no lock; like
+// handlers, callbacks must not block.
+pub struct WsHandler {
+pub:
+	// on_open runs after the 101 is sent; c is the upgrade request (params, headers).
+	on_open fn (mut s Ws, mut c Ctx) = unsafe { nil }
+	// on_message gets each message whole, fragments joined, text checked to be UTF-8.
+	on_message fn (mut s Ws, m WsMessage) = unsafe { nil }
+	// on_close runs once however the connection ends, with the Close code (1005 when
+	// the Close had none, 1006 when there was no Close). Sends are dropped by then.
+	on_close fn (mut s Ws, code int) = unsafe { nil }
+	// max_message caps a message, fragments included; larger ones close with 1009.
+	max_message int = 1024 * 1024
+	// idle_timeout closes a connection that sent nothing for this long; 0 never does.
+	idle_timeout time.Duration = 120 * time.second
+	// protocols are the subprotocols spoken, preferred first (Sec-WebSocket-Protocol).
+	protocols []string
+	// check_origin, when set, refuses upgrades whose Origin it rejects with 403.
+	// Browsers send Origin: set this for a browser-facing endpoint.
+	check_origin fn (origin string) bool = unsafe { nil }
+}
 
 struct PendingRoute {
 	method   Method
@@ -84,6 +115,29 @@ pub fn (mut app App) options(pattern string, handlers ...Handler) {
 	app.handle(.options, pattern, ...handlers)
 }
 
+// ws serves WebSocket on GET pattern. Global middleware and mws run on the upgrade
+// request first, so they can refuse it (auth) before h takes the connection over.
+pub fn (mut app App) ws(pattern string, h WsHandler, mws ...Handler) {
+	app.handle(.get, pattern, ...ws_chain(h, mws))
+}
+
+fn ws_chain(h WsHandler, mws []Handler) []Handler {
+	hp := &http1.WsHandler{
+		on_open:      http1.WsOpen(h.on_open)
+		on_message:   http1.WsOnMessage(h.on_message)
+		on_close:     http1.WsOnClose(h.on_close)
+		max_message:  h.max_message
+		idle_timeout: h.idle_timeout
+		protocols:    h.protocols.clone()
+		check_origin: http1.WsOrigin(h.check_origin)
+	}
+	mut chain := mws.clone()
+	chain << fn [hp] (mut c Ctx) {
+		c.ws_upgrade(hp)
+	}
+	return chain
+}
+
 pub struct Group {
 mut:
 	app    &App
@@ -124,6 +178,10 @@ pub fn (mut g Group) patch(pattern string, handlers ...Handler) {
 
 pub fn (mut g Group) delete(pattern string, handlers ...Handler) {
 	g.handle(.delete, pattern, ...handlers)
+}
+
+pub fn (mut g Group) ws(pattern string, h WsHandler, mws ...Handler) {
+	g.handle(.get, pattern, ...ws_chain(h, mws))
 }
 
 fn join_path(prefix string, pattern string) string {

@@ -28,9 +28,27 @@ fn h_delay(mut c http1.Ctx) {
 	c.after(int(ms), h_delay_done, u64(ms))
 }
 
+fn ws_echo(mut s http1.Ws, m http1.WsMessage) {
+	if m.binary {
+		s.send_binary(m.data)
+	} else {
+		s.send_text(m.text())
+	}
+}
+
+const ws_h = &http1.WsHandler{
+	on_message:   ws_echo
+	idle_timeout: 300 * time.millisecond
+}
+
+fn h_ws(mut c http1.Ctx) {
+	c.ws_upgrade(ws_h)
+}
+
 fn make_router() &router.Router {
 	mut r := &router.Router{}
 	r.add(.get, '/p/*rest', [http1.Handler(h_path)]) or { panic(err) }
+	r.add(.get, '/ws', [http1.Handler(h_ws)]) or { panic(err) }
 	r.add(.post, '/echo', [http1.Handler(h_echo)]) or { panic(err) }
 	r.add(.get, '/big', [http1.Handler(h_big)]) or { panic(err) }
 	r.add(.get, '/delay/:ms', [http1.Handler(h_delay)]) or { panic(err) }
@@ -388,12 +406,16 @@ fn test_closed_conns_are_pooled_per_worker() {
 	mut peers := []int{}
 	mut first := unsafe { &Conn(nil) }
 	mut last_fd := -1
+	mut grew := 0
 	for _ in 0 .. 100 {
 		sv := [2]int{}
 		assert C.socketpair(C.AF_UNIX, C.SOCK_STREAM, 0, &sv[0]) == 0
-		// the kept end holds the fd number just freed, so every connection gets a new one
+		// the kept end holds the fd number just freed, so connections get ever higher
+		// numbers; servers of earlier tests still closing may free a lower one
 		peers << sv[0]
-		assert sv[1] > last_fd
+		if sv[1] > last_fd {
+			grew++
+		}
 		last_fd = sv[1]
 		mut c := l.conn_for(sv[1])
 		c.reset(sv[1])
@@ -404,9 +426,114 @@ fn test_closed_conns_are_pooled_per_worker() {
 		l.close(mut c)
 		assert isnil(l.conns[sv[1]])
 	}
-	assert l.free.len == 1
+	assert l.free.len == 1 && grew >= 90
 	for fd in peers {
 		C.close(fd)
 	}
 	C.close(l.epfd)
+}
+
+const ws_upgrade_req = 'GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n'
+
+// ws_cframe is a masked client frame.
+fn ws_cframe(op u8, payload []u8) []u8 {
+	mask := [u8(0xa1), 0x0b, 0x77, 0x3c]
+	mut out := [u8(0x80 | op)]
+	n := payload.len
+	if n < 126 {
+		out << u8(0x80 | n)
+	} else if n < 65536 {
+		out << [u8(0x80 | 126), u8(n >> 8), u8(n)]
+	} else {
+		out << u8(0x80 | 127)
+		for i in 0 .. 8 {
+			out << u8(u64(n) >> (56 - 8 * i))
+		}
+	}
+	out << mask
+	for i, b in payload {
+		out << b ^ mask[i & 3]
+	}
+	return out
+}
+
+// ws_open upgrades conn and leaves what followed the 101 in r.
+fn ws_open(mut conn net.TcpConn, mut r Reader) ! {
+	conn.write(ws_upgrade_req.bytes())!
+	for head_end(r.buf) < 0 {
+		r.fill(mut conn)!
+	}
+	end := head_end(r.buf)
+	assert r.buf[..end].bytestr().starts_with('HTTP/1.1 101 Switching Protocols\r\n')
+	r.buf = r.buf[end..].clone()
+}
+
+// ws_read reads one server frame.
+fn ws_read(mut conn net.TcpConn, mut r Reader) !(u8, []u8) {
+	for {
+		if r.buf.len >= 2 {
+			mut n := u64(r.buf[1] & 0x7f)
+			mut h := 2
+			if n == 126 && r.buf.len >= 4 {
+				n = u64(r.buf[2]) << 8 | u64(r.buf[3])
+				h = 4
+			} else if n == 127 && r.buf.len >= 10 {
+				n = 0
+				for k in 2 .. 10 {
+					n = n << 8 | u64(r.buf[k])
+				}
+				h = 10
+			}
+			if (n < 126 || h > 2) && u64(r.buf.len) >= u64(h) + n {
+				op := r.buf[0] & 0x0f
+				data := r.buf[h..h + int(n)].clone()
+				r.buf = r.buf[h + int(n)..].clone()
+				return op, data
+			}
+		}
+		r.fill(mut conn)!
+	}
+	return error('unreachable')
+}
+
+fn test_websocket_over_the_event_loop() {
+	addr, mut stop := start(Options{})
+	defer {
+		stop.request()
+	}
+	mut c := dial(addr)
+	mut r := Reader{}
+	ws_open(mut c, mut r)!
+	// a 600 KB message written in pieces grows the read buffer and comes back whole
+	big := []u8{len: 600 * 1024, init: u8(index * 13)}
+	f := ws_cframe(http1.ws_binary, big)
+	for i := 0; i < f.len; i += 50000 {
+		c.write(f[i..if i + 50000 < f.len { i + 50000 } else { f.len }])!
+	}
+	op, data := ws_read(mut c, mut r)!
+	assert op == http1.ws_binary && data == big
+	mut burst := []u8{}
+	for i in 0 .. 100 {
+		burst << ws_cframe(http1.ws_text, 'm${i}'.bytes())
+	}
+	c.write(burst)!
+	for i in 0 .. 100 {
+		op2, d2 := ws_read(mut c, mut r)!
+		assert op2 == http1.ws_text && d2.bytestr() == 'm${i}'
+	}
+	// the Close is answered, then the server closes the connection
+	c.write(ws_cframe(http1.ws_close, [u8(0x03), 0xe8]))!
+	op3, d3 := ws_read(mut c, mut r)!
+	assert op3 == http1.ws_close && d3 == [u8(0x03), 0xe8]
+	_, eof := read_until_eof(mut c)
+	assert eof
+	c.close() or {}
+	// a quiet connection is closed after the handler's idle timeout (swept each second)
+	mut q := dial(addr)
+	mut rq := Reader{}
+	ws_open(mut q, mut rq)!
+	t0 := time.ticks()
+	_, eof2 := read_until_eof(mut q)
+	assert eof2 && time.ticks() - t0 < 3000
+	q.close() or {}
 }

@@ -334,8 +334,12 @@ fn (mut l Loop) write(mut c Conn, buf &u8, n int) int {
 }
 
 fn (mut l Loop) on_readable(mut c Conn) {
-	max_total := l.opts.limits.max_header_bytes + l.opts.limits.max_body_bytes + 64 * 1024
 	for {
+		max_total := if isnil(c.ws) {
+			l.opts.limits.max_header_bytes + l.opts.limits.max_body_bytes + 64 * 1024
+		} else {
+			c.ws.max_message + 64 * 1024
+		}
 		if c.rbuf.len == c.rbuf.cap {
 			if c.rbuf.cap >= max_total {
 				l.close(mut c)
@@ -361,7 +365,9 @@ fn (mut l Loop) on_readable(mut c Conn) {
 		if c.fd < 0 || c.out_armed {
 			return
 		}
-		if c.reading && (!was_reading || l.w.requests != reqs_before) {
+		if !isnil(c.ws) {
+			c.deadline_ms = l.ws_deadline(c)
+		} else if c.reading && (!was_reading || l.w.requests != reqs_before) {
 			c.deadline_ms = l.now + l.opts.read_timeout.milliseconds()
 		} else if !c.reading {
 			c.deadline_ms = l.now + l.opts.idle_timeout.milliseconds()
@@ -414,17 +420,32 @@ fn (mut l Loop) flush(mut c Conn) {
 	if c.out_armed {
 		l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLIN) | u32(C.EPOLLRDHUP))
 		c.out_armed = false
-		c.deadline_ms = l.now + if c.reading {
-			l.opts.read_timeout.milliseconds()
+		c.deadline_ms = if !isnil(c.ws) {
+			l.ws_deadline(c)
+		} else if c.reading {
+			l.now + l.opts.read_timeout.milliseconds()
 		} else {
-			l.opts.idle_timeout.milliseconds()
+			l.now + l.opts.idle_timeout.milliseconds()
 		}
 	}
+}
+
+// ws_deadline is when a quiet WebSocket connection times out: the handler's idle
+// timeout (0: never), or the read timeout while our Close waits for the client's.
+fn (l &Loop) ws_deadline(c &Conn) i64 {
+	if c.ws_closing {
+		return l.now + l.opts.read_timeout.milliseconds()
+	}
+	ms := c.ws.idle_timeout.milliseconds()
+	return if ms > 0 { l.now + ms } else { max_i64 }
 }
 
 fn (mut l Loop) close(mut c Conn) {
 	if c.fd < 0 {
 		return
+	}
+	if !isnil(c.ws) {
+		l.w.ws_end(mut c)
 	}
 	l.ctl(C.EPOLL_CTL_DEL, c.fd, 0)
 	if !isnil(c.tls) {
@@ -443,6 +464,9 @@ fn (mut l Loop) close(mut c Conn) {
 	}
 	if c.wbuf.cap > shrink_wbuf_above {
 		c.wbuf = []u8{cap: write_buf_size} // cold
+	}
+	if c.ws_msg.cap > shrink_rbuf_above {
+		c.ws_msg = []u8{} // cold: a large fragmented message
 	}
 	l.free << c // cold: grows only past the worker's peak
 }

@@ -27,6 +27,14 @@ pub mut:
 	pending     Pending
 	tls         &TlsConn = unsafe { nil } // the TLS session while this connection is TLS
 	tls_keep    &TlsConn = unsafe { nil } // kept across connections so mbedtls' buffers are reused
+	// WebSocket, once the connection is upgraded
+	ws         &http1.WsHandler = unsafe { nil }
+	ws_data    voidptr
+	ws_msg     []u8 // a fragmented message being put back together
+	ws_frag    u8   // that message's opcode, 0 when none is in progress
+	ws_proto   int
+	ws_closing bool // our Close went out
+	ws_code    int  // the code on_close reports
 }
 
 // Pending is what survives of a request whose response was deferred (Ctx.after).
@@ -62,6 +70,14 @@ pub fn (mut c Conn) reset(fd int) {
 	c.counted = false
 	c.waiting = false
 	c.tls = unsafe { nil }
+	c.ws = unsafe { nil }
+	c.ws_data = unsafe { nil }
+	unsafe {
+		c.ws_msg.len = 0
+	}
+	c.ws_frag = 0
+	c.ws_closing = false
+	c.ws_code = 0
 }
 
 // Worker serves the requests of one event loop. It owns the Ctx, the Date cache
@@ -76,6 +92,7 @@ pub mut:
 	requests u64
 	timers   Timers // deferred responses, earliest first
 	gen      u32    // last Conn.gen handed out
+	ws       http1.Ws
 }
 
 pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
@@ -88,6 +105,7 @@ pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
 	w.ctx.server = opts.server_header
 	w.ctx.deflater = http1.new_deflater()
 	w.ctx.worker = index
+	w.ws.worker = index
 	return w
 }
 
@@ -104,6 +122,10 @@ fn is_http10(buf []u8, off int) bool {
 // process serves every complete request buffered in c.rbuf, appending responses to
 // c.wbuf, and compacts what is left. It never touches the socket.
 pub fn (mut w Worker) process(mut c Conn) {
+	if !isnil(c.ws) {
+		w.ws_process(mut c)
+		return
+	}
 	mut off := 0
 	for !c.close_after && !c.waiting && off < c.rbuf.len && c.wbuf.len < w.opts.max_pending {
 		msg := http1.view(c.rbuf, off, c.rbuf.len - off)
@@ -122,11 +144,14 @@ pub fn (mut w Worker) process(mut c Conn) {
 		w.serve(mut c, http1.view(msg, 0, n))
 		off += n
 		c.frame.reset()
+		if !isnil(c.ws) {
+			break // what follows the upgrade is WebSocket frames
+		}
 	}
 	if c.close_after {
 		off = c.rbuf.len
 	}
-	c.reading = off < c.rbuf.len
+	c.reading = off < c.rbuf.len && isnil(c.ws)
 	if off > 0 {
 		rest := c.rbuf.len - off
 		if rest > 0 {
@@ -197,14 +222,21 @@ pub fn (mut w Worker) resume(mut c Conn) {
 // process_waiting is process that sleeps out deferred responses in place. For
 // handle_raw and tests only: the event loop never blocks a worker like this.
 pub fn (mut w Worker) process_waiting(mut c Conn) {
-	w.process(mut c)
-	for c.waiting {
-		now := time.sys_mono_now()
-		if c.pending.due > now {
-			time.sleep(time.Duration(i64(c.pending.due - now)))
-		}
-		w.resume(mut c)
+	for {
+		before := c.rbuf.len
 		w.process(mut c)
+		for c.waiting {
+			now := time.sys_mono_now()
+			if c.pending.due > now {
+				time.sleep(time.Duration(i64(c.pending.due - now)))
+			}
+			w.resume(mut c)
+			w.process(mut c)
+		}
+		// after an upgrade the rest of the input is WebSocket frames
+		if c.close_after || c.rbuf.len == 0 || c.rbuf.len == before {
+			break
+		}
 	}
 	w.timers = Timers{}
 }
@@ -238,6 +270,9 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 	}
 	c.wbuf = x.out
 	c.close_after = x.close_after
+	if !isnil(x.ws) && x.status == 101 && !c.close_after {
+		w.ws_open(mut c)
+	}
 }
 
 // refuse answers a framing or parse error after any earlier pipelined responses and

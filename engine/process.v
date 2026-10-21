@@ -25,6 +25,8 @@ pub mut:
 	gen         u32  // per worker, unique per connection, so a stale timer cannot answer a newer one
 	waiting     bool // a deferred response is pending; requests behind it wait
 	pending     Pending
+	tls         &TlsConn = unsafe { nil } // the TLS session while this connection is TLS
+	tls_keep    &TlsConn = unsafe { nil } // kept across connections so mbedtls' buffers are reused
 }
 
 // Pending is what survives of a request whose response was deferred (Ctx.after).
@@ -59,6 +61,7 @@ pub fn (mut c Conn) reset(fd int) {
 	c.reading = false
 	c.counted = false
 	c.waiting = false
+	c.tls = unsafe { nil }
 }
 
 // Worker serves the requests of one event loop. It owns the Ctx, the Date cache

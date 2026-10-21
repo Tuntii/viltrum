@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.1](https://github.com/Tuntii/viltrum/compare/v1.2.0...v1.2.1) (2026-10-21)
+
+### Performance Improvements
+
+* **jsonenc:** append in place behind one capacity check ([cdb0328](https://github.com/Tuntii/viltrum/commit/cdb0328655685e37a8cfd95e7be16629aeee414f))
+
+## [1.2.0](https://github.com/Tuntii/viltrum/compare/v1.1.0...v1.2.0) (2026-10-21)
+
+### Features
+
+* **engine:** TLS listeners on the epoll workers ([144eb5a](https://github.com/Tuntii/viltrum/commit/144eb5ac79b219a8ad7885a1784bf22e4d494017))
+
+### Performance Improvements
+
+* **engine:** read ahead under TLS sessions ([c768622](https://github.com/Tuntii/viltrum/commit/c76862219a7e40b85f5029a8e37875982b90ea14))
+
 ## [1.1.0](https://github.com/Tuntii/viltrum/compare/v1.0.3...v1.1.0) (2026-10-19)
 
 ### Features

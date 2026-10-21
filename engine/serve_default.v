@@ -9,6 +9,10 @@ $if !linux {
 		return error('viltrum: engine.serve is only supported on Linux (epoll)')
 	}
 
+	pub fn serve_listeners(listeners []Listener, r &router.Router, opts Options) ! {
+		return error('viltrum: engine.serve is only supported on Linux (epoll)')
+	}
+
 	// worker_count resolves Options.workers or returns nr_cpus on non-Linux platforms.
 	pub fn worker_count(requested int) int {
 		if requested > 0 {

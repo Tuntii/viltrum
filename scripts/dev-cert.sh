@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate a self-signed dev certificate for examples/https_hello and examples/wss_echo.
+# Generate a self-signed dev certificate for examples/https.
 # Dev only — do not use in production.
 set -euo pipefail
 
@@ -38,4 +38,4 @@ openssl req -x509 -newkey rsa:2048 \
 chmod 600 "${KEY}"
 echo "wrote ${CERT}"
 echo "wrote ${KEY}"
-echo "try: v run examples/https_hello"
+echo "try: v run examples/https"

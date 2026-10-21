@@ -1,79 +1,103 @@
-> **Not in 1.0.** This page describes v0.13. The feature returns on the 1.0 core later.
+# TLS (`https://`)
 
-# TLS (`https://`) and WSS (`wss://`)
-
-In-process TLS for single-binary demos and simple deploys. Reverse-proxy TLS remains first-class (see [deploy.md](./deploy.md)).
-
-**Backend:** V stdlib `net.mbedtls` only (no OpenSSL server path, no ACME, no mTLS in this release).
+Viltrum serves HTTPS from the same epoll workers that serve cleartext, and both can run in one process. A
+reverse proxy in front stays a first-class deploy (see [deploy.md](./deploy.md)); in-process TLS is for when
+you would rather not run one.
 
 ## Quick start
 
 ```bash
-bash scripts/dev-cert.sh          # writes certs/dev.crt + certs/dev.key
-v run examples/https_hello
+bash scripts/dev-cert.sh          # writes certs/dev.crt + certs/dev.key (self-signed, dev only)
+v run examples/https
 curl -k https://127.0.0.1:8443/
 ```
 
 ```v
-import viltrum { new, text, Request, Response, TlsOptions }
-
-mut app := new()
-app.get('/', fn (req Request) Response {
-	return text(200, 'ok\n')
+mut app := viltrum.new()
+app.get('/', fn (mut c viltrum.Ctx) {
+	c.text(200, 'ok\n')
 })
-app.listen_tls('127.0.0.1:8443', TlsOptions{
+app.listen_tls('127.0.0.1:8443', viltrum.TlsOptions{
 	cert_file: 'certs/dev.crt'
 	key_file:  'certs/dev.key'
 })!
 ```
 
-## WSS
+Cleartext and TLS together, on the same workers:
 
-Same WebSocket stack as cleartext (`app.ws`). Listen with `listen_tls`:
-
-```bash
-v run examples/wss_echo
-websocat -k wss://127.0.0.1:8444/ws
+```v
+app.serve([
+	viltrum.Listener{
+		addr: '0.0.0.0:8080'
+	},
+	viltrum.Listener{
+		addr: '0.0.0.0:8443'
+		tls:  viltrum.TlsOptions{
+			cert_file: '/etc/viltrum/server.crt'
+			key_file:  '/etc/viltrum/server.key'
+		}
+	},
+])!
 ```
-
-Browsers need a trusted cert or a local exception; self-signed is fine for tooling (`websocat -k`, `curl -k`).
 
 ## API
 
 | Symbol | Role |
 |--------|------|
-| `TlsOptions{ cert_file, key_file }` | PEM paths (required) |
-| `TlsOptions.reload_on_sighup` | If true, **SIGHUP** re-reads PEM files and replaces the listener (in-flight conns keep the old cert). Default off. A **failed** reload (missing or corrupt PEM) logs and keeps the previous cert; the process stays up. |
-| `app.listen_tls(addr, tls)` | HTTPS accept loop; WSS if `app.ws` is registered. `examples/https_hello` prints `kill -HUP` when `VILTRUM_RELOAD=1`. |
-| `fetch_tls` / `client_get_tls` | Minimal one-shot HTTPS client (`ClientTls`). Not a browser. |
-| `engine.listen_and_serve_tls_full(...)` | Advanced / tests |
+| `TlsOptions{ cert_file, key_file }` | PEM certificate chain (leaf first) and unencrypted private key |
+| `app.listen_tls(addr, tls)` | serve HTTPS on one address until SIGINT/SIGTERM or `Options.stop` |
+| `Listener{ addr, tls }` | one address; `tls` unset means cleartext |
+| `app.serve(listeners)` | several listeners, cleartext and TLS, on the same workers |
 
-Empty or missing paths return an error **before** bind.
+The certificate and key are loaded and checked against each other before any socket opens, so a wrong path or a
+key that does not belong to the certificate fails at startup.
 
-SIGHUP reload validates the new PEM pair (file exists + mbedtls can load it) **before** dropping the live listener. Only then does the accept loop bind the replacement. In-flight connections keep the cert they handshake'd with.
+## Certificate reload
 
-Engine tests cover that path via `try_reload_tls` / a test-only accept stop hook rather than `kill -HUP` on the test process (`v test` shares one process; a real SIGHUP would be flaky).
+Replace the files and new connections get the new certificate within about a second. No signal, nothing to
+enable.
 
-## Architecture
+- Every worker checks both files once a second (inode, size and mtime). The certificate is picked per
+  handshake, so live connections keep the session they have.
+- A pair that does not load is skipped, and the last good one keeps serving. That covers a cert and key renamed
+  into place one after the other: the moment between the two renames sees a mismatched pair and ignores it.
+  The failure is logged once, and the pair is retried when a file changes again.
+- Files are opened by path each time, so renaming a new file onto the path (what certbot and most tools do) is
+  picked up.
 
-All post-accept I/O goes through `engine.Conn` (TCP or SSL). HTTP keep-alive, `app.upgrade`, and `app.ws` share one path. Cipher/version policy is mbedtls/V defaults; Viltrum does not pin ciphers.
+## Policy
 
-SSL write deadlines are not available in mbedtls’s API; rely on read timeout and OS TCP.
+| | |
+|-|-|
+| Versions | TLS 1.3 preferred, TLS 1.2 minimum (mbedtls 3 has no SSLv3, TLS 1.0 or 1.1) |
+| Suites | AEAD only: AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, with ECDHE in TLS 1.2 |
+| Groups | x25519, secp256r1, secp384r1 |
+| ALPN | `http/1.1` (viltrum does not speak HTTP/2) |
+| SNI | not required; the listener's certificate is served either way |
+| Session resumption | off: no tickets, every connection does a full handshake |
+| Close | `close_notify` before the socket closes |
 
-## Non-goals (this ship)
+The handshake runs under `Options.read_timeout`, the same clock as a partly received request.
 
-- ACME / Let’s Encrypt inside Viltrum
-- mTLS / client cert auth
-- Automatic filesystem watch (use SIGHUP `reload_on_sighup` instead)
-- HTTP/2
-- OpenSSL (`-d use_openssl`) server listen
+## How it works
 
-## Production note
+The crypto is mbedtls 3.6, the copy that ships with V (`thirdparty/mbedtls`, behind `net.mbedtls`). Nothing
+to install. viltrum runs it non-blocking inside the epoll loop: each worker has its own config, random generator
+and certificate, and each pooled connection keeps its TLS session and reuses it for the next connection. The
+request path still allocates nothing; a test in CI holds it to that over TLS too.
 
-For heavy edge TLS, terminate at **Caddy** or **nginx** and talk cleartext to Viltrum on loopback. In-process TLS is optional, not a replacement for a mature edge proxy.
+Design notes and trade-offs: [design/1.x-tls.md](./design/1.x-tls.md).
 
-## Related
+## Cost
 
-- Design contract: [design/v0.6-tls-wss.md](./design/v0.6-tls-wss.md)
-- WebSocket: [ws.md](./ws.md)
-- Deploy / proxy: [deploy.md](./deploy.md)
+mbedtls is slower than OpenSSL at bulk AES-GCM. On a small 8-vCPU VM, keep-alive `GET` over TLS ran at about
+half the cleartext rate, and a 10 KB echo at about a quarter. Each TLS connection holds about 50 KB for record
+buffers. If TLS throughput is your bottleneck, terminate at a proxy.
+
+## Not supported
+
+- ACME / Let's Encrypt inside viltrum (use certbot or the proxy's ACME and point `TlsOptions` at the files)
+- Client certificates (mTLS)
+- Encrypted private keys
+- HTTP/2 over ALPN
+- WSS: WebSocket is not on the 1.0 core yet

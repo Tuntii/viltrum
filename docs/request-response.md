@@ -53,7 +53,7 @@ granularity and round up.
 
 ## Middleware
 
-`recover`, `gzip`, `cors` and `logger` are plain `fn (mut c Ctx)` middleware. V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).
+`recover`, `gzip`, `cors` and `logger` are plain `fn (mut c Ctx)` middleware. `gzip` compresses text and JSON bodies of 256 bytes or more with viltrum's own DEFLATE encoder (`http1/deflate.v`, no C library), tuned for response-sized bodies. V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).
 
 ## Handlers and `-prod`
 

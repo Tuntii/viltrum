@@ -14,6 +14,8 @@ pub type Handler = fn (mut Ctx)
 
 pub type Method = http1.Method
 pub type Options = engine.Options
+pub type TlsOptions = engine.TlsOptions
+pub type Listener = engine.Listener
 
 struct PendingRoute {
 	method   Method
@@ -165,6 +167,22 @@ fn method_not_allowed(mut c Ctx) {
 pub fn (app &App) listen(addr string) ! {
 	r := app.build()!
 	engine.serve(addr, r, app.opts)!
+}
+
+// listen_tls serves HTTPS on addr until SIGINT/SIGTERM (or Options.stop). A
+// certificate replaced on disk is picked up by new connections within a second.
+pub fn (app &App) listen_tls(addr string, tls TlsOptions) ! {
+	app.serve([Listener{
+		addr: addr
+		tls:  tls
+	}])!
+}
+
+// serve runs several listeners, cleartext and TLS, on the same workers until
+// SIGINT/SIGTERM (or Options.stop).
+pub fn (app &App) serve(listeners []Listener) ! {
+	r := app.build()!
+	engine.serve_listeners(listeners, r, app.opts)!
 }
 
 // worker_count is how many workers listen starts; size per-worker state with it and

@@ -23,6 +23,22 @@ pub:
 	stop           &Stop = unsafe { nil } // stop a server without signals (tests, embedding)
 }
 
+// TlsOptions names the PEM files a TLS listener serves. Both are read again when
+// they change on disk (checked once a second); a pair that fails to load is skipped
+// and the last good one stays in use.
+pub struct TlsOptions {
+pub:
+	cert_file string // certificate chain, leaf first
+	key_file  string // private key, unencrypted
+}
+
+// Listener is one address to serve; with tls set it speaks HTTPS.
+pub struct Listener {
+pub:
+	addr string
+	tls  ?TlsOptions
+}
+
 // Stop asks a running server to shut down; workers notice within a second.
 @[heap]
 pub struct Stop {

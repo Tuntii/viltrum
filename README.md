@@ -10,7 +10,7 @@
 You write routes. Viltrum owns the wire: its own HTTP/1.1 engine, one epoll worker per CPU, pipelining, and no
 allocation per request inside the framework. No third-party stack under the hood.
 
-Built for [V](https://vlang.io). Linux. Cleartext; put Caddy or nginx in front for TLS.
+Built for [V](https://vlang.io). Linux. HTTPS in-process on the same workers, or behind a proxy.
 
 ```bash
 git clone https://github.com/Tuntii/viltrum.git && cd viltrum
@@ -57,12 +57,13 @@ buffer and are valid until the handler returns; `.clone()` what you keep.
 | Routing | `:param`, trailing `*rest`, groups, global and per-route middleware (`c.next()`) |
 | Middleware | `recover`, `gzip`, `cors`, `logger` (`recover` cannot catch panics, see below) |
 | JSON | `c.json(200, value)`: compile-time encoder, no reflection |
+| TLS | `app.listen_tls`, or `app.serve` for cleartext and TLS together: TLS 1.3, certificates reloaded from disk without a restart ([docs/tls.md](docs/tls.md)) |
 | Tests | `app.handle_raw(raw)` serves a raw request in-process |
 
 > **`recover` and panics.** V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).
 
-Not in 1.0 yet (they return on the new core): TLS/WSS, WebSocket and upgrade, static files, forms and uploads,
-the HTTP client, non-Linux platforms.
+Not on the 1.x core yet (they return later): WebSocket and upgrade, WSS, static files, forms and uploads, the
+HTTP client, non-Linux platforms.
 
 ---
 
@@ -109,6 +110,7 @@ Method notes: [benches/RESULTS.md](benches/RESULTS.md).
 | First hour | [docs/getting-started.md](docs/getting-started.md) |
 | Request shape / middleware | [docs/request-response.md](docs/request-response.md) |
 | Accept → close | [docs/connection.md](docs/connection.md) |
+| HTTPS | [docs/tls.md](docs/tls.md) |
 | Proxy deploy | [docs/deploy.md](docs/deploy.md) |
 | Full index | [docs/README.md](docs/README.md) |
 
@@ -117,6 +119,7 @@ Method notes: [benches/RESULTS.md](benches/RESULTS.md).
 | `examples/hello` | 8080 |
 | `examples/rest` | 8081 |
 | `examples/features` | 8082 |
+| `examples/https` | 8080 + 8443 (`bash scripts/dev-cert.sh` first) |
 
 ```bash
 v test http1/ jsonenc/ router/ engine/ tests/
@@ -146,7 +149,9 @@ Inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-
 
 **1.0:** the zero-allocation core above (design: [docs/superpowers/specs/2026-10-15-v1-zero-alloc-core-design.md](docs/superpowers/specs/2026-10-15-v1-zero-alloc-core-design.md)).
 
-**Next:** TLS, WebSocket, static files and forms on the new core.
+**1.2:** TLS on the same workers ([docs/tls.md](docs/tls.md)).
+
+**Next:** faster compressed JSON, then WebSocket, static files and forms on the new core ([ROADMAP.md](ROADMAP.md)).
 
 ---
 

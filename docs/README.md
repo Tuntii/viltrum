@@ -1,8 +1,8 @@
 # Documentation
 
-Viltrum 1.0 is a small HTTP/1.1 framework for [V](https://vlang.io) on a zero-allocation core: one
-`SO_REUSEPORT` epoll worker per CPU, a compile-time JSON encoder, Linux only. TLS terminates at a reverse proxy
-(Caddy, nginx).
+Viltrum 1.x is a small HTTP/1.1 framework for [V](https://vlang.io) on a zero-allocation core: one
+`SO_REUSEPORT` epoll worker per CPU, a compile-time JSON encoder, Linux only. HTTPS runs in-process on the same
+workers, or TLS terminates at a reverse proxy (Caddy, nginx).
 
 ## Start here
 
@@ -11,18 +11,18 @@ Viltrum 1.0 is a small HTTP/1.1 framework for [V](https://vlang.io) on a zero-al
 | [getting-started.md](./getting-started.md) | Install, first server |
 | [request-response.md](./request-response.md) | `Ctx` request and response calls, middleware |
 | [connection.md](./connection.md) | Workers, buffers, limits, timeouts |
+| [tls.md](./tls.md) | HTTPS listeners, certificate reload, TLS policy |
 | [deploy.md](./deploy.md) | Caddy/nginx, Host, timeouts, supervisor |
 | [releasing.md](./releasing.md) | Semantic-release and commit conventions |
 
 Also: [../CHANGELOG.md](../CHANGELOG.md), [../benches/RESULTS.md](../benches/RESULTS.md), examples in
-[../examples/README.md](../examples/README.md) (`hello`, `rest`, `features`).
+[../examples/README.md](../examples/README.md) (`hello`, `rest`, `features`, `https`).
 
-## Not in 1.0 yet
+## Not on the 1.x core yet
 
-TLS/WSS, WebSocket and upgrade, static files, forms and uploads, the HTTP client, non-Linux platforms. They
+WebSocket and upgrade, WSS, static files, forms and uploads, the HTTP client, non-Linux platforms. They
 return on the new core.
 
-## v0.13 reference (not 1.0)
+## v0.13 reference (not 1.x)
 
-[upgrade.md](./upgrade.md), [ws.md](./ws.md) and [tls.md](./tls.md) describe the v0.13 API and are kept for
-reference only.
+[upgrade.md](./upgrade.md) and [ws.md](./ws.md) describe the v0.13 API and are kept for reference only.

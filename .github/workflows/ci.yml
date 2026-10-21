@@ -42,6 +42,7 @@ jobs:
           v -o /tmp/viltrum-hello examples/hello
           v -o /tmp/viltrum-rest examples/rest
           v -o /tmp/viltrum-features examples/features
+          v -o /tmp/viltrum-https examples/https
 
       - name: Parser fuzz (500k mutations)
         run: if [ -f http1/fuzz_test.v ]; then VILTRUM_FUZZ_ITERS=500000 v test http1/fuzz_test.v; fi

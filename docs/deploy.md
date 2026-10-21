@@ -1,6 +1,6 @@
 # Deploy (cleartext behind a reverse proxy)
 
-Viltrum speaks **cleartext HTTP/1.1** on TCP by default. For TLS at the edge, put **Caddy**, **nginx**, or another reverse proxy in front. In-process TLS (`app.listen_tls`) is not in 1.0; terminate TLS at the proxy.
+Viltrum speaks **cleartext HTTP/1.1** on TCP by default. For TLS at the edge, put **Caddy**, **nginx**, or another reverse proxy in front. viltrum can also serve HTTPS itself (`app.listen_tls`, see [tls.md](./tls.md)); a proxy is still the better edge when you need HTTP/2, ACME or the fastest bulk TLS.
 
 ## Recommended shape
 

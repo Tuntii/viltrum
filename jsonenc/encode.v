@@ -36,41 +36,99 @@ fn encode[T](mut out []u8, val T) bool {
 	} $else $if T.unaliased_typ is $float {
 		_ = write_float(mut out, f64(val), false)
 	} $else $if T.unaliased_typ is $array {
-		out << `[`
+		_ = put(mut out, `[`)
 		for i, item in val {
 			if i > 0 {
-				out << `,`
+				_ = put(mut out, `,`)
 			}
 			_ = encode(mut out, item)
 		}
-		out << `]`
+		_ = put(mut out, `]`)
 	} $else $if T.unaliased_typ is $struct {
-		out << `{`
+		_ = put(mut out, `{`)
 		mut first := true
 		$for field in T.fields {
-			if !first {
-				out << `,`
-			}
+			_ = key(mut out, field.name, first)
 			first = false
-			out << `"`
-			_ = push(mut out, field.name)
-			out << `"`
-			out << `:`
 			_ = encode(mut out, val.$(field.name))
 		}
-		out << `}`
+		_ = put(mut out, `}`)
 	} $else {
 		$compile_error('viltrum.jsonenc: unsupported type')
 	}
 	return true
 }
 
+// The writers below append in place while out has room and fall back to <<
+// otherwise. A push per byte was a fifth of json-comp's profile: each one is a call
+// that rechecks length, capacity and slice flags.
+
+// room reports whether n more bytes fit in out without growing it or unsharing a slice.
 @[inline]
-fn push(mut out []u8, s string) bool {
-	if s.len > 0 {
-		unsafe { out.push_many(s.str, s.len) }
+fn room(out []u8, n int) bool {
+	return out.len + n <= out.cap && !out.flags.has(.is_slice)
+}
+
+@[inline]
+fn put(mut out []u8, c u8) bool {
+	if room(out, 1) {
+		unsafe {
+			(&u8(out.data))[out.len] = c
+			out.len++
+		}
+	} else {
+		out << c
 	}
 	return true
+}
+
+@[inline]
+fn put_many(mut out []u8, p &u8, n int) bool {
+	if n <= 0 {
+		return true
+	}
+	if room(out, n) {
+		unsafe {
+			vmemcpy(&u8(out.data) + out.len, p, n)
+			out.len += n
+		}
+	} else {
+		unsafe { out.push_many(p, n) }
+	}
+	return true
+}
+
+@[inline]
+fn push(mut out []u8, s string) bool {
+	return put_many(mut out, s.str, s.len)
+}
+
+// key writes a struct field's separator and `"name":` behind one capacity check.
+fn key(mut out []u8, name string, first bool) bool {
+	n := name.len + 4
+	if room(out, n) {
+		unsafe {
+			mut p := &u8(out.data) + out.len
+			mut k := 0
+			if !first {
+				p[0] = `,`
+				k = 1
+			}
+			p[k] = `"`
+			vmemcpy(p + k + 1, name.str, name.len)
+			p[k + 1 + name.len] = `"`
+			p[k + 2 + name.len] = `:`
+			out.len += k + 3 + name.len
+		}
+		return true
+	}
+	if !first {
+		_ = put(mut out, `,`)
+	}
+	_ = put(mut out, `"`)
+	_ = push(mut out, name)
+	_ = put(mut out, `"`)
+	return put(mut out, `:`)
 }
 
 const hex_digits = '0123456789abcdef'
@@ -78,53 +136,53 @@ const hex_digits = '0123456789abcdef'
 // write_string escapes per RFC 8259: quote, backslash and control bytes. UTF-8
 // passes through unchanged.
 fn write_string(mut out []u8, s string) bool {
-	out << `"`
+	_ = put(mut out, `"`)
 	mut run := 0
 	for i in 0 .. s.len {
 		c := s[i]
 		if c >= 0x20 && c != `"` && c != `\\` {
 			continue
 		}
-		unsafe { out.push_many(s.str + run, i - run) }
+		_ = put_many(mut out, unsafe { s.str + run }, i - run)
 		run = i + 1
-		out << `\\`
+		_ = put(mut out, `\\`)
 		match c {
 			`"` {
-				out << `"`
+				_ = put(mut out, `"`)
 			}
 			`\\` {
-				out << `\\`
+				_ = put(mut out, `\\`)
 			}
 			`\n` {
-				out << `n`
+				_ = put(mut out, `n`)
 			}
 			`\r` {
-				out << `r`
+				_ = put(mut out, `r`)
 			}
 			`\t` {
-				out << `t`
+				_ = put(mut out, `t`)
 			}
 			0x08 {
-				out << `b`
+				_ = put(mut out, `b`)
 			}
 			0x0c {
-				out << `f`
+				_ = put(mut out, `f`)
 			}
 			else {
-				push(mut out, 'u00')
-				out << hex_digits[c >> 4]
-				out << hex_digits[c & 0xf]
+				_ = push(mut out, 'u00')
+				_ = put(mut out, hex_digits[c >> 4])
+				_ = put(mut out, hex_digits[c & 0xf])
 			}
 		}
 	}
-	unsafe { out.push_many(s.str + run, s.len - run) }
-	out << `"`
+	_ = put_many(mut out, unsafe { s.str + run }, s.len - run)
+	_ = put(mut out, `"`)
 	return true
 }
 
 fn write_u64(mut out []u8, n u64) bool {
 	if n == 0 {
-		out << `0`
+		_ = put(mut out, `0`)
 		return true
 	}
 	mut tmp := [20]u8{}
@@ -135,13 +193,13 @@ fn write_u64(mut out []u8, n u64) bool {
 		tmp[i] = u8(`0` + v % 10)
 		v /= 10
 	}
-	unsafe { out.push_many(&tmp[i], 20 - i) }
+	_ = put_many(mut out, &tmp[i], 20 - i)
 	return true
 }
 
 fn write_i64(mut out []u8, n i64) bool {
 	if n < 0 {
-		out << `-`
+		_ = put(mut out, `-`)
 		return write_u64(mut out, u64(-(n + 1)) + 1)
 	}
 	return write_u64(mut out, u64(n))
@@ -160,8 +218,8 @@ fn write_float(mut out []u8, f f64, is32 bool) bool {
 	mut tmp := [32]u8{}
 	lo := if is32 { 6 } else { 15 }
 	hi := if is32 { 10 } else { 18 }
+	mut n := 0
 	unsafe {
-		mut n := 0
 		for prec in lo .. hi {
 			n = C.snprintf(&char(&tmp[0]), 32, c'%.*g', prec, f)
 			back := C.strtod(&char(&tmp[0]), nil)
@@ -169,7 +227,7 @@ fn write_float(mut out []u8, f f64, is32 bool) bool {
 				break
 			}
 		}
-		out.push_many(&tmp[0], n)
 	}
+	_ = put_many(mut out, &tmp[0], n)
 	return true
 }

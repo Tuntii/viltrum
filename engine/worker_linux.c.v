@@ -39,9 +39,10 @@ struct Loop {
 mut:
 	w          &Worker
 	epfd       int
-	lfd        int
-	conns      []&Conn // open connections, indexed by fd
-	free       []&Conn // closed connections, kept with their buffers for the next accept
+	lfds       []int        // one listening socket per Listener
+	srvs       []&TlsServer // per Listener: this worker's TLS state, nil for cleartext
+	conns      []&Conn      // open connections, indexed by fd
+	free       []&Conn      // closed connections, kept with their buffers for the next accept
 	opts       Options
 	stop       &Stop
 	count      &ConnCount
@@ -50,19 +51,33 @@ mut:
 	paused     bool // listener removed from epoll after EMFILE/ENFILE
 }
 
-fn run_worker(index int, lfd int, r &router.Router, opts Options, mut stop Stop, mut count ConnCount) {
+fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opts Options, mut stop Stop, mut count ConnCount) {
 	// cold: one Loop per worker, on the heap. A by-value Loop holding conns would be
 	// pinned (walked, and past 32 conns locked) around every call in the event loop
 	// by V's -prod Boehm codegen; see jsonenc.encode_into.
 	mut l := &Loop{
 		w:     new_worker(r, opts, index)
 		epfd:  C.epoll_create1(0)
-		lfd:   lfd
+		lfds:  lfds
 		opts:  opts
 		stop:  stop
 		count: count
 	}
-	if l.epfd < 0 || !l.ctl(C.EPOLL_CTL_ADD, lfd, u32(C.EPOLLIN)) {
+	mut ok := l.epfd >= 0
+	for i, ln in listeners {
+		if t := ln.tls {
+			srv := new_tls_server(t, index == 0) or {
+				eprintln('[viltrum] worker ${index}: ${err.msg()}') // cold: startup failure
+				ok = false
+				unsafe { &TlsServer(nil) }
+			}
+			l.srvs << srv
+		} else {
+			l.srvs << unsafe { &TlsServer(nil) }
+		}
+		ok = ok && l.ctl(C.EPOLL_CTL_ADD, lfds[i], u32(C.EPOLLIN))
+	}
+	if !ok {
 		// serve returns an error once the workers stop
 		eprintln('[viltrum] worker ${index}: epoll setup failed') // cold: startup failure
 		stdatomic.add_i64(&count.failed, 1)
@@ -83,8 +98,9 @@ fn (mut l Loop) run() {
 		l.now = time.ticks()
 		for i in 0 .. n {
 			fd := unsafe { events[i].data.fd }
-			if fd == l.lfd {
-				l.accept_all()
+			li := l.listener_index(fd)
+			if li >= 0 {
+				l.accept_all(li)
 			} else {
 				l.on_event(fd, events[i].events)
 			}
@@ -137,6 +153,7 @@ fn (mut l Loop) fire() {
 		}
 		l.w.resume(mut c)
 		l.drain(mut c)
+		l.read_pending(mut c)
 		if c.fd >= 0 && !c.out_armed {
 			c.deadline_ms = l.now + if c.reading {
 				l.opts.read_timeout.milliseconds()
@@ -154,13 +171,27 @@ fn (mut l Loop) ctl(op int, fd int, events u32) bool {
 	return C.epoll_ctl(l.epfd, op, fd, &ev) == 0
 }
 
-fn (mut l Loop) accept_all() {
+// listener_index is the Listener whose socket fd is, or -1 for a connection.
+fn (l &Loop) listener_index(fd int) int {
+	for i, lfd in l.lfds {
+		if lfd == fd {
+			return i
+		}
+	}
+	return -1
+}
+
+fn (mut l Loop) accept_all(li int) {
+	lfd := l.lfds[li]
+	srv := l.srvs[li]
 	for {
-		fd := C.accept4(l.lfd, unsafe { nil }, unsafe { nil }, C.SOCK_NONBLOCK | C.SOCK_CLOEXEC)
+		fd := C.accept4(lfd, unsafe { nil }, unsafe { nil }, C.SOCK_NONBLOCK | C.SOCK_CLOEXEC)
 		if fd < 0 {
 			if C.errno == C.EMFILE || C.errno == C.ENFILE {
-				// out of fds: the backlog keeps the listener readable, so stop polling it until sweep
-				l.ctl(C.EPOLL_CTL_DEL, l.lfd, 0)
+				// out of fds: the backlog keeps the listeners readable, so stop polling them until sweep
+				for x in l.lfds {
+					l.ctl(C.EPOLL_CTL_DEL, x, 0)
+				}
 				l.paused = true
 			}
 			// EAGAIN, or an error the next readiness event retries
@@ -169,7 +200,10 @@ fn (mut l Loop) accept_all() {
 		mut counted := false
 		if l.opts.max_conns > 0 {
 			if !l.count.try_add(l.opts.max_conns) {
-				C.send(fd, busy_msg.str, busy_msg.len, C.MSG_NOSIGNAL)
+				if isnil(srv) {
+					// a TLS client could not read a plaintext 503
+					C.send(fd, busy_msg.str, busy_msg.len, C.MSG_NOSIGNAL)
+				}
 				C.close(fd)
 				continue
 			}
@@ -184,7 +218,21 @@ fn (mut l Loop) accept_all() {
 		c.gen = l.w.gen
 		c.counted = counted
 		c.deadline_ms = l.now + l.opts.idle_timeout.milliseconds()
-		l.ctl(C.EPOLL_CTL_ADD, fd, u32(C.EPOLLIN | C.EPOLLRDHUP))
+		if !isnil(srv) {
+			// the handshake runs under the read timeout, like a partial request
+			c.deadline_ms = l.now + l.opts.read_timeout.milliseconds()
+			if !c.tls_start(srv) {
+				l.conns[fd] = unsafe { nil }
+				c.fd = -1
+				if counted {
+					l.count.release()
+				}
+				l.free << c // cold: setup failure
+				C.close(fd)
+				continue
+			}
+		}
+		l.ctl(C.EPOLL_CTL_ADD, fd, u32(C.EPOLLIN) | u32(C.EPOLLRDHUP))
 	}
 }
 
@@ -204,8 +252,12 @@ fn (mut l Loop) on_event(fd int, ev u32) {
 		return
 	}
 	mut c := l.conns[fd]
-	if ev & u32(C.EPOLLERR | C.EPOLLHUP) != 0 {
+	if ev & (u32(C.EPOLLERR) | u32(C.EPOLLHUP)) != 0 {
 		l.close(mut c)
+		return
+	}
+	if !isnil(c.tls) && c.tls.handshaking {
+		l.handshake(mut c)
 		return
 	}
 	if c.out_armed {
@@ -213,13 +265,69 @@ fn (mut l Loop) on_event(fd int, ev u32) {
 			l.flush(mut c)
 			if c.fd >= 0 && !c.out_armed {
 				l.drain(mut c)
+				l.read_pending(mut c)
 			}
 		}
 		return
 	}
-	if ev & u32(C.EPOLLIN | C.EPOLLRDHUP) != 0 {
+	if ev & (u32(C.EPOLLIN) | u32(C.EPOLLRDHUP)) != 0 {
 		l.on_readable(mut c)
 	}
+}
+
+// handshake advances a TLS handshake. Once it is done the connection reads like
+// any other; the client's first request may already be buffered.
+fn (mut l Loop) handshake(mut c Conn) {
+	r := c.tls.handshake()
+	if r == hs_failed {
+		l.close(mut c)
+		return
+	}
+	if r == hs_want_write && !c.out_armed {
+		l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLOUT))
+		c.out_armed = true
+	} else if r != hs_want_write && c.out_armed {
+		l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLIN) | u32(C.EPOLLRDHUP))
+		c.out_armed = false
+	}
+	if r == hs_done {
+		c.deadline_ms = l.now + l.opts.idle_timeout.milliseconds()
+		l.on_readable(mut c)
+	}
+}
+
+// read_pending reads input a TLS session already holds: epoll reports only the
+// socket, so once output stops blocking the connection nothing else would.
+fn (mut l Loop) read_pending(mut c Conn) {
+	if c.fd >= 0 && !c.out_armed && !isnil(c.tls) && c.tls.pending() {
+		l.on_readable(mut c)
+	}
+}
+
+// read is recv over the connection's transport: bytes read, 0 when the peer closed,
+// -1 when nothing is available now, -2 on error.
+fn (mut l Loop) read(mut c Conn, buf &u8, n int) int {
+	if !isnil(c.tls) {
+		return c.tls.read(buf, n)
+	}
+	r := int(C.recv(c.fd, buf, n, 0))
+	if r >= 0 {
+		return r
+	}
+	return if C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK { -1 } else { -2 }
+}
+
+// write is send over the connection's transport: bytes taken, -1 when the socket is
+// full, -2 on error.
+fn (mut l Loop) write(mut c Conn, buf &u8, n int) int {
+	if !isnil(c.tls) {
+		return c.tls.write(buf, n)
+	}
+	r := int(C.send(c.fd, buf, n, C.MSG_NOSIGNAL))
+	if r >= 0 {
+		return r
+	}
+	return if C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK { -1 } else { -2 }
 }
 
 fn (mut l Loop) on_readable(mut c Conn) {
@@ -233,15 +341,12 @@ fn (mut l Loop) on_readable(mut c Conn) {
 			unsafe { c.rbuf.grow_cap(c.rbuf.cap) } // cold: a request larger than the buffer
 		}
 		spare := c.rbuf.cap - c.rbuf.len
-		n := int(C.recv(c.fd, unsafe { &u8(c.rbuf.data) + c.rbuf.len }, spare, 0))
-		if n == 0 {
+		n := l.read(mut c, unsafe { &u8(c.rbuf.data) + c.rbuf.len }, spare)
+		if n == 0 || n == -2 {
 			l.close(mut c)
 			return
 		}
 		if n < 0 {
-			if C.errno != C.EAGAIN && C.errno != C.EWOULDBLOCK {
-				l.close(mut c)
-			}
 			return
 		}
 		unsafe {
@@ -258,8 +363,9 @@ fn (mut l Loop) on_readable(mut c Conn) {
 		} else if !c.reading {
 			c.deadline_ms = l.now + l.opts.idle_timeout.milliseconds()
 		}
-		if n < spare {
-			// short read: the socket is drained, epoll reports more
+		if n < spare && isnil(c.tls) {
+			// short read: the socket is drained, epoll reports more. Not for TLS: a
+			// read returns at most one record, so read until it would block.
 			return
 		}
 	}
@@ -279,10 +385,9 @@ fn (mut l Loop) drain(mut c Conn) {
 
 fn (mut l Loop) flush(mut c Conn) {
 	for c.woff < c.wbuf.len {
-		n := int(C.send(c.fd, unsafe { &u8(c.wbuf.data) + c.woff }, c.wbuf.len - c.woff,
-			C.MSG_NOSIGNAL))
+		n := l.write(mut c, unsafe { &u8(c.wbuf.data) + c.woff }, c.wbuf.len - c.woff)
 		if n < 0 {
-			if C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK {
+			if n == -1 {
 				if !c.out_armed {
 					l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLOUT))
 					c.out_armed = true
@@ -304,7 +409,7 @@ fn (mut l Loop) flush(mut c Conn) {
 		return
 	}
 	if c.out_armed {
-		l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLIN | C.EPOLLRDHUP))
+		l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLIN) | u32(C.EPOLLRDHUP))
 		c.out_armed = false
 		c.deadline_ms = l.now + if c.reading {
 			l.opts.read_timeout.milliseconds()
@@ -319,6 +424,10 @@ fn (mut l Loop) close(mut c Conn) {
 		return
 	}
 	l.ctl(C.EPOLL_CTL_DEL, c.fd, 0)
+	if !isnil(c.tls) {
+		c.tls.close()
+		c.tls = unsafe { nil }
+	}
 	C.close(c.fd)
 	if c.counted {
 		l.count.release()
@@ -338,7 +447,17 @@ fn (mut l Loop) close(mut c Conn) {
 fn (mut l Loop) sweep() {
 	if l.paused {
 		// a failed re-add leaves paused set so the next sweep retries
-		l.paused = !l.ctl(C.EPOLL_CTL_ADD, l.lfd, u32(C.EPOLLIN))
+		l.paused = false
+		for x in l.lfds {
+			if !l.ctl(C.EPOLL_CTL_ADD, x, u32(C.EPOLLIN)) && C.errno != C.EEXIST {
+				l.paused = true
+			}
+		}
+	}
+	for mut srv in l.srvs {
+		if !isnil(srv) {
+			srv.reload()
+		}
 	}
 	for i in 0 .. l.conns.len {
 		// a waiting connection is answered by its timer, not timed out

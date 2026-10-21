@@ -381,7 +381,7 @@ fn test_closed_conns_are_pooled_per_worker() {
 	mut l := &Loop{
 		w:     new_worker(make_router(), Options{}, 0)
 		epfd:  C.epoll_create1(0)
-		lfd:   -1
+		lfds:  []int{}
 		stop:  stop
 		count: count
 	}

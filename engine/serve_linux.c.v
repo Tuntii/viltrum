@@ -37,11 +37,48 @@ fn (mut cc ConnCount) release() {
 // serve runs one epoll worker per CPU, each with its own SO_REUSEPORT listener, and
 // blocks until SIGINT/SIGTERM or opts.stop asks it to stop.
 pub fn serve(addr string, r &router.Router, opts Options) ! {
+	serve_listeners([Listener{
+		addr: addr
+	}], r, opts)!
+}
+
+// serve_listeners is serve for several addresses at once, cleartext or TLS: every
+// worker listens on all of them. Certificates are loaded before any socket opens,
+// so a bad path fails here rather than in the workers.
+pub fn serve_listeners(listeners []Listener, r &router.Router, opts Options) ! {
+	if listeners.len == 0 {
+		return error('viltrum: no listeners')
+	}
+	mut tls := false
+	for ln in listeners {
+		if t := ln.tls {
+			if !tls {
+				tls_init()!
+				tls = true
+			}
+			mut probe := new_tls_server(t, false)!
+			probe.free()
+		}
+	}
 	n := worker_count(opts.workers)
 	mut stop := if isnil(opts.stop) { new_stop() } else { opts.stop }
-	mut lfds := []int{}
+	mut lfds := [][]int{}
 	for _ in 0 .. n {
-		lfds << listen_reuseport(addr)!
+		mut row := []int{}
+		for ln in listeners {
+			row << listen_reuseport(ln.addr) or {
+				for fds in lfds {
+					for fd in fds {
+						C.close(fd)
+					}
+				}
+				for fd in row {
+					C.close(fd)
+				}
+				return err
+			}
+		}
+		lfds << row
 	}
 	if opts.handle_signals {
 		os.signal_opt(.int, fn [mut stop] (_ os.Signal) {
@@ -51,16 +88,21 @@ pub fn serve(addr string, r &router.Router, opts Options) ! {
 			stop.request()
 		}) or {}
 	}
-	eprintln('[viltrum] listening on http://${addr} (${n} workers)')
+	for ln in listeners {
+		scheme := if _ := ln.tls { 'https' } else { 'http' }
+		eprintln('[viltrum] listening on ${scheme}://${ln.addr} (${n} workers)')
+	}
 	mut count := &ConnCount{}
 	mut threads := []thread{}
 	for i in 1 .. n {
-		threads << spawn run_worker(i, lfds[i], r, opts, mut stop, mut count)
+		threads << spawn run_worker(i, lfds[i], listeners, r, opts, mut stop, mut count)
 	}
-	run_worker(0, lfds[0], r, opts, mut stop, mut count)
+	run_worker(0, lfds[0], listeners, r, opts, mut stop, mut count)
 	threads.wait()
-	for fd in lfds {
-		C.close(fd)
+	for fds in lfds {
+		for fd in fds {
+			C.close(fd)
+		}
 	}
 	if count.failed > 0 {
 		return error('viltrum: ${count.failed} worker(s) failed to start epoll')

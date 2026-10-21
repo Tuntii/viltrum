@@ -10,8 +10,8 @@ out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 # The HttpArena entry instantiates Ctx.json and the encoder on nested structs and arrays.
 v -prod -o "$out/probe.c" benches/httparena/main.v
-# cold: startup and route registration only
-allow='^(viltrum__engine__serve|viltrum__engine__run_worker|viltrum__App_[a-z_]+|viltrum__new)$'
+# cold: startup, route registration, and the once-a-second TLS reload check
+allow='^(viltrum__engine__serve|viltrum__engine__serve_listeners|viltrum__engine__run_worker|viltrum__engine__new_tls_server|viltrum__engine__TlsServer_reload|viltrum__App_[a-z_]+|viltrum__new)$'
 bad=$(awk '
 	/^[A-Za-z_].*\) \{$/ {
 		fn = $0

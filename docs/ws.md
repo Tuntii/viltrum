@@ -22,8 +22,8 @@ app.listen('127.0.0.1:8084')!
 ```
 
 ```bash
-v run examples/ws_echo
-websocat ws://127.0.0.1:8084/ws/lobby
+v run examples/ws_chat
+websocat 'ws://127.0.0.1:8084/chat/lobby?name=ada'   # and a second one as someone else
 ```
 
 Over TLS it is the same route: serve it from `app.listen_tls` or a TLS `Listener` and clients connect with
@@ -41,6 +41,10 @@ Over TLS it is the same route: serve it from `app.listen_tls` or a TLS `Listener
 | `s.ping(payload)` | a Ping (the client's Pong is absorbed) |
 | `s.close(code, reason)` | start the closing handshake |
 | `s.data` | `voidptr` for the connection's own state, set in `on_open` |
+| `s.subscribe(topic)`, `s.unsubscribe(topic)` | join or leave a topic; a closing connection leaves its topics |
+| `s.publish(topic, t)`, `s.publish_binary` | to every subscriber of topic, on every worker, except this connection |
+| `app.publish(topic, t)`, `app.publish_binary` | the same from any thread, the publisher not excluded |
+| `s.id()`, `app.ws_send(id, t)`, `app.ws_send_binary` | name a connection, send to it from any thread |
 | `s.protocol()`, `s.worker_id()` | agreed subprotocol, serving worker |
 | `m.binary`, `m.data`, `m.text()` | the message; `data` and `text()` are views |
 
@@ -58,6 +62,13 @@ and `check_origin`.
   client catches up.
 - **Middleware runs on the upgrade request.** Global middleware and the `mws` passed to `ws` run before the
   handshake, so an auth check can answer 401 and the connection never upgrades.
+- **Topics span the workers.** Each worker keeps its own subscribers per topic; a publish copies the message
+  once and queues it to every worker (an eventfd wakes each), which writes it to its subscribers. A publish
+  from a callback goes out after the callback returns; messages from one publisher arrive in the order
+  sent. `app.publish` and `app.ws_send` before `listen` starts, or after it returns, are dropped, as are
+  sends to an id whose connection has closed.
+- **Slow subscribers are dropped.** A client that lets more than four times `max_pending` of output pile up
+  is closed with 1008 rather than buffering without bound.
 - **Ping is answered with Pong automatically.** Unsolicited Pongs are ignored.
 - **Closing.** A client's Close is answered with the same code and the connection closes once that is sent.
   `s.close` sends ours; messages that arrive after it are dropped and the connection closes when the
@@ -90,6 +101,4 @@ A frame that breaks the protocol closes the connection with a Close carrying the
 ## Not supported (yet)
 
 - `permessage-deflate` and other extensions (not negotiated; clients fall back to plain frames).
-- Sending outside a callback: there is no handle to write to another connection, so broadcast across
-  connections is not possible yet.
 - WebSocket over HTTP/2 (RFC 8441): viltrum speaks HTTP/1.1 only.

@@ -33,8 +33,10 @@ pub mut:
 	ws_msg     []u8 // a fragmented message being put back together
 	ws_frag    u8   // that message's opcode, 0 when none is in progress
 	ws_proto   int
-	ws_closing bool // our Close went out
-	ws_code    int  // the code on_close reports
+	ws_closing bool     // our Close went out
+	ws_code    int      // the code on_close reports
+	subs       []&Topic // topics this connection is subscribed to
+	touched    bool     // in the worker's list of connections to flush
 }
 
 // Pending is what survives of a request whose response was deferred (Ctx.after).
@@ -93,6 +95,8 @@ pub mut:
 	timers   Timers // deferred responses, earliest first
 	gen      u32    // last Conn.gen handed out
 	ws       http1.Ws
+	hub      &Hub = unsafe { nil } // where publish and send go; nil drops them (handle_raw)
+	topics   map[string]&Topic // this worker's subscribers per topic
 }
 
 pub fn new_worker(r &router.Router, opts Options, index int) &Worker {

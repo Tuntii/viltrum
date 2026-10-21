@@ -49,6 +49,33 @@ pub fn (m WsMessage) text() string {
 	return str_view(m.data, 0, m.data.len)
 }
 
+// WsId names one WebSocket connection among all workers (Ws.id), for sending to it
+// from elsewhere. It stays unique after the connection closes: sends to it are dropped.
+pub struct WsId {
+pub:
+	worker int
+	fd     int = -1
+	gen    u32
+}
+
+// WsPost is a message on its way to other connections: to a topic's subscribers
+// (topic set) or to one connection (to). The engine carries it to the workers.
+pub struct WsPost {
+pub:
+	topic string
+	to    WsId
+	skip  WsId // the publisher, which does not get its own message
+	op    u8
+	data  []u8
+}
+
+// WsSub is a subscribe (on) or unsubscribe a callback asked for.
+pub struct WsSub {
+pub:
+	topic string
+	on    bool
+}
+
 // Ws is one WebSocket connection as its callbacks see it. A worker owns a single Ws
 // and points it at each connection in turn, like Ctx.
 pub struct Ws {
@@ -60,6 +87,9 @@ pub mut:
 	worker  int
 	h       &WsHandler = unsafe { nil }
 	proto   int // index into h.protocols, -1 for none
+	me      WsId
+	posts   []&WsPost // publish calls, carried out when the callback returns
+	subs    []WsSub   // subscribe calls, applied when the callback returns
 }
 
 // send_text sends one text message. t must be valid UTF-8.
@@ -97,6 +127,59 @@ pub fn (mut s Ws) close(code int, reason string) {
 
 pub fn (s &Ws) worker_id() int {
 	return s.worker
+}
+
+// id names this connection for app.ws_send, from any thread.
+pub fn (s &Ws) id() WsId {
+	return s.me
+}
+
+// subscribe adds this connection to topic: whatever is published to it reaches
+// every subscriber, on every worker. A closing connection leaves its topics.
+pub fn (mut s Ws) subscribe(topic string) {
+	s.subs << WsSub{
+		topic: topic.clone() // cold: subscriptions, not messages
+		on:    true
+	}
+}
+
+pub fn (mut s Ws) unsubscribe(topic string) {
+	s.subs << WsSub{
+		topic: topic.clone() // cold: subscriptions, not messages
+	}
+}
+
+// publish sends a text message to every subscriber of topic except this connection.
+// The message is copied once and goes out after the callback returns.
+pub fn (mut s Ws) publish(topic string, t string) {
+	s.post(topic, ws_text, t.str, t.len)
+}
+
+pub fn (mut s Ws) publish_binary(topic string, b []u8) {
+	s.post(topic, ws_binary, b.data, b.len)
+}
+
+fn (mut s Ws) post(topic string, op u8, p &u8, n int) {
+	if topic.len == 0 {
+		return
+	}
+	s.posts << ws_post(topic, s.me, s.me, op, p, n)
+}
+
+// ws_post copies a message for other connections: to a topic, or to one connection
+// when topic is ''.
+pub fn ws_post(topic string, to WsId, skip WsId, op u8, p &u8, n int) &WsPost {
+	mut data := []u8{len: n} // cold: a published message is copied once for all workers
+	if n > 0 {
+		unsafe { vmemcpy(data.data, p, n) }
+	}
+	return &WsPost{
+		topic: topic.clone() // cold: as above
+		to:    to
+		skip:  skip
+		op:    op
+		data:  data
+	}
 }
 
 // protocol is the subprotocol agreed in the handshake, '' for none.

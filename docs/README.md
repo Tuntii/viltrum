@@ -17,7 +17,7 @@ workers, or TLS terminates at a reverse proxy (Caddy, nginx).
 | [releasing.md](./releasing.md) | Semantic-release and commit conventions |
 
 Also: [../CHANGELOG.md](../CHANGELOG.md), [../benches/RESULTS.md](../benches/RESULTS.md), examples in
-[../examples/README.md](../examples/README.md) (`hello`, `rest`, `features`, `https`, `ws_echo`).
+[../examples/README.md](../examples/README.md) (`hello`, `rest`, `features`, `https`, `ws_chat`).
 
 ## Not on the 1.x core yet
 

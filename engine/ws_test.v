@@ -38,6 +38,25 @@ fn full_handler(mut seen Seen) &http1.WsHandler {
 	}
 }
 
+// chat_msg understands 'sub:T', 'unsub:T', 'pub:T:text' and 'id'; it echoes the rest.
+fn chat_msg(mut s http1.Ws, m http1.WsMessage) {
+	t := m.text()
+	if t.starts_with('sub:') {
+		s.subscribe(t[4..])
+		s.send_text('subscribed')
+	} else if t.starts_with('unsub:') {
+		s.unsubscribe(t[6..])
+	} else if t.starts_with('pub:') {
+		i := t.index_after(':', 4) or { return }
+		s.publish(t[4..i], t[i + 1..])
+	} else if t == 'id' {
+		id := s.id()
+		s.send_text('${id.worker} ${id.fd} ${id.gen}')
+	} else {
+		s.send_text(t)
+	}
+}
+
 fn up(h &http1.WsHandler) http1.Handler {
 	return fn [h] (mut c http1.Ctx) {
 		c.ws_upgrade(h)
@@ -48,6 +67,7 @@ fn ws_router(mut seen Seen) &router.Router {
 	mut r := &router.Router{}
 	r.add(.get, '/ws', [up(&http1.WsHandler{ on_message: echo_msg })]) or { panic(err) }
 	r.add(.get, '/room/:room', [up(full_handler(mut seen))]) or { panic(err) }
+	r.add(.get, '/chat', [up(&http1.WsHandler{ on_message: chat_msg })]) or { panic(err) }
 	r.add(.get, '/small', [
 		up(&http1.WsHandler{ on_message: echo_msg, max_message: 100 }),
 	]) or { panic(err) }
@@ -423,4 +443,124 @@ fn test_echo_allocates_nothing() {
 	}
 	assert http1.allocated_bytes() - before == 0
 	assert sframes(c.wbuf).len == 3
+}
+
+fn topic_size(w &Worker, name string) int {
+	t := w.topics[name] or { return 0 }
+	return t.conns.len
+}
+
+// joined upgrades a connection on fd to /chat and clears its output.
+fn joined(mut w Worker, fd int, mut conns []&Conn) &Conn {
+	mut c := new_conn()
+	c.reset(fd)
+	w.gen++
+	c.gen = w.gen
+	conns[fd] = c
+	feed(mut w, mut c, upgrade_req('/chat', '').bytes())
+	unsafe {
+		c.wbuf.len = 0
+	}
+	return c
+}
+
+fn texts(c &Conn) []string {
+	return sframes(c.wbuf).map(it.data.bytestr())
+}
+
+fn clear_out(cs []&Conn) {
+	for c in cs {
+		unsafe {
+			c.wbuf.len = 0
+		}
+	}
+}
+
+// deliver_all is the event loop's inbox drain without the sockets.
+fn deliver_all(mut w Worker, mut h Hub, mut conns []&Conn) []&Conn {
+	mut posts := []&http1.WsPost{}
+	h.boxes[0].take(mut posts)
+	mut touched := []&Conn{}
+	for p in posts {
+		w.deliver(p, mut conns, mut touched)
+	}
+	for mut c in touched {
+		c.touched = false
+	}
+	return touched
+}
+
+fn test_publish_subscribe_and_direct_send() {
+	mut h := new_hub()
+	h.open(1)!
+	defer {
+		h.close()
+	}
+	mut w := new_ws_worker(Options{ send_date: false })
+	w.hub = h
+	mut conns := unsafe { []&Conn{len: 16} }
+	mut a := joined(mut w, 3, mut conns)
+	mut b := joined(mut w, 4, mut conns)
+	mut c := joined(mut w, 5, mut conns)
+	feed(mut w, mut a, ctext('sub:room'))
+	feed(mut w, mut b, ctext('sub:room'))
+	feed(mut w, mut b, ctext('sub:room')) // twice is once
+	assert topic_size(w, 'room') == 2 && b.subs.len == 1
+	clear_out([a, b, c])
+	feed(mut w, mut a, ctext('pub:room:hello'))
+	assert a.wbuf.len == 0 // nothing until the inbox is drained
+	touched := deliver_all(mut w, mut h, mut conns)
+	assert texts(b) == ['hello'] && texts(a).len == 0 && texts(c).len == 0
+	assert touched.len == 1 && voidptr(touched[0]) == voidptr(b)
+	// from outside a callback every subscriber gets it, the publisher too
+	clear_out([a, b, c])
+	h.post(http1.ws_post('room', http1.WsId{}, http1.WsId{}, http1.ws_binary, c'x', 1))
+	h.post(http1.ws_post('nobody', http1.WsId{}, http1.WsId{}, http1.ws_text, c'y', 1))
+	deliver_all(mut w, mut h, mut conns)
+	assert sframes(a.wbuf)[0].op == http1.ws_binary && texts(a) == ['x'] && texts(b) == ['x']
+	assert texts(c).len == 0
+	// direct send by id; a stale id (the connection was replaced) is dropped
+	clear_out([a, b, c])
+	feed(mut w, mut c, ctext('id'))
+	parts := texts(c)[0].split(' ')
+	id := http1.WsId{
+		worker: parts[0].int()
+		fd:     parts[1].int()
+		gen:    u32(parts[2].int())
+	}
+	assert id.fd == 5 && id.gen == c.gen
+	clear_out([c])
+	h.post(http1.ws_post('', id, http1.WsId{}, http1.ws_text, c'dm', 2))
+	h.post(http1.ws_post('', http1.WsId{ fd: 5, gen: c.gen + 100 }, http1.WsId{}, http1.ws_text,
+		c'stale', 5))
+	deliver_all(mut w, mut h, mut conns)
+	assert texts(c) == ['dm']
+	// unsubscribe and close leave the topic, the last one out removes it
+	feed(mut w, mut b, ctext('unsub:room'))
+	assert topic_size(w, 'room') == 1 && b.subs.len == 0
+	w.ws_end(mut a)
+	assert 'room' !in w.topics && a.subs.len == 0
+}
+
+fn test_publish_to_a_slow_client_closes_it() {
+	mut h := new_hub()
+	h.open(1)!
+	defer {
+		h.close()
+	}
+	mut w := new_ws_worker(Options{
+		send_date:   false
+		max_pending: 100
+	})
+	w.hub = h
+	mut conns := unsafe { []&Conn{len: 16} }
+	mut a := joined(mut w, 3, mut conns)
+	feed(mut w, mut a, ctext('sub:t'))
+	for _ in 0 .. 50 {
+		h.post(http1.ws_post('t', http1.WsId{}, http1.WsId{}, http1.ws_text, c'0123456789', 10))
+	}
+	deliver_all(mut w, mut h, mut conns)
+	f := sframes(a.wbuf)
+	assert f.last().op == http1.ws_close && a.close_after && a.ws_code == 1008
+	assert f.len < 50
 }

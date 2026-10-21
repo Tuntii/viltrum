@@ -146,3 +146,19 @@ fn test_websocket_behind_gzip() {
 	assert r.starts_with('HTTP/1.1 101 ') && r.count('HTTP/1.1') == 1
 	assert !r.contains('Content-Encoding') && r.ends_with('x'.repeat(100))
 }
+
+// publish and ws_send need a running server; without one they are dropped quietly.
+fn test_publish_without_a_server_is_dropped() {
+	mut a := viltrum.new()
+	a.ws('/room', viltrum.WsHandler{
+		on_message: fn (mut s viltrum.Ws, m viltrum.WsMessage) {
+			s.subscribe('r')
+			s.publish('r', m.text())
+			s.send_text('ok')
+		}
+	})
+	a.publish('r', 'nobody hears this')
+	a.ws_send(viltrum.WsId{}, 'nor this')
+	r := a.handle_raw('GET /room HTTP/1.1\r\n' + ws_up + masked('hi'))!
+	assert r.starts_with('HTTP/1.1 101 ') && r.ends_with('\x81\x02ok')
+}

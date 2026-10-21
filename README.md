@@ -58,7 +58,7 @@ buffer and are valid until the handler returns; `.clone()` what you keep.
 | Middleware | `recover`, `gzip`, `cors`, `logger` (`recover` cannot catch panics, see below) |
 | JSON | `c.json(200, value)`: compile-time encoder, no reflection |
 | TLS | `app.listen_tls`, or `app.serve` for cleartext and TLS together: TLS 1.3, certificates reloaded from disk without a restart ([docs/tls.md](docs/tls.md)) |
-| WebSocket | `app.ws(pattern, handler)`: RFC 6455 on the same workers, `ws://` and `wss://`, callbacks per message with no allocation ([docs/ws.md](docs/ws.md)) |
+| WebSocket | `app.ws(pattern, handler)`: RFC 6455 on the same workers, `ws://` and `wss://`, callbacks per message with no allocation, topics (`subscribe` / `publish`) across workers ([docs/ws.md](docs/ws.md)) |
 | Tests | `app.handle_raw(raw)` serves a raw request in-process |
 
 > **`recover` and panics.** V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).
@@ -122,7 +122,7 @@ Method notes: [benches/RESULTS.md](benches/RESULTS.md).
 | `examples/rest` | 8081 |
 | `examples/features` | 8082 |
 | `examples/https` | 8080 + 8443 (`bash scripts/dev-cert.sh` first) |
-| `examples/ws_echo` | 8084 |
+| `examples/ws_chat` | 8084 |
 
 ```bash
 v test http1/ jsonenc/ router/ engine/ tests/

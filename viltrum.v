@@ -19,8 +19,12 @@ pub type TlsOptions = engine.TlsOptions
 pub type Listener = engine.Listener
 
 // Ws is one WebSocket connection inside its callbacks: send_text, send_binary,
-// ping, close, protocol, worker_id, and `data` for the connection's own state.
+// ping, close, subscribe, publish, id, protocol, worker_id, and `data` for the
+// connection's own state.
 pub type Ws = http1.Ws
+
+// WsId names one WebSocket connection (Ws.id) for App.ws_send.
+pub type WsId = http1.WsId
 
 // WsMessage is one whole message; data is valid until the callback returns.
 pub type WsMessage = http1.WsMessage
@@ -60,10 +64,38 @@ mut:
 	global []Handler
 	routes []PendingRoute
 	opts   engine.Options
+	hub    &engine.Hub = engine.new_hub()
 }
 
 pub fn new() &App {
 	return &App{}
+}
+
+// publish sends a text message to every WebSocket subscribed to topic (Ws.subscribe),
+// on every worker. It may be called from any thread, handlers included; the message
+// is copied once. Without a running server it is dropped.
+pub fn (app &App) publish(topic string, text string) {
+	if topic.len > 0 {
+		app.hub.post(http1.ws_post(topic, http1.WsId{}, http1.WsId{}, http1.ws_text, text.str,
+			text.len))
+	}
+}
+
+pub fn (app &App) publish_binary(topic string, data []u8) {
+	if topic.len > 0 {
+		app.hub.post(http1.ws_post(topic, http1.WsId{}, http1.WsId{}, http1.ws_binary, data.data,
+			data.len))
+	}
+}
+
+// ws_send sends a text message to one WebSocket connection, from any thread. It is
+// dropped when that connection has closed.
+pub fn (app &App) ws_send(id WsId, text string) {
+	app.hub.post(http1.ws_post('', id, http1.WsId{}, http1.ws_text, text.str, text.len))
+}
+
+pub fn (app &App) ws_send_binary(id WsId, data []u8) {
+	app.hub.post(http1.ws_post('', id, http1.WsId{}, http1.ws_binary, data.data, data.len))
 }
 
 // server_options replaces the engine options (workers, limits, timeouts, Date, Server).
@@ -224,7 +256,14 @@ fn method_not_allowed(mut c Ctx) {
 // listen serves until SIGINT/SIGTERM (or Options.stop).
 pub fn (app &App) listen(addr string) ! {
 	r := app.build()!
-	engine.serve(addr, r, app.opts)!
+	engine.serve(addr, r, app.engine_options())!
+}
+
+fn (app &App) engine_options() engine.Options {
+	return engine.Options{
+		...app.opts
+		hub: app.hub
+	}
 }
 
 // listen_tls serves HTTPS on addr until SIGINT/SIGTERM (or Options.stop). A
@@ -240,7 +279,7 @@ pub fn (app &App) listen_tls(addr string, tls TlsOptions) ! {
 // SIGINT/SIGTERM (or Options.stop).
 pub fn (app &App) serve(listeners []Listener) ! {
 	r := app.build()!
-	engine.serve_listeners(listeners, r, app.opts)!
+	engine.serve_listeners(listeners, r, app.engine_options())!
 }
 
 // worker_count is how many workers listen starts; size per-worker state with it and

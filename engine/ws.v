@@ -196,6 +196,9 @@ pub fn (mut w Worker) ws_end(mut c Conn) {
 		h.on_close(mut s, c.ws_code)
 		w.ws_take(mut c)
 	}
+	for c.subs.len > 0 {
+		w.ws_leave(mut c, c.subs.len - 1)
+	}
 	c.ws = unsafe { nil }
 	c.ws_data = unsafe { nil }
 }
@@ -208,6 +211,11 @@ fn (mut w Worker) ws_lend(mut c Conn) &http1.Ws {
 	s.closing = c.ws_closing
 	s.h = c.ws
 	s.proto = c.ws_proto
+	s.me = http1.WsId{
+		worker: s.worker
+		fd:     c.fd
+		gen:    c.gen
+	}
 	return s
 }
 
@@ -219,5 +227,119 @@ fn (mut w Worker) ws_take(mut c Conn) {
 	if w.ws.closing && !c.ws_closing {
 		c.ws_closing = true
 		c.ws_code = 1000
+	}
+	if w.ws.subs.len > 0 || w.ws.posts.len > 0 {
+		w.ws_apply(mut c)
+	}
+}
+
+// Topic is one topic's subscribers on this worker.
+@[heap]
+struct Topic {
+	name string
+mut:
+	conns []&Conn
+}
+
+// ws_apply carries out what a callback asked for besides sends: subscriptions,
+// then publishes, which go through the hub to every worker (this one included).
+fn (mut w Worker) ws_apply(mut c Conn) {
+	for i in 0 .. w.ws.subs.len {
+		sub := &w.ws.subs[i]
+		if sub.on {
+			w.ws_subscribe(mut c, sub.topic)
+		} else {
+			for k in 0 .. c.subs.len {
+				if c.subs[k].name == sub.topic {
+					w.ws_leave(mut c, k)
+					break
+				}
+			}
+		}
+	}
+	w.ws.subs.clear()
+	for i in 0 .. w.ws.posts.len {
+		if !isnil(w.hub) {
+			w.hub.post(w.ws.posts[i])
+		}
+		w.ws.posts[i] = unsafe { nil }
+	}
+	w.ws.posts.clear()
+}
+
+fn (mut w Worker) ws_subscribe(mut c Conn, name string) {
+	if c.ws_closing {
+		return
+	}
+	for k in 0 .. c.subs.len {
+		if c.subs[k].name == name {
+			return
+		}
+	}
+	mut t := w.topics[name] or {
+		nt := &Topic{
+			name: name
+		}
+		w.topics[name] = nt
+		nt
+	}
+	t.conns << c
+	c.subs << t
+}
+
+// ws_leave takes c out of its k-th topic, and drops the topic once nobody is left.
+fn (mut w Worker) ws_leave(mut c Conn, k int) {
+	mut t := c.subs[k]
+	for i in 0 .. t.conns.len {
+		if voidptr(t.conns[i]) == voidptr(c) {
+			t.conns[i] = t.conns[t.conns.len - 1]
+			t.conns.delete_last()
+			break
+		}
+	}
+	if t.conns.len == 0 {
+		w.topics.delete(t.name)
+	}
+	c.subs[k] = c.subs[c.subs.len - 1]
+	c.subs.delete_last()
+}
+
+// deliver writes one posted message to the connections it is for on this worker
+// and lists those in touched for the event loop to flush. conns is indexed by fd.
+pub fn (mut w Worker) deliver(p &http1.WsPost, mut conns []&Conn, mut touched []&Conn) {
+	if p.topic.len == 0 {
+		if p.to.fd < 0 || p.to.fd >= conns.len || isnil(conns[p.to.fd]) {
+			return
+		}
+		mut c := conns[p.to.fd]
+		if c.fd == p.to.fd && c.gen == p.to.gen && !isnil(c.ws) {
+			w.ws_push(mut c, p, mut touched)
+		}
+		return
+	}
+	t := w.topics[p.topic] or { return }
+	for i in 0 .. t.conns.len {
+		mut c := t.conns[i]
+		if c.gen == p.skip.gen && c.fd == p.skip.fd && w.ws.worker == p.skip.worker {
+			continue
+		}
+		w.ws_push(mut c, p, mut touched)
+	}
+}
+
+// ws_push appends p to c's output. A client that has let more than four times
+// max_pending pile up unread is too slow to keep: it is closed with 1008.
+fn (mut w Worker) ws_push(mut c Conn, p &http1.WsPost, mut touched []&Conn) {
+	if c.ws_closing || c.close_after {
+		return
+	}
+	if c.wbuf.len - c.woff > 4 * w.opts.max_pending {
+		w.ws_fail(mut c, 1008, 'too slow')
+	} else {
+		http1.ws_frame(mut c.wbuf, p.op, p.data.data, p.data.len)
+	}
+	if !c.touched {
+		c.touched = true
+		touched << c
 	}
 }

@@ -2,6 +2,7 @@ module engine
 
 import sync.stdatomic
 import time
+import viltrum.http1
 import viltrum.router
 
 #include <sys/epoll.h>
@@ -49,9 +50,12 @@ mut:
 	now        i64 // ms (time.ticks)
 	last_sweep i64
 	paused     bool // listener removed from epoll after EMFILE/ENFILE
+	inbox      &Inbox = unsafe { nil }
+	posts      []&http1.WsPost // the inbox's last batch
+	touched    []&Conn         // connections a batch wrote to, to flush
 }
 
-fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opts Options, mut stop Stop, mut count ConnCount) {
+fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opts Options, hub &Hub, mut stop Stop, mut count ConnCount) {
 	// cold: one Loop per worker, on the heap. A by-value Loop holding conns would be
 	// pinned (walked, and past 32 conns locked) around every call in the event loop
 	// by V's -prod Boehm codegen; see jsonenc.encode_into.
@@ -62,8 +66,10 @@ fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opt
 		opts:  opts
 		stop:  stop
 		count: count
+		inbox: hub.boxes[index]
 	}
-	mut ok := l.epfd >= 0
+	l.w.hub = hub
+	mut ok := l.epfd >= 0 && l.ctl(C.EPOLL_CTL_ADD, l.inbox.efd, u32(C.EPOLLIN))
 	for i, ln in listeners {
 		if t := ln.tls {
 			srv := new_tls_server(t, index == 0) or {
@@ -98,6 +104,10 @@ fn (mut l Loop) run() {
 		l.now = time.ticks()
 		for i in 0 .. n {
 			fd := unsafe { events[i].data.fd }
+			if fd == l.inbox.efd {
+				l.drain_inbox()
+				continue
+			}
 			li := l.listener_index(fd)
 			if li >= 0 {
 				l.accept_all(li)
@@ -162,6 +172,28 @@ fn (mut l Loop) fire() {
 			}
 		}
 	}
+}
+
+// drain_inbox writes the WebSocket messages other threads (and this worker's own
+// callbacks) posted, then flushes every connection that got one.
+fn (mut l Loop) drain_inbox() {
+	mut n := u64(0)
+	C.read(l.inbox.efd, &n, 8)
+	l.inbox.take(mut l.posts)
+	for i in 0 .. l.posts.len {
+		l.w.deliver(l.posts[i], mut l.conns, mut l.touched)
+		l.posts[i] = unsafe { nil } // let the message go
+	}
+	l.posts.clear()
+	for i in 0 .. l.touched.len {
+		mut c := l.touched[i]
+		l.touched[i] = unsafe { nil }
+		c.touched = false
+		if c.fd >= 0 && !c.out_armed {
+			l.flush(mut c)
+		}
+	}
+	l.touched.clear()
 }
 
 fn (mut l Loop) ctl(op int, fd int, events u32) bool {

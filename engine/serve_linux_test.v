@@ -45,10 +45,33 @@ fn h_ws(mut c http1.Ctx) {
 	c.ws_upgrade(ws_h)
 }
 
+fn chat_msg(mut s http1.Ws, m http1.WsMessage) {
+	t := m.text()
+	if t.starts_with('sub:') {
+		s.subscribe(t[4..])
+		s.send_text('subscribed')
+	} else if t.starts_with('pub:') {
+		i := t.index_after(':', 4) or { return }
+		s.publish(t[4..i], t[i + 1..])
+	} else if t == 'id' {
+		id := s.id()
+		s.send_text('${id.worker} ${id.fd} ${id.gen}')
+	}
+}
+
+const chat_h = &http1.WsHandler{
+	on_message: chat_msg
+}
+
+fn h_chat(mut c http1.Ctx) {
+	c.ws_upgrade(chat_h)
+}
+
 fn make_router() &router.Router {
 	mut r := &router.Router{}
 	r.add(.get, '/p/*rest', [http1.Handler(h_path)]) or { panic(err) }
 	r.add(.get, '/ws', [http1.Handler(h_ws)]) or { panic(err) }
+	r.add(.get, '/chat', [http1.Handler(h_chat)]) or { panic(err) }
 	r.add(.post, '/echo', [http1.Handler(h_echo)]) or { panic(err) }
 	r.add(.get, '/big', [http1.Handler(h_big)]) or { panic(err) }
 	r.add(.get, '/delay/:ms', [http1.Handler(h_delay)]) or { panic(err) }
@@ -459,7 +482,11 @@ fn ws_cframe(op u8, payload []u8) []u8 {
 
 // ws_open upgrades conn and leaves what followed the 101 in r.
 fn ws_open(mut conn net.TcpConn, mut r Reader) ! {
-	conn.write(ws_upgrade_req.bytes())!
+	ws_open_path(mut conn, mut r, '/ws')!
+}
+
+fn ws_open_path(mut conn net.TcpConn, mut r Reader, path string) ! {
+	conn.write(ws_upgrade_req.replace('/ws ', path + ' ').bytes())!
 	for head_end(r.buf) < 0 {
 		r.fill(mut conn)!
 	}
@@ -536,4 +563,56 @@ fn test_websocket_over_the_event_loop() {
 	_, eof2 := read_until_eof(mut q)
 	assert eof2 && time.ticks() - t0 < 3000
 	q.close() or {}
+}
+
+// Subscribers spread over both workers get what a client publishes (not the
+// publisher), what another thread publishes, and a direct send by id.
+fn test_websocket_publish_across_workers() {
+	mut hub := new_hub()
+	addr, mut stop := start(Options{
+		hub: hub
+	})
+	defer {
+		stop.request()
+	}
+	mut conns := []&net.TcpConn{}
+	mut readers := []&Reader{}
+	mut workers := map[string]bool{}
+	for _ in 0 .. 8 {
+		mut c := dial(addr)
+		mut r := &Reader{}
+		ws_open_path(mut c, mut r, '/chat')!
+		c.write(ws_cframe(http1.ws_text, 'sub:room'.bytes()))!
+		_, ok := ws_read(mut c, mut r)!
+		assert ok.bytestr() == 'subscribed'
+		c.write(ws_cframe(http1.ws_text, 'id'.bytes()))!
+		_, id := ws_read(mut c, mut r)!
+		workers[id.bytestr().all_before(' ')] = true
+		conns << c
+		readers << r
+	}
+	assert workers.len == 2, 'subscribers on both workers'
+	conns[0].write(ws_cframe(http1.ws_text, 'pub:room:hi all'.bytes()))!
+	for i in 1 .. 8 {
+		_, got := ws_read(mut conns[i], mut readers[i])!
+		assert got.bytestr() == 'hi all'
+	}
+	spawn fn [hub] () {
+		hub.post(http1.ws_post('room', http1.WsId{}, http1.WsId{}, http1.ws_text, c'from a thread',
+			13))
+	}()
+	for i in 0 .. 8 {
+		_, got := ws_read(mut conns[i], mut readers[i])!
+		assert got.bytestr() == 'from a thread', '${i}'
+	}
+	conns[5].write(ws_cframe(http1.ws_text, 'id'.bytes()))!
+	_, raw := ws_read(mut conns[5], mut readers[5])!
+	p := raw.bytestr().split(' ')
+	hub.post(http1.ws_post('', http1.WsId{ worker: p[0].int(), fd: p[1].int(), gen: u32(p[2].int()) }, http1.WsId{},
+		http1.ws_text, c'just you', 8))
+	_, dm := ws_read(mut conns[5], mut readers[5])!
+	assert dm.bytestr() == 'just you'
+	for mut c in conns {
+		c.close() or {}
+	}
 }

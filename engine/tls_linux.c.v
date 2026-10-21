@@ -11,11 +11,19 @@ fn C.mbedtls_ssl_set_user_data_p(ssl &C.mbedtls_ssl_context, p voidptr)
 fn C.mbedtls_ssl_get_user_data_p(ssl &C.mbedtls_ssl_context) voidptr
 fn C.viltrum_tls_conf(conf &C.mbedtls_ssl_config, cert_cb fn (&C.mbedtls_ssl_context) int, drbg &C.mbedtls_ctr_drbg_context) i32
 fn C.viltrum_tls_reset(ssl &C.mbedtls_ssl_context) i32
-fn C.viltrum_tls_set_bio(ssl &C.mbedtls_ssl_context, fd &int)
+fn C.viltrum_tls_set_bio(ssl &C.mbedtls_ssl_context, b &C.viltrum_bio, fd &int, buf &u8, cap usize)
 fn C.viltrum_tls_check_pair(crt &C.mbedtls_x509_crt, key &C.mbedtls_pk_context, drbg &C.mbedtls_ctr_drbg_context) i32
 fn C.viltrum_tls_load_key(key &C.mbedtls_pk_context, path &char, drbg &C.mbedtls_ctr_drbg_context) i32
 fn C.viltrum_tls_seed(drbg &C.mbedtls_ctr_drbg_context, entropy &C.mbedtls_entropy_context) i32
 fn C.viltrum_tls_file_id(path &char, out &C.viltrum_file_id) i32
+
+@[typedef]
+struct C.viltrum_bio {
+mut:
+	off     usize
+	len     usize
+	drained int
+}
 
 @[typedef]
 struct C.viltrum_file_id {
@@ -29,6 +37,8 @@ mut:
 
 // largest plaintext handed to one mbedtls_ssl_write: one TLS record
 const tls_record_max = 16384
+// read-ahead under a TLS session: a full record and the start of the next
+const tls_read_ahead = 16 * 1024
 
 // handshake results
 const hs_done = 1
@@ -186,6 +196,8 @@ fn (mut s TlsServer) reload() {
 struct TlsConn {
 mut:
 	ssl         C.mbedtls_ssl_context
+	bio         C.viltrum_bio
+	inbuf       []u8 // bio read-ahead, allocated with the TlsConn
 	srv         &TlsServer = unsafe { nil }
 	pair        &CertPair  = unsafe { nil } // picked for the handshake in progress
 	handshaking bool
@@ -217,7 +229,8 @@ fn (mut c Conn) tls_start(srv &TlsServer) bool {
 			C.mbedtls_ssl_free(&c.tls_keep.ssl) // cold: the Conn moves to another TLS listener
 		}
 		mut t := &TlsConn{
-			srv: srv
+			srv:   srv
+			inbuf: []u8{len: tls_read_ahead}
 		} // cold: once per pooled Conn
 		C.mbedtls_ssl_init(&t.ssl)
 		ret := C.mbedtls_ssl_setup(&t.ssl, &srv.conf)
@@ -235,7 +248,7 @@ fn (mut c Conn) tls_start(srv &TlsServer) bool {
 	}
 	mut t := c.tls_keep
 	C.mbedtls_ssl_set_user_data_p(&t.ssl, t)
-	C.viltrum_tls_set_bio(&t.ssl, &c.fd)
+	C.viltrum_tls_set_bio(&t.ssl, &t.bio, &c.fd, t.inbuf.data, usize(t.inbuf.len))
 	t.handshaking = true
 	t.wlen = 0
 	c.tls = t
@@ -302,9 +315,15 @@ fn (mut t TlsConn) write(buf &u8, n int) int {
 	return -2
 }
 
-// pending reports input mbedtls holds that epoll cannot see.
+// pending reports input that epoll cannot see: in mbedtls or in the read-ahead.
 fn (t &TlsConn) pending() bool {
-	return C.mbedtls_ssl_check_pending(&t.ssl) != 0
+	return t.bio.off < t.bio.len || C.mbedtls_ssl_check_pending(&t.ssl) != 0
+}
+
+// readable notes that epoll reported the socket readable, so the read-ahead may
+// call recv again.
+fn (mut t TlsConn) readable() {
+	t.bio.drained = 0
 }
 
 // close sends close_notify (one non-blocking attempt) and drops the pair reference.

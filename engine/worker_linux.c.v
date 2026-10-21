@@ -256,9 +256,12 @@ fn (mut l Loop) on_event(fd int, ev u32) {
 		l.close(mut c)
 		return
 	}
-	if !isnil(c.tls) && c.tls.handshaking {
-		l.handshake(mut c)
-		return
+	if !isnil(c.tls) {
+		c.tls.readable()
+		if c.tls.handshaking {
+			l.handshake(mut c)
+			return
+		}
 	}
 	if c.out_armed {
 		if ev & u32(C.EPOLLOUT) != 0 {

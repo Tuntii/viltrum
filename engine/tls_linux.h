@@ -5,6 +5,7 @@
 #define VILTRUM_TLS_LINUX_H
 
 #include <errno.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <mbedtls/ssl.h>
@@ -68,10 +69,23 @@ static int viltrum_tls_conf(mbedtls_ssl_config *conf, int (*cert_cb)(mbedtls_ssl
 	return 0;
 }
 
-// BIO callbacks. ctx points at the connection's fd. MSG_NOSIGNAL: a peer that has
-// gone must not raise SIGPIPE.
+// viltrum_bio is the transport under one TLS session. mbedtls reads a record as a
+// 5-byte header and then the body, two recv calls; reading ahead into buf turns that
+// into one per batch of records. drained means the last recv came back short, so the
+// socket is empty until epoll says otherwise (level-triggered, so it will): no
+// EAGAIN syscall to find that out.
+typedef struct {
+	int *fd;
+	unsigned char *buf;
+	size_t cap;
+	size_t off;
+	size_t len;
+	int drained;
+} viltrum_bio;
+
+// BIO callbacks. MSG_NOSIGNAL: a peer that has gone must not raise SIGPIPE.
 static int viltrum_tls_send(void *ctx, const unsigned char *buf, size_t len) {
-	ssize_t n = send(*(int *)ctx, buf, len, MSG_NOSIGNAL);
+	ssize_t n = send(*((viltrum_bio *)ctx)->fd, buf, len, MSG_NOSIGNAL);
 	if (n < 0) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
 			return MBEDTLS_ERR_SSL_WANT_WRITE;
@@ -82,14 +96,33 @@ static int viltrum_tls_send(void *ctx, const unsigned char *buf, size_t len) {
 }
 
 static int viltrum_tls_recv(void *ctx, unsigned char *buf, size_t len) {
-	ssize_t n = recv(*(int *)ctx, buf, len, 0);
-	if (n < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+	viltrum_bio *b = (viltrum_bio *)ctx;
+	if (b->off == b->len) {
+		if (b->drained) {
 			return MBEDTLS_ERR_SSL_WANT_READ;
 		}
-		return MBEDTLS_ERR_NET_RECV_FAILED;
+		ssize_t n = recv(*b->fd, b->buf, b->cap, 0);
+		if (n < 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+				b->drained = 1;
+				return MBEDTLS_ERR_SSL_WANT_READ;
+			}
+			return MBEDTLS_ERR_NET_RECV_FAILED;
+		}
+		if (n == 0) {
+			return 0;
+		}
+		b->off = 0;
+		b->len = (size_t)n;
+		b->drained = (size_t)n < b->cap;
 	}
-	return (int)n;
+	size_t k = b->len - b->off;
+	if (k > len) {
+		k = len;
+	}
+	memcpy(buf, b->buf + b->off, k);
+	b->off += k;
+	return (int)k;
 }
 
 // net.mbedtls declares session_reset without its result; this keeps it.
@@ -97,8 +130,15 @@ static int viltrum_tls_reset(mbedtls_ssl_context *ssl) {
 	return mbedtls_ssl_session_reset(ssl);
 }
 
-static void viltrum_tls_set_bio(mbedtls_ssl_context *ssl, int *fd) {
-	mbedtls_ssl_set_bio(ssl, fd, viltrum_tls_send, viltrum_tls_recv, NULL);
+static void viltrum_tls_set_bio(mbedtls_ssl_context *ssl, viltrum_bio *b, int *fd,
+		unsigned char *buf, size_t cap) {
+	b->fd = fd;
+	b->buf = buf;
+	b->cap = cap;
+	b->off = 0;
+	b->len = 0;
+	b->drained = 0;
+	mbedtls_ssl_set_bio(ssl, b, viltrum_tls_send, viltrum_tls_recv, NULL);
 }
 
 // viltrum_tls_check_pair reports whether key is the private half of crt's leaf key.

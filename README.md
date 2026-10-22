@@ -6,6 +6,7 @@
 
 [![ci](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml/badge.svg)](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/Tuntii/viltrum)](https://github.com/Tuntii/viltrum/releases)
+[![HTTP Arena H/1.1](https://img.shields.io/endpoint?url=https://http-arena.com/badge/viltrum/h1.json)](https://http-arena.com/#type=experimental&tuned=0)
 
 You write routes. Viltrum owns the wire: its own HTTP/1.1 engine, one epoll worker per CPU, pipelining, and no
 allocation per request inside the framework. No third-party stack under the hood.

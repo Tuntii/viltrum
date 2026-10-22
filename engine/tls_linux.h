@@ -15,6 +15,16 @@
 #include <mbedtls/pk.h>
 #include <mbedtls/ctr_drbg.h>
 #include <psa/crypto.h>
+#include <mbedtls/hkdf.h>
+#include <mbedtls/md.h>
+
+// viltrum_tls_wipe zeroes key material where the compiler may not drop the stores.
+static void viltrum_tls_wipe(void *p, size_t n) {
+	volatile unsigned char *b = (volatile unsigned char *)p;
+	for (size_t i = 0; i < n; i++) {
+		b[i] = 0;
+	}
+}
 
 // AEAD only. mbedtls 3.x has no SSLv3, TLS 1.0 or 1.1 at all; the floor below is 1.2.
 static const int viltrum_tls_suites[] = {
@@ -155,6 +165,69 @@ static int viltrum_tls_load_key(mbedtls_pk_context *key, const char *path,
 static int viltrum_tls_seed(mbedtls_ctr_drbg_context *drbg, mbedtls_entropy_context *entropy) {
 	static const unsigned char pers[] = "viltrum";
 	return mbedtls_ctr_drbg_seed(drbg, mbedtls_entropy_func, entropy, pers, sizeof(pers) - 1);
+}
+
+// viltrum_tls_secrets receives the TLS 1.3 application traffic secrets as the
+// handshake derives them (mbedtls' key export callback), so the record layer can
+// move to tls13.v once the handshake is done.
+typedef struct {
+	unsigned char client[48];
+	unsigned char server[48];
+	size_t len;
+	int have; // 1: client, 2: server
+} viltrum_tls_secrets;
+
+static void viltrum_tls_export(void *p, mbedtls_ssl_key_export_type type, const unsigned char *secret,
+		size_t secret_len, const unsigned char client_random[32], const unsigned char server_random[32],
+		mbedtls_tls_prf_types prf) {
+	(void)client_random;
+	(void)server_random;
+	(void)prf;
+	viltrum_tls_secrets *s = (viltrum_tls_secrets *)p;
+	if (secret_len > sizeof(s->client)) {
+		return;
+	}
+	if (type == MBEDTLS_SSL_KEY_EXPORT_TLS1_3_CLIENT_APPLICATION_TRAFFIC_SECRET) {
+		memcpy(s->client, secret, secret_len);
+		s->len = secret_len;
+		s->have |= 1;
+	} else if (type == MBEDTLS_SSL_KEY_EXPORT_TLS1_3_SERVER_APPLICATION_TRAFFIC_SECRET) {
+		memcpy(s->server, secret, secret_len);
+		s->len = secret_len;
+		s->have |= 2;
+	}
+}
+
+static void viltrum_tls_set_export(mbedtls_ssl_context *ssl, viltrum_tls_secrets *s) {
+	viltrum_tls_wipe(s, sizeof(*s));
+	mbedtls_ssl_set_export_keys_cb(ssl, viltrum_tls_export, s);
+}
+
+static int viltrum_tls_is13(const mbedtls_ssl_context *ssl) {
+	return mbedtls_ssl_get_version_number(ssl) == MBEDTLS_SSL_VERSION_TLS1_3;
+}
+
+// viltrum_tls13_expand is HKDF-Expand-Label (RFC 8446 7.1) with an empty context:
+// out_len bytes of label ("key", "iv", "traffic upd") from secret, over SHA-256 or
+// SHA-384 as the cipher suite says.
+static int viltrum_tls13_expand(int sha384, const unsigned char *secret, size_t secret_len,
+		const char *label, unsigned char *out, size_t out_len) {
+	unsigned char info[2 + 1 + 6 + 16 + 1];
+	size_t ll = strlen(label);
+	if (ll > 16) {
+		return -1;
+	}
+	info[0] = (unsigned char)(out_len >> 8);
+	info[1] = (unsigned char)out_len;
+	info[2] = (unsigned char)(6 + ll);
+	memcpy(info + 3, "tls13 ", 6);
+	memcpy(info + 9, label, ll);
+	info[9 + ll] = 0; // context: empty
+	const mbedtls_md_info_t *md = mbedtls_md_info_from_type(sha384 ? MBEDTLS_MD_SHA384 : MBEDTLS_MD_SHA256);
+	if (md == NULL) {
+		return -1;
+	}
+	return mbedtls_hkdf_expand(md, secret, secret_len, info, 10 + ll, out, out_len);
 }
 
 // FileId tells a replaced file from the one already loaded: a rename onto the path

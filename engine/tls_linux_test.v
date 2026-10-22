@@ -511,3 +511,42 @@ fn test_websocket_over_tls() {
 	assert buf[..4] == [u8(0x88), 2, 0x03, 0xe8]
 	s.close() or {}
 }
+
+// openssl_session pipes script into `openssl s_client` against addr and returns what
+// it printed. The script is shell: printf requests, sleep, and s_client's K / k lines.
+fn openssl_session(addr string, args string, script string) string {
+	r := os.execute('(${script}) | timeout 10 openssl s_client -connect ${addr} ${args} 2>&1')
+	return r.output.replace('\r', '')
+}
+
+const echo_req = 'printf "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\n\r\nhello\n"'
+
+// echo_last asks the server to close after answering, so s_client ends there
+const echo_last = 'printf "POST /echo HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 6\r\n\r\nhello\n"'
+
+// TLS 1.3 with AES-GCM moves to tls13 after the handshake. mbedtls answers a client's
+// KeyUpdate with an error, so this passing is also what shows the move happened.
+fn test_tls13_records_with_openssl() {
+	if !have_openssl() || !aesgcm_supported {
+		eprintln('skipped: needs openssl and an AES-NI/PCLMUL build')
+		return
+	}
+	addrs, mut stop := start_tls([tls_opts(tls_testdata, 'a')], Options{})
+	defer {
+		stop.request()
+	}
+	// K: the client updates and asks us to update as well; k: it only updates
+	for cmd in ['K', 'k'] {
+		out := openssl_session(addrs[0], '-tls1_3',
+			'${echo_req}; sleep 0.3; echo ${cmd}; sleep 0.3; ${echo_req}; sleep 0.3; echo ${cmd}; sleep 0.3; ${echo_last}; sleep 0.5')
+		assert out.count('KEYUPDATE') == 2, out
+		assert out.count('\nhello\n') == 3, out
+	}
+	// every TLS 1.3 suite, and TLS 1.2, which stays on mbedtls
+	for args in ['-tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256',
+		'-tls1_3 -ciphersuites TLS_AES_256_GCM_SHA384',
+		'-tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256', '-tls1_2'] {
+		out := openssl_session(addrs[0], '${args} -quiet -ign_eof', '${echo_last}; sleep 0.4')
+		assert out.ends_with('hello\n'), '${args}: ${out}'
+	}
+}

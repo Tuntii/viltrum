@@ -11,7 +11,11 @@
 You write routes. Viltrum owns the wire: its own HTTP/1.1 engine, one epoll worker per CPU, pipelining, and no
 allocation per request inside the framework. No third-party stack under the hood.
 
-Built for [V](https://vlang.io). Linux. HTTPS in-process on the same workers, or behind a proxy.
+Built for [V](https://vlang.io). HTTPS in-process on the same workers, or behind a proxy.
+
+**Platforms.** Serving is Linux only: the engine is epoll, and off Linux `listen` and `serve` return an
+error. CI runs the unit tests on Linux, macOS and Windows and builds the examples on all three, so handlers
+can be written and tested (`app.handle_raw`) on any of them.
 
 ```bash
 git clone https://github.com/Tuntii/viltrum.git && cd viltrum
@@ -64,8 +68,8 @@ buffer and are valid until the handler returns; `.clone()` what you keep.
 
 > **`recover` and panics.** V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).
 
-Not on the 1.x core yet (they return later): WebSocket and upgrade, WSS, static files, forms and uploads, the
-HTTP client, non-Linux platforms.
+Not on the 1.x core yet (they return later): static files, forms and uploads, the HTTP client, serving
+off Linux.
 
 ---
 

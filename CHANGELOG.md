@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/Tuntii/viltrum/compare/v1.3.0...v1.3.1) (2026-10-22)
+
+### Performance Improvements
+
+* **http1:** faster json-comp path: Huffman, CRC, match search, JSON ([ae25eb2](https://github.com/Tuntii/viltrum/commit/ae25eb2d5aa80cc875ecdcf38b8c33253e5080a7))
+* **http1:** one pass for framing fields, one copy pass for responses ([050d202](https://github.com/Tuntii/viltrum/commit/050d20209c2e4fb689f6dde6ffe726e1411c7c90))
+
 ## [1.3.0](https://github.com/Tuntii/viltrum/compare/v1.2.2...v1.3.0) (2026-10-22)
 
 ### Features

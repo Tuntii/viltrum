@@ -79,8 +79,10 @@ pub fn frame(buf []u8, mut f Frame, lim Limits) !int {
 		}
 		f.head_end = end
 		head := view(buf, 0, end)
-		te := header_value(head, 'transfer-encoding')
-		cl := header_value(head, 'content-length')
+		mut te := Span{}
+		mut cl := Span{}
+		mut ex := Span{}
+		framing_fields(head, mut te, mut cl, mut ex)
 		if te.found() && cl.found() {
 			return refuse(400, 'transfer-encoding and content-length conflict')
 		}
@@ -99,7 +101,6 @@ pub fn frame(buf []u8, mut f Frame, lim Limits) !int {
 			}
 			f.content_length = n
 		}
-		ex := header_value(head, 'expect')
 		f.expect_continue = ex.found() && eq_ci(str_view(head, ex.start, ex.len), '100-continue')
 	}
 	if f.chunked {
@@ -116,11 +117,19 @@ pub fn frame(buf []u8, mut f Frame, lim Limits) !int {
 }
 
 // find_head_end returns the index just past the first CRLFCRLF at or after from, or -1.
+@[direct_array_access]
 fn find_head_end(buf []u8, from int) int {
-	mut i := from
-	for i + 3 < buf.len {
-		if buf[i] == `\r` && buf[i + 1] == `\n` && buf[i + 2] == `\r` && buf[i + 3] == `\n` {
-			return i + 4
+	// jump from LF to LF with memchr: the terminator ends at an LF with CR LF CR
+	// before it, at index from + 3 or later
+	mut i := from + 3
+	for i < buf.len {
+		p := unsafe { C.memchr(&u8(buf.data) + i, `\n`, usize(buf.len - i)) }
+		if isnil(p) {
+			return -1
+		}
+		i = int(unsafe { &u8(p) - &u8(buf.data) })
+		if buf[i - 1] == `\r` && buf[i - 2] == `\n` && buf[i - 3] == `\r` {
+			return i + 1
 		}
 		i++
 	}
@@ -130,6 +139,7 @@ fn find_head_end(buf []u8, from int) int {
 // header_value finds the first field named name_lower (ASCII lowercase) in a
 // request head and returns its value with OWS trimmed. The request line is skipped,
 // lines are split on CRLF only (the parser rejects bare CR/LF later).
+@[direct_array_access]
 pub fn header_value(head []u8, name_lower string) Span {
 	mut i := 0
 	for i + 1 < head.len && !(head[i] == `\r` && head[i + 1] == `\n`) {
@@ -172,7 +182,77 @@ pub fn header_value(head []u8, name_lower string) Span {
 	return Span{}
 }
 
+// framing_fields finds the first Transfer-Encoding, Content-Length and Expect fields
+// of a head in one pass, by header_value's rules: lines split on CRLF, the name
+// directly before the colon, the value with OWS trimmed. Only lines starting with
+// t, c or e are compared.
+@[direct_array_access]
+fn framing_fields(head []u8, mut te Span, mut cl Span, mut ex Span) {
+	mut i := crlf_at(head, 0) + 2
+	for i + 1 < head.len {
+		j := crlf_at(head, i)
+		if j == i {
+			break
+		}
+		c := head[i] | 0x20
+		if c == `t` {
+			field_at(head, i, j, 'transfer-encoding', mut te)
+		} else if c == `c` {
+			field_at(head, i, j, 'content-length', mut cl)
+		} else if c == `e` {
+			field_at(head, i, j, 'expect', mut ex)
+		}
+		i = j + 2
+	}
+}
+
+// crlf_at is the index of the CR of the first CRLF at or after i, or head.len - 1
+// when there is none (header_value's scan, with memchr between LFs).
+@[direct_array_access]
+fn crlf_at(head []u8, i int) int {
+	mut k := i + 1
+	for k < head.len {
+		p := unsafe { C.memchr(&u8(head.data) + k, `\n`, usize(head.len - k)) }
+		if isnil(p) {
+			break
+		}
+		k = int(unsafe { &u8(p) - &u8(head.data) })
+		if head[k - 1] == `\r` {
+			return k - 1
+		}
+		k++
+	}
+	return if head.len > i { head.len - 1 } else { i }
+}
+
+// field_at sets s to the value of the line head[i..j] when it is the first field named
+// name_lower.
+@[direct_array_access]
+fn field_at(head []u8, i int, j int, name_lower string, mut s Span) {
+	if s.found() || j - i <= name_lower.len || head[i + name_lower.len] != `:` {
+		return
+	}
+	for k in 0 .. name_lower.len {
+		if lower(head[i + k]) != name_lower[k] {
+			return
+		}
+	}
+	mut vs := i + name_lower.len + 1
+	mut ve := j
+	for vs < ve && (head[vs] == ` ` || head[vs] == `\t`) {
+		vs++
+	}
+	for ve > vs && (head[ve - 1] == ` ` || head[ve - 1] == `\t`) {
+		ve--
+	}
+	s = Span{
+		start: vs
+		len:   ve - vs
+	}
+}
+
 // parse_content_length accepts 1*DIGIT only (RFC 9112 section 6.3): no sign, list or overflow.
+@[direct_array_access]
 fn parse_content_length(b []u8) ?int {
 	if b.len == 0 || b.len > 10 {
 		return none

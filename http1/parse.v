@@ -58,6 +58,7 @@ pub mut:
 
 // parse_head validates and indexes buf[0..head_end] (head_end is just past CRLFCRLF,
 // as found by frame). Errors are HttpError.
+@[direct_array_access]
 pub fn parse_head(buf []u8, head_end int, mut h Head) ! {
 	h.nfields = 0
 	h.host_seen = false
@@ -68,12 +69,19 @@ pub fn parse_head(buf []u8, head_end int, mut h Head) ! {
 	parse_request_line(buf, le, mut h)!
 	mut p := le + 2
 	for p < head_end - 2 {
-		e := line_end(buf, p, head_end)!
+		e := line_end_at(buf, p, head_end)
+		if e < 0 {
+			return line_error(e)
+		}
 		if buf[p] == ` ` || buf[p] == `\t` {
 			return refuse(400, 'obs-fold')
 		}
+		// one pass finds the colon and checks the name; a missing colon is reported
+		// before a bad name, as before
 		mut colon := p
+		mut bad_name := false
 		for colon < e && buf[colon] != `:` {
+			bad_name = bad_name || !tchars[buf[colon]]
 			colon++
 		}
 		if colon == e {
@@ -82,10 +90,8 @@ pub fn parse_head(buf []u8, head_end int, mut h Head) ! {
 		if colon == p {
 			return refuse(400, 'empty header name')
 		}
-		for k in p .. colon {
-			if !is_tchar(buf[k]) {
-				return refuse(400, 'bad header name')
-			}
+		if bad_name {
+			return refuse(400, 'bad header name')
 		}
 		mut vs := colon + 1
 		mut ve := e
@@ -113,21 +119,23 @@ pub fn parse_head(buf []u8, head_end int, mut h Head) ! {
 			len:   ve - vs
 		}
 		nm := str_view(buf, name.start, name.len)
-		if eq_ci(nm, 'content-length') || eq_ci(nm, 'host') {
+		// only four names matter here, and their lengths tell them apart
+		is_host := nm.len == 4 && eq_ci(nm, 'host')
+		if is_host || (nm.len == 14 && eq_ci(nm, 'content-length')) {
 			for k in 0 .. h.nfields {
 				if eq_ci_span(buf, h.fields[k].name, nm) {
 					return refuse(400, 'duplicate framing header')
 				}
 			}
-			if eq_ci(nm, 'host') {
+			if is_host {
 				h.host_seen = true
 			}
-		} else if eq_ci(nm, 'transfer-encoding') {
+		} else if nm.len == 17 && eq_ci(nm, 'transfer-encoding') {
 			if h.chunked {
 				return refuse(400, 'duplicate transfer-encoding')
 			}
 			h.chunked = true
-		} else if eq_ci(nm, 'connection') {
+		} else if nm.len == 10 && eq_ci(nm, 'connection') {
 			cf := scan_connection(buf, value)
 			conn_close = conn_close || cf & 1 != 0
 			conn_keep = conn_keep || cf & 2 != 0
@@ -145,6 +153,7 @@ pub fn parse_head(buf []u8, head_end int, mut h Head) ! {
 	h.keep_alive = if h.minor == 1 { !conn_close } else { conn_keep && !conn_close }
 }
 
+@[direct_array_access]
 fn parse_request_line(buf []u8, le int, mut h Head) ! {
 	mut sp1 := -1
 	mut sp2 := -1
@@ -238,8 +247,38 @@ fn parse_request_line(buf []u8, le int, mut h Head) ! {
 	}
 }
 
+// line_end_at is line_end without the error value, for the per-field loop: the index
+// of the CR, or -1 bare LF, -2 bare CR, -3 no CRLF before limit (see line_error).
+@[direct_array_access]
+fn line_end_at(buf []u8, from int, limit int) int {
+	mut i := from
+	for i < limit {
+		c := buf[i]
+		if c == `\n` {
+			return -1
+		}
+		if c == `\r` {
+			if i + 1 >= limit || buf[i + 1] != `\n` {
+				return -2
+			}
+			return i
+		}
+		i++
+	}
+	return -3
+}
+
+fn line_error(code int) IError {
+	return match code {
+		-1 { refuse(400, 'bare lf') }
+		-2 { refuse(400, 'bare cr') }
+		else { refuse(400, 'unterminated line') }
+	}
+}
+
 // line_end returns the index of the CR ending the line that starts at from. A bare
 // CR or LF, or no CRLF before limit, is an error.
+@[direct_array_access]
 fn line_end(buf []u8, from int, limit int) !int {
 	mut i := from
 	for i < limit {
@@ -259,6 +298,7 @@ fn line_end(buf []u8, from int, limit int) !int {
 }
 
 // scan_connection reads the comma-separated tokens of a Connection value.
+@[direct_array_access]
 fn scan_connection(buf []u8, v Span) int {
 	mut flags := 0
 	end := v.start + v.len
@@ -286,6 +326,7 @@ fn scan_connection(buf []u8, v Span) int {
 }
 
 // eq_ci_span compares the bytes of a with b, ignoring ASCII case on both sides.
+@[direct_array_access]
 fn eq_ci_span(buf []u8, a Span, b string) bool {
 	if a.len != b.len {
 		return false
@@ -298,6 +339,7 @@ fn eq_ci_span(buf []u8, a Span, b string) bool {
 	return true
 }
 
+@[direct_array_access]
 fn has_prefix_ci(s string, lower_lit string) bool {
 	if s.len < lower_lit.len {
 		return false

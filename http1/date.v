@@ -16,14 +16,20 @@ mut:
 
 // write appends `Date: <IMF-fixdate>\r\n`.
 pub fn (mut d DateCache) write(mut out []u8) {
+	append_str(mut out, 'Date: ')
+	unsafe { out.push_many(d.text_now(), 29) }
+	append_str(mut out, crlf)
+}
+
+// text_now is the IMF-fixdate of the current second (29 bytes), formatted again only
+// when the second changes.
+fn (mut d DateCache) text_now() &u8 {
 	now := C.time(unsafe { nil })
 	if now != d.sec {
 		d.sec = now
 		d.format(now)
 	}
-	append_str(mut out, 'Date: ')
-	unsafe { out.push_many(&d.text[0], 29) }
-	append_str(mut out, crlf)
+	return &d.text[0]
 }
 
 // format writes "Sun, 06 Nov 1994 08:49:37 GMT" into text.

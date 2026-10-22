@@ -47,3 +47,48 @@ jobs:
 
       - name: Parser fuzz (500k mutations)
         run: if [ -f http1/fuzz_test.v ]; then VILTRUM_FUZZ_ITERS=500000 v test http1/fuzz_test.v; fi
+
+  # Serving is Linux only (epoll); elsewhere engine.serve returns an error. This job
+  # checks that the rest builds and passes its unit tests there.
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            v_zip: v_macos_arm64.zip
+          - os: windows-latest
+            v_zip: v_windows.zip
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: viltrum
+    env:
+      VMODULES: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: viltrum
+
+      - name: Install V
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL -o v.zip https://github.com/vlang/v/releases/download/0.5.2/${{ matrix.v_zip }}
+          unzip -q v.zip
+          echo "$PWD/v" >> "$GITHUB_PATH"
+          ./v/v version
+
+      - name: Unit tests
+        run: |
+          v test http1/
+          v test jsonenc/
+          v test router/
+          v test engine/
+          v test tests/
+
+      - name: Build examples
+        run: |
+          for e in hello rest features https ws_chat; do
+            v -o "$RUNNER_TEMP/viltrum-$e" examples/$e
+          done

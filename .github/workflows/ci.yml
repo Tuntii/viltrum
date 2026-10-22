@@ -6,48 +6,6 @@ on:
   pull_request:
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install V
-        run: |
-          curl -fsSL -o /tmp/v_linux.zip https://github.com/vlang/v/releases/download/0.5.2/v_linux.zip
-          unzip -q /tmp/v_linux.zip -d /tmp
-          echo /tmp/v >> "$GITHUB_PATH"
-          /tmp/v/v version
-          mkdir -p ~/.vmodules
-          ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
-
-      - name: Verify V formatting
-        run: v fmt -verify .
-
-      - name: Unit tests
-        run: |
-          v test http1/
-          v test jsonenc/
-          v test router/
-          v test engine/
-          v test tests/
-
-      - name: Hot-path lint
-        run: bash scripts/hotpath_lint.sh
-
-      - name: No GC scope pins on the hot path
-        run: bash scripts/gcpin_check.sh
-
-      - name: Build examples
-        run: |
-          v -o /tmp/viltrum-hello examples/hello
-          v -o /tmp/viltrum-rest examples/rest
-          v -o /tmp/viltrum-features examples/features
-          v -o /tmp/viltrum-https examples/https
-          v -o /tmp/viltrum-ws-chat examples/ws_chat
-
-      - name: Parser fuzz (500k mutations)
-        run: if [ -f http1/fuzz_test.v ]; then VILTRUM_FUZZ_ITERS=500000 v test http1/fuzz_test.v; fi
-
   # Serving is Linux only (epoll); elsewhere engine.serve returns an error. This job
   # checks that the rest builds and passes its unit tests there.
   portable:
@@ -92,3 +50,45 @@ jobs:
           for e in hello rest features https ws_chat; do
             v -o "$RUNNER_TEMP/viltrum-$e" examples/$e
           done
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install V
+        run: |
+          curl -fsSL -o /tmp/v_linux.zip https://github.com/vlang/v/releases/download/0.5.2/v_linux.zip
+          unzip -q /tmp/v_linux.zip -d /tmp
+          echo /tmp/v >> "$GITHUB_PATH"
+          /tmp/v/v version
+          mkdir -p ~/.vmodules
+          ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
+
+      - name: Verify V formatting
+        run: v fmt -verify .
+
+      - name: Unit tests
+        run: |
+          v test http1/
+          v test jsonenc/
+          v test router/
+          v test engine/
+          v test tests/
+
+      - name: Hot-path lint
+        run: bash scripts/hotpath_lint.sh
+
+      - name: No GC scope pins on the hot path
+        run: bash scripts/gcpin_check.sh
+
+      - name: Build examples
+        run: |
+          v -o /tmp/viltrum-hello examples/hello
+          v -o /tmp/viltrum-rest examples/rest
+          v -o /tmp/viltrum-features examples/features
+          v -o /tmp/viltrum-https examples/https
+          v -o /tmp/viltrum-ws-chat examples/ws_chat
+
+      - name: Parser fuzz (500k mutations)
+        run: if [ -f http1/fuzz_test.v ]; then VILTRUM_FUZZ_ITERS=500000 v test http1/fuzz_test.v; fi

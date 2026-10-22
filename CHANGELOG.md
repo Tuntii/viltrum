@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.2](https://github.com/Tuntii/viltrum/compare/v1.3.1...v1.3.2) (2026-10-22)
+
+### Performance Improvements
+
+* **engine:** TLS 1.3 AES-GCM records on AES-NI and PCLMUL ([d46b538](https://github.com/Tuntii/viltrum/commit/d46b538ff7821aac142e31f49d034bfd6b8e3679))
+
 ## [1.3.1](https://github.com/Tuntii/viltrum/compare/v1.3.0...v1.3.1) (2026-10-22)
 
 ### Performance Improvements

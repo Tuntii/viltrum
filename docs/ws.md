@@ -1,152 +1,104 @@
-> **Not in 1.0.** This page describes v0.13. The feature returns on the 1.0 core later.
+# WebSocket (`ws://`, `wss://`)
 
-# WebSockets (`ws://`)
-
-Viltrum ships a **first-party** RFC 6455 server on the v0.4 Conn / `app.upgrade` path. Not a wrapper around another stack.
-
-**Status:** cleartext `ws://` and, with `app.listen_tls`, `wss://` (same WS code over TLS; see [tls.md](./tls.md)).
+Viltrum speaks WebSocket (RFC 6455) on the same epoll workers as HTTP. After the `101`, the connection reads
+frames instead of requests; your callbacks run on the worker that owns the connection, and a message that
+arrived in one frame reaches you as a view into the read buffer, unmasked in place. Echoing a message
+allocates nothing.
 
 ## Quick start
 
 ```v
-import viltrum { new, WsSocket }
-
-fn main() {
-	mut app := new()
-	app.ws('/ws', fn (mut s WsSocket) {
-		for {
-			msg := s.read_message() or { break }
-			if msg.is_text() {
-				s.write_text(msg.text()) or { break }
-			}
+mut app := viltrum.new()
+app.ws('/ws', viltrum.WsHandler{
+	on_message: fn (mut s viltrum.Ws, m viltrum.WsMessage) {
+		if m.binary {
+			s.send_binary(m.data)
+		} else {
+			s.send_text(m.text())
 		}
-		s.close_quiet()
-	})
-	app.listen('127.0.0.1:8084') or { panic(err) }
-}
+	}
+})
+app.listen('127.0.0.1:8084')!
 ```
-
-Demos: `examples/ws_echo` (port **8084**, cleartext) and `examples/wss_echo` (port **8444**, TLS).
 
 ```bash
-v run examples/ws_echo
-websocat ws://127.0.0.1:8084/ws
-
-bash scripts/dev-cert.sh
-v run examples/wss_echo
-websocat -k wss://127.0.0.1:8444/ws
+v run examples/ws_chat
+websocat 'ws://127.0.0.1:8084/chat/lobby?name=ada'   # and a second one as someone else
 ```
+
+Over TLS it is the same route: serve it from `app.listen_tls` or a TLS `Listener` and clients connect with
+`wss://` ([tls.md](./tls.md)).
 
 ## API
 
 | Symbol | Role |
 |--------|------|
-| `app.ws(pattern, handler)` | GET upgrade + handshake + `WsHandler` |
-| `app.ws_opts(pattern, opts, handler)` | Same with `WsOptions` |
-| `WsHandler` | `fn (mut s WsSocket)` |
-| `WsSocket.read_message()` | Next text/binary message (handles ping/pong) |
-| `WsSocket.write_text` / `write_binary` | Unfragmented data frames |
-| `WsSocket.ping` / `pong` / `close` | Control |
-| `WsOptions` | Limits, auto-pong, subprotocol, origin check |
+| `app.ws(pattern, WsHandler, mws...)` | WebSocket on `GET pattern`; also on groups |
+| `on_open fn (mut s Ws, mut c Ctx)` | after the `101`; `c` is the upgrade request (params, headers, query) |
+| `on_message fn (mut s Ws, m WsMessage)` | each whole message: fragments joined, text checked to be UTF-8 |
+| `on_close fn (mut s Ws, code int)` | once, however the connection ends |
+| `s.send_text(t)`, `s.send_binary(b)` | one unfragmented message |
+| `s.ping(payload)` | a Ping (the client's Pong is absorbed) |
+| `s.close(code, reason)` | start the closing handshake |
+| `s.data` | `voidptr` for the connection's own state, set in `on_open` |
+| `s.subscribe(topic)`, `s.unsubscribe(topic)` | join or leave a topic; a closing connection leaves its topics |
+| `s.publish(topic, t)`, `s.publish_binary` | to every subscriber of topic, on every worker, except this connection |
+| `app.publish(topic, t)`, `app.publish_binary` | the same from any thread, the publisher not excluded |
+| `s.id()`, `app.ws_send(id, t)`, `app.ws_send_binary` | name a connection, send to it from any thread |
+| `s.protocol()`, `s.worker_id()` | agreed subprotocol, serving worker |
+| `m.binary`, `m.data`, `m.text()` | the message; `data` and `text()` are views |
 
-Built on **`app.upgrade`**: middleware does **not** run for WS routes (same as other upgrades). See [upgrade.md](./upgrade.md).
+`WsHandler` also takes `max_message` (default 1 MiB), `idle_timeout` (default 120 s, 0 for none), `protocols`
+and `check_origin`.
 
-## Options
+## How it behaves
 
-```v
-import viltrum { WsOptions }
+- **Callbacks run on the connection's worker, one at a time.** Per-connection state in `s.data` needs no
+  lock. Like HTTP handlers, callbacks must not block the worker.
+- **Views are valid until the callback returns.** `m.data`, `m.text()` and the `Ctx` in `on_open` point into
+  connection buffers; `.clone()` what you keep.
+- **Sends are buffered and flushed by the event loop**, with the same backpressure as pipelined HTTP: past
+  `Options.max_pending` of unsent output, the worker stops reading that connection's frames until the
+  client catches up.
+- **Middleware runs on the upgrade request.** Global middleware and the `mws` passed to `ws` run before the
+  handshake, so an auth check can answer 401 and the connection never upgrades.
+- **Topics span the workers.** Each worker keeps its own subscribers per topic; a publish copies the message
+  once and queues it to every worker (an eventfd wakes each), which writes it to its subscribers. A publish
+  from a callback goes out after the callback returns; messages from one publisher arrive in the order
+  sent. `app.publish` and `app.ws_send` before `listen` starts, or after it returns, are dropped, as are
+  sends to an id whose connection has closed.
+- **Slow subscribers are dropped.** A client that lets more than four times `max_pending` of output pile up
+  is closed with 1008 rather than buffering without bound.
+- **Ping is answered with Pong automatically.** Unsolicited Pongs are ignored.
+- **Closing.** A client's Close is answered with the same code and the connection closes once that is sent.
+  `s.close` sends ours; messages that arrive after it are dropped and the connection closes when the
+  client answers, or after the read timeout. `on_close` reports the code: the Close's, 1005 for a Close
+  without one, 1006 when the connection ended without a Close (reset, timeout, server stop).
 
-app.ws_opts('/ws', WsOptions{
-	max_message_bytes: 1 << 20 // default 1 MiB
-	max_frame_bytes:   1 << 20
-	auto_pong:         true    // default: reply to ping
-	subprotocol:       'chat'  // echoed only if client offered it
-	// validate_utf8:  true   // opt-in: invalid text → close 1007
-	// check_origin: fn (origin string) bool { return origin == 'https://app.example' }
-}, handler)
-```
+## Handshake
 
-- **Limits are always on** — oversized frames/messages get close **1009** (or fail the read).
-- **Fragmented data frames are rejected** (close **1002**) in v0.5; single-frame messages only.
-- **Client frames must be masked**; unmasked → protocol error.
-- **Origin check is off by default** (tools / non-browser). Set `check_origin` for browsers.
-- **UTF-8 validation is off by default** (compat). Set `validate_utf8: true` for strict RFC 6455 text (close **1007** on invalid sequences). Binary frames are never checked.
+| Request | Answer |
+|---------|--------|
+| no `Upgrade: websocket` (a plain GET) | 426, `Upgrade: websocket` |
+| `Sec-WebSocket-Version` other than 13 | 426, `Sec-WebSocket-Version: 13` |
+| HTTP/1.0, `Connection` without `upgrade` or with `close`, a body, a malformed `Sec-WebSocket-Key` | 400 |
+| `Origin` rejected by `check_origin` | 403 |
+| otherwise | 101 with `Sec-WebSocket-Accept`, and `Sec-WebSocket-Protocol` when one of `protocols` was offered |
 
-## Handshake (what we require)
+Browsers send `Origin`; set `check_origin` on browser-facing endpoints so other sites cannot open sockets
+with your users' cookies. It is off by default for non-browser clients.
 
-| Check | Result on fail |
-|-------|----------------|
-| Method `GET` | 405 |
-| `Upgrade: websocket` | 400 |
-| `Connection` contains `Upgrade` | 400 |
-| `Sec-WebSocket-Version: 13` | 426 |
-| `Sec-WebSocket-Key` present | 400 |
-| Optional `check_origin` | 403 |
+## Limits and errors
 
-Success: **101** + `Upgrade: websocket` + `Sec-WebSocket-Accept` (SHA-1 + GUID, RFC golden vector tested).
+A frame that breaks the protocol closes the connection with a Close carrying the code:
 
-## Mental model
+| Code | When |
+|------|------|
+| 1002 | unmasked client frame, RSV bits (no extension is negotiated), unknown opcode, control frame fragmented or over 125 bytes, continuation without a start or a new message inside a fragmented one, bad Close code |
+| 1007 | text message or Close reason that is not UTF-8 |
+| 1009 | message over `max_message`, judged from the frame header before the payload is read |
 
-```
-HTTP accept → parse request → match app.ws route
-  → validate handshake → write 101
-  → WsSocket owns Conn (pushback leftover included)
-  → read_message / write_* until close
-```
+## Not supported (yet)
 
-Same Conn abstraction as custom `app.upgrade` protocols. Future TLS wraps Conn; WS framing does not fork.
-
-## Out of scope (v0.5)
-
-- permessage-deflate / extensions  
-- rooms, Socket.IO, pub/sub framework  
-- client-mode WebSocket  
-- `wss://` (→ v0.6)  
-- HTTP/2 WebSockets  
-
-## Proxy notes
-
-Reverse proxy must forward `Upgrade` and `Connection` hop-by-hop headers and long-lived connections. See [deploy.md](./deploy.md). Docs index: [README.md](./README.md).
-
-## Production readiness (honest)
-
-**Good for:** tools, dashboards, internal services, small multiplayer/demo servers, cleartext behind Caddy/nginx TLS.
-
-**Ship bar met for v0.5:** own framing, limits always on, mask/version checks, close + auto-pong, concurrent echo stress green, message size caps.
-
-| Do | Don't assume |
-|----|----------------|
-| Put TLS at the reverse proxy until v0.6 | In-process `wss://` |
-| Set `ServerOptions` timeouts for long quiet sessions (see below) | Silent “forever idle” without pings or raised deadlines |
-| Set `check_origin` for browser clients | Origin protection by default |
-| Keep messages under `max_message_bytes` (default 1 MiB) | Unbounded frames |
-| Use single-frame messages | Fragmented frames (rejected with close 1002) |
-| Opt in `validate_utf8: true` when peers must be strict | UTF-8 validation by default |
-
-### Timeouts after `app.ws` / `app.upgrade`
-
-After a successful hijack, the engine applies **`max(read_timeout, idle_timeout)`** as the Conn read deadline (write still uses `write_timeout`). Defaults: `read_timeout` 30s, `idle_timeout` 60s → upgraded sockets wait **60s** of silence before the next read fails.
-
-| Phase | What applies |
-|-------|----------------|
-| HTTP request headers/body | `read_timeout` / `read_header_timeout` |
-| HTTP keep-alive wait for next request | `idle_timeout` |
-| After `app.ws` / `app.upgrade` | read = **max(read_timeout, idle_timeout)**; write = `write_timeout` |
-
-Handlers may call `c.set_read_timeout(...)` (or keep traffic with pings) for longer sessions. Raising both timeouts is the production knob; there is no silent infinite hang by default. Details: [connection.md](./connection.md), [upgrade.md](./upgrade.md).
-
-**Stress / soak:** `bash benches/soak_ws.sh` (CI-friendly defaults; set `SOAK_SECONDS` for longer local runs).
-
-**Known limitations (not bugs of the happy path, but not full RFC completeness):**
-
-- UTF-8 on text is **opt-in** (`validate_utf8`); default still accepts invalid text bytes for compat
-- No permessage-deflate / extensions
-- Close path is best-effort (send close + TCP close; no long half-open drain)
-- One OS thread per connection (same model as HTTP) — fine for thousands of quiet sockets, not a free ticket to millions without tuning
-- Treat as a solid **0.5** server, not a mature edge platform; use soak harness before large deploys
-
-## Performance / DX
-
-Framing is first-party and allocation-conscious (tight encode/decode). Handlers stay ergonomic: no unsafe buffers required.
-
-Laptop echo numbers (v0.5.x `-prod`, **V** load client): single-conn ~**10k msg/s** (64 B); 32 concurrent ~**37k msg/s** aggregate. Optional Python client is slower multi-conn. See [benches/RESULTS.md](../benches/RESULTS.md) (`bash benches/run_ws.sh`).
+- `permessage-deflate` and other extensions (not negotiated; clients fall back to plain frames).
+- WebSocket over HTTP/2 (RFC 8441): viltrum speaks HTTP/1.1 only.

@@ -92,13 +92,23 @@ pub fn serve_listeners(listeners []Listener, r &router.Router, opts Options) ! {
 		scheme := if _ := ln.tls { 'https' } else { 'http' }
 		eprintln('[viltrum] listening on ${scheme}://${ln.addr} (${n} workers)')
 	}
+	mut hub := if isnil(opts.hub) { new_hub() } else { opts.hub }
+	hub.open(n) or {
+		for fds in lfds {
+			for fd in fds {
+				C.close(fd)
+			}
+		}
+		return err
+	}
 	mut count := &ConnCount{}
 	mut threads := []thread{}
 	for i in 1 .. n {
-		threads << spawn run_worker(i, lfds[i], listeners, r, opts, mut stop, mut count)
+		threads << spawn run_worker(i, lfds[i], listeners, r, opts, hub, mut stop, mut count)
 	}
-	run_worker(0, lfds[0], listeners, r, opts, mut stop, mut count)
+	run_worker(0, lfds[0], listeners, r, opts, hub, mut stop, mut count)
 	threads.wait()
+	hub.close()
 	for fds in lfds {
 		for fd in fds {
 			C.close(fd)

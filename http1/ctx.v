@@ -40,6 +40,9 @@ pub mut:
 	defer_ms  int
 	defer_cb  Resume = unsafe { nil }
 	defer_arg u64
+	// WebSocket upgrade (ws_upgrade): the engine takes the connection over after a 101
+	ws       &WsHandler = unsafe { nil }
+	ws_proto int
 	// chain
 	chain []Handler
 	idx   int
@@ -53,9 +56,10 @@ pub mut:
 mut:
 	extra  [16]HeaderPair
 	nextra int
-	qbuf   []u8 // percent-decoded query values
-	cbuf   []u8 // decoded chunked bodies
-	jbuf   []u8 // JSON bodies and captured bodies
+	qbuf   []u8   // percent-decoded query values
+	cbuf   []u8   // decoded chunked bodies
+	jbuf   []u8   // JSON bodies and captured bodies
+	ws_acc [28]u8 // Sec-WebSocket-Accept until the 101 is written
 }
 
 pub fn Ctx.new() Ctx {
@@ -74,6 +78,7 @@ pub fn (mut c Ctx) begin(msg []u8) {
 	c.status = 0
 	c.responded = false
 	c.deferred = false
+	c.ws = unsafe { nil }
 	c.capture = false
 	c.close_after = !c.head.keep_alive
 	c.idx = 0

@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-10-21 · current release: **v1.1.0**
+Last updated: 2026-10-22 · current release: **v1.2.2**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** HTTP/1.1 engine: one `SO_REUSEPORT`
 epoll worker per CPU, pipelining, and no allocation per request inside the framework. Not a thin wrapper.
@@ -39,7 +39,7 @@ Success looks like:
 
 ---
 
-## Where 1.1 stands
+## Where 1.x stands
 
 | Area | Status |
 |------|--------|
@@ -49,7 +49,10 @@ Success looks like:
 | Compile-time JSON encoder | done (1.0) |
 | Closed connections pooled per worker | done (1.0.3) |
 | Deferred responses (`c.after`) from per-worker timers | done (1.1.0) |
-| TLS, WebSocket and upgrade, static files, forms and uploads, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
+| TLS on the same workers, certificate reload | done (1.2.0) |
+| gzip on viltrum's own DEFLATE encoder | done (1.2.2) |
+| WebSocket (`ws://`, `wss://`) | done (Phase 3) |
+| Generic upgrade, static files, forms and uploads, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
 
 Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
 [benches/httparena](benches/httparena). On the 2026-10-20 run viltrum was near the top on baseline,
@@ -61,32 +64,34 @@ limited-conn, async and the latency profiles, mid-field on json-comp, and absent
 
 **Goal:** `https://` on the same epoll workers as cleartext, with no allocation added per request.
 
-- [ ] Design doc: mbedtls in non-blocking mode inside the epoll loop (handshake state, `WANT_READ` /
+- [x] Design doc: mbedtls in non-blocking mode inside the epoll loop (handshake state, `WANT_READ` /
       `WANT_WRITE` mapped to epoll interest, partial writes, `close_notify` on close)
-- [ ] Several listeners in one process (cleartext and TLS side by side), e.g. `app.listen_tls(addr, TlsOptions)`
-- [ ] Policy: TLS 1.3 preferred, TLS 1.2 minimum, AEAD ciphers only, ALPN `http/1.1`, works without SNI
-- [ ] Certificate reload without a restart: `stat` the files at most once a second on handshake, reload on
+- [x] Several listeners in one process (cleartext and TLS side by side), e.g. `app.listen_tls(addr, TlsOptions)`
+- [x] Policy: TLS 1.3 preferred, TLS 1.2 minimum, AEAD ciphers only, ALPN `http/1.1`, works without SNI
+- [x] Certificate reload without a restart: `stat` the files at most once a second on handshake, reload on
       change, keep the last good pair when the new one fails to load (half-swapped files)
-- [ ] Check that AES-NI is used by the mbedtls build; measure TLS against cleartext
-- [ ] Tests: handshake, pipelining over TLS, partial writes, `close_notify`, reload, rejected old protocols,
+- [x] Check that AES-NI is used by the mbedtls build; measure TLS against cleartext
+- [x] Tests: handshake, pipelining over TLS, partial writes, `close_notify`, reload, rejected old protocols,
       zero-alloc gate on the TLS path
-- [ ] CI, `docs/tls.md` for 1.x, README status
-- [ ] Release (minor)
+- [x] CI, `docs/tls.md` for 1.x, README status
+- [x] Release (minor): v1.2.0
 - [ ] HttpArena: `json-tls` and `8gbit` (`POST /echo`, 10–100 KB bodies including chunked), `tls_check`
+      (entry validated, waiting for the benchmark run)
 
 ## Phase 2 — Compressed JSON throughput
 
 **Goal:** close most of the json-comp gap without leaving the framework's gzip middleware.
 
-- [ ] Profile json-comp on Linux: share of time in gzip vs the JSON encoder
-- [ ] Faster deflate path (compression level, buffer reuse, or a faster deflate implementation)
-- [ ] Re-measure, release
+- [x] Profile json-comp on Linux: share of time in gzip vs the JSON encoder
+- [x] Faster deflate path: viltrum's own DEFLATE encoder in place of miniz, and in-place JSON writes
+- [x] Re-measure, release: v1.2.1, v1.2.2 (+59% json-comp throughput on the bench box)
 
 ## Phase 3 — WebSocket on the 1.0 core
 
-- [ ] Upgrade / hijack on the epoll worker
-- [ ] RFC 6455 frames, non-blocking, with limits; WSS on top of Phase 1
-- [ ] HttpArena echo-ws profiles
+- [x] Upgrade on the epoll worker: `app.ws` with middleware on the upgrade request (generic hijack stays
+      out until something needs it)
+- [x] RFC 6455 frames, non-blocking, with limits; WSS on top of Phase 1; zero-alloc gate on the echo path
+- [ ] HttpArena echo-ws profiles (entry validated)
 
 ## Phase 4 — 1.0 hardening and the missing pieces
 

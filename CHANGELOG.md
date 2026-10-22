@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/Tuntii/viltrum/compare/v1.2.2...v1.3.0) (2026-10-22)
+
+### Features
+
+* **engine:** WebSocket on the 1.x core ([5364c0b](https://github.com/Tuntii/viltrum/commit/5364c0bd41ff002241af0240e3a3a98ced5a3260))
+* **engine:** WebSocket topics and sends from any thread ([9983543](https://github.com/Tuntii/viltrum/commit/998354333e42028dd616d8468d7a31ee4065210c))
+
 ## [1.2.2](https://github.com/Tuntii/viltrum/compare/v1.2.1...v1.2.2) (2026-10-21)
 
 ### Performance Improvements

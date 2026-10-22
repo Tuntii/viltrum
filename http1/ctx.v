@@ -455,6 +455,13 @@ fn (mut c Ctx) respond(status int, content_type string, body voidptr, n int) boo
 }
 
 fn (mut c Ctx) write_response(status int, content_type string, content_encoding string, body voidptr, n int) {
+	if !c.write_response_fast(status, content_type, content_encoding, body, n) {
+		c.write_response_slow(status, content_type, content_encoding, body, n)
+	}
+}
+
+// write_response_slow is the piece-by-piece writer, for what the fast one declines.
+fn (mut c Ctx) write_response_slow(status int, content_type string, content_encoding string, body voidptr, n int) {
 	write_status_line(mut c.out, status)
 	if content_type.len > 0 {
 		write_header(mut c.out, 'Content-Type', if valid_value(content_type) {
@@ -488,5 +495,116 @@ fn (mut c Ctx) write_response(status int, content_type string, content_encoding 
 	append_str(mut c.out, crlf)
 	if n > 0 && body_allowed(status) && c.head.method != .head {
 		unsafe { c.out.push_many(body, n) }
+	}
+}
+
+// write_response_fast writes what write_response does with one capacity check and
+// plain copies; a push per piece was about 20 calls per response. It declines (false)
+// when out lacks room or is a slice, or the status is not three digits.
+@[direct_array_access]
+fn (mut c Ctx) write_response_fast(status int, content_type string, content_encoding string, body voidptr, n int) bool {
+	if status < 100 || status > 999 || c.out.flags.has(.is_slice) {
+		return false
+	}
+	ct := if content_type.len == 0 || valid_value(content_type) {
+		content_type
+	} else {
+		'application/octet-stream'
+	}
+	rs := reason(status)
+	with_length := body_allowed(status)
+	with_body := n > 0 && with_length && c.head.method != .head
+	// every fixed piece below, counted generously
+	mut need := 160 + rs.len + ct.len + content_encoding.len + c.server.len
+	for k in 0 .. c.nextra {
+		need += c.extra[k].name.len + c.extra[k].value.len + 4
+	}
+	if with_body {
+		need += n
+	}
+	if c.out.len + need > c.out.cap {
+		return false
+	}
+	unsafe {
+		mut p := &u8(c.out.data) + c.out.len
+		p = put_str(p, 'HTTP/1.1 ')
+		p[0] = u8(`0` + status / 100)
+		p[1] = u8(`0` + status / 10 % 10)
+		p[2] = u8(`0` + status % 10)
+		p[3] = ` `
+		p = put_str(p + 4, rs)
+		p = put_str(p, crlf)
+		if ct.len > 0 {
+			p = put_str(p, 'Content-Type: ')
+			p = put_str(p, ct)
+			p = put_str(p, crlf)
+		}
+		if content_encoding.len > 0 {
+			p = put_str(p, 'Content-Encoding: ')
+			p = put_str(p, content_encoding)
+			p = put_str(p, crlf)
+		}
+		if with_length {
+			p = put_str(p, 'Content-Length: ')
+			p = put_uint(p, u64(n))
+			p = put_str(p, crlf)
+		}
+		for k in 0 .. c.nextra {
+			p = put_str(p, c.extra[k].name)
+			p = put_str(p, ': ')
+			p = put_str(p, c.extra[k].value)
+			p = put_str(p, crlf)
+		}
+		if c.send_date {
+			p = put_str(p, 'Date: ')
+			C.memcpy(p, c.date.text_now(), 29)
+			p = put_str(p + 29, crlf)
+		}
+		if c.server.len > 0 {
+			p = put_str(p, 'Server: ')
+			p = put_str(p, c.server)
+			p = put_str(p, crlf)
+		}
+		if c.close_after {
+			p = put_str(p, 'Connection: close\r\n')
+		} else if c.head.minor == 0 {
+			p = put_str(p, 'Connection: keep-alive\r\n')
+		}
+		p = put_str(p, crlf)
+		if with_body {
+			C.memcpy(p, body, n)
+			p += n
+		}
+		c.out.len = int(p - &u8(c.out.data))
+	}
+	return true
+}
+
+// put_str copies s to p and returns the byte after it.
+@[inline; unsafe]
+fn put_str(p &u8, s string) &u8 {
+	unsafe {
+		C.memcpy(p, s.str, s.len)
+		return p + s.len
+	}
+}
+
+// put_uint writes n in decimal at p and returns the byte after it.
+@[inline; unsafe]
+fn put_uint(p &u8, n u64) &u8 {
+	mut tmp := [20]u8{}
+	mut i := 20
+	mut v := n
+	for {
+		i--
+		tmp[i] = u8(`0` + v % 10)
+		v /= 10
+		if v == 0 {
+			break
+		}
+	}
+	unsafe {
+		C.memcpy(p, &tmp[i], 20 - i)
+		return p + (20 - i)
 	}
 }

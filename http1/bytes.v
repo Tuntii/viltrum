@@ -68,6 +68,7 @@ pub fn lower(c u8) u8 {
 }
 
 // eq_ci compares s with an ASCII-lowercase literal, ignoring the case of s.
+@[direct_array_access]
 pub fn eq_ci(s string, lower_lit string) bool {
 	if s.len != lower_lit.len {
 		return false
@@ -80,15 +81,24 @@ pub fn eq_ci(s string, lower_lit string) bool {
 	return true
 }
 
+// tchars marks the bytes that may appear in an RFC 9110 token.
+const tchars = make_tchars()
+
+fn make_tchars() [256]bool {
+	mut t := [256]bool{}
+	for c in 0 .. 256 {
+		b := u8(c)
+		t[c] = (b >= `a` && b <= `z`) || (b >= `A` && b <= `Z`)
+			|| (b >= `0` && b <= `9`)
+			|| b in [`!`, `#`, `$`, `%`, `&`, `'`, `*`, `+`, `-`, `.`, `^`, `_`, `\``, `|`, `~`]
+	}
+	return t
+}
+
 // is_tchar reports whether c may appear in an RFC 9110 token.
+@[inline]
 pub fn is_tchar(c u8) bool {
-	if (c >= `a` && c <= `z`) || (c >= `A` && c <= `Z`) || (c >= `0` && c <= `9`) {
-		return true
-	}
-	return match c {
-		`!`, `#`, `$`, `%`, `&`, `'`, `*`, `+`, `-`, `.`, `^`, `_`, `\``, `|`, `~` { true }
-		else { false }
-	}
+	return tchars[c]
 }
 
 // parse_i64 parses an optionally signed decimal, ignoring surrounding whitespace.

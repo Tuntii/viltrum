@@ -202,6 +202,10 @@ mut:
 	pair        &CertPair  = unsafe { nil } // picked for the handshake in progress
 	handshaking bool
 	wlen        int // length of a record mbedtls holds half written; the retry must pass it again
+	fd          &int = unsafe { nil } // the Conn's fd
+	secrets     C.viltrum_tls_secrets // TLS 1.3 traffic secrets, as the handshake exports them
+	fast        bool                  // records are done by tls13 (TLS 1.3 with AES-GCM), not mbedtls
+	r13         Tls13
 }
 
 // tls_pick_cert is mbedtls' certificate callback, run on every handshake: the
@@ -249,6 +253,9 @@ fn (mut c Conn) tls_start(srv &TlsServer) bool {
 	mut t := c.tls_keep
 	C.mbedtls_ssl_set_user_data_p(&t.ssl, t)
 	C.viltrum_tls_set_bio(&t.ssl, &t.bio, &c.fd, t.inbuf.data, usize(t.inbuf.len))
+	C.viltrum_tls_set_export(&t.ssl, &t.secrets)
+	t.fd = &c.fd
+	t.fast = false
 	t.handshaking = true
 	t.wlen = 0
 	c.tls = t
@@ -261,6 +268,7 @@ fn (mut t TlsConn) handshake() int {
 	if ret == 0 {
 		t.handshaking = false
 		t.release()
+		t.go_fast()
 		return hs_done
 	}
 	if ret == C.MBEDTLS_ERR_SSL_WANT_READ {
@@ -279,6 +287,9 @@ fn (mut t TlsConn) handshake() int {
 // read is recv for a TLS connection: bytes read, 0 at the peer's close, -1 when
 // nothing is available now, -2 on error.
 fn (mut t TlsConn) read(buf &u8, n int) int {
+	if t.fast {
+		return t.read13(*t.fd, buf, n)
+	}
 	ret := int(C.mbedtls_ssl_read(&t.ssl, buf, usize(n)))
 	if ret > 0 {
 		return ret
@@ -296,6 +307,9 @@ fn (mut t TlsConn) read(buf &u8, n int) int {
 // again from the same offset once it is writable), -2 on error. One call writes at
 // most one record.
 fn (mut t TlsConn) write(buf &u8, n int) int {
+	if t.fast {
+		return t.write13(*t.fd, buf, n)
+	}
 	len := if t.wlen > 0 {
 		t.wlen
 	} else if n > tls_record_max {
@@ -317,6 +331,9 @@ fn (mut t TlsConn) write(buf &u8, n int) int {
 
 // pending reports input that epoll cannot see: in mbedtls or in the read-ahead.
 fn (t &TlsConn) pending() bool {
+	if t.fast {
+		return t.pending13()
+	}
 	return t.bio.off < t.bio.len || C.mbedtls_ssl_check_pending(&t.ssl) != 0
 }
 
@@ -324,11 +341,14 @@ fn (t &TlsConn) pending() bool {
 // call recv again.
 fn (mut t TlsConn) readable() {
 	t.bio.drained = 0
+	t.r13.drained = false
 }
 
 // close sends close_notify (one non-blocking attempt) and drops the pair reference.
 fn (mut t TlsConn) close() {
-	if !t.handshaking {
+	if t.fast {
+		t.close13(*t.fd)
+	} else if !t.handshaking {
 		C.mbedtls_ssl_close_notify(&t.ssl)
 	}
 	t.release()

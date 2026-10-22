@@ -22,13 +22,27 @@ typedef struct {
 	int kind;         // 1: regular file, 2: directory, 0: anything else
 } viltrum_file_info;
 
+static void viltrum_file_close(int fd) {
+#ifdef _WIN32
+	_close(fd);
+#else
+	close(fd);
+#endif
+}
+
 // viltrum_file_open opens path read-only and describes it in info; -1 when it cannot
-// be opened. O_NONBLOCK: opening a FIFO someone left in a served directory must not
-// block the worker.
+// be opened, and for a directory, which it reports as kind 2 without keeping it open
+// (Windows cannot open one at all). O_NONBLOCK: opening a FIFO someone left in a
+// served directory must not block the worker.
 static int viltrum_file_open(const char *path, viltrum_file_info *info) {
+	info->kind = 0;
 #ifdef _WIN32
 	int fd = _open(path, _O_RDONLY | _O_BINARY | _O_NOINHERIT);
 	if (fd < 0) {
+		struct _stat64 ds;
+		if (_stat64(path, &ds) == 0 && (ds.st_mode & _S_IFMT) == _S_IFDIR) {
+			info->kind = 2;
+		}
 		return -1;
 	}
 	struct _stat64 st;
@@ -58,6 +72,10 @@ static int viltrum_file_open(const char *path, viltrum_file_info *info) {
 #endif
 	info->size = (int64_t)st.st_size;
 	info->kind = (st.st_mode & S_IFMT) == S_IFREG ? 1 : (st.st_mode & S_IFMT) == S_IFDIR ? 2 : 0;
+	if (info->kind == 2) {
+		viltrum_file_close(fd);
+		return -1;
+	}
 	return fd;
 }
 
@@ -70,14 +88,6 @@ static int64_t viltrum_file_pread(int fd, void *buf, size_t n, int64_t off) {
 	return (int64_t)_read(fd, buf, (unsigned int)n);
 #else
 	return (int64_t)pread(fd, buf, n, (off_t)off);
-#endif
-}
-
-static void viltrum_file_close(int fd) {
-#ifdef _WIN32
-	_close(fd);
-#else
-	close(fd);
 #endif
 }
 

@@ -95,11 +95,14 @@ pub fn (mut c Ctx) static_file(dir string, rel string, o StaticOptions) {
 		c.text(404, 'not found')
 		return
 	}
+	if c.pbuf.len > 1 && c.pbuf[c.pbuf.len - 1] == `/` {
+		unsafe {
+			c.pbuf.len-- // dir itself: Windows' stat refuses a trailing slash
+		}
+	}
 	mut info := C.viltrum_file_info{}
 	mut fd := c.open_pbuf(mut info)
-	if fd >= 0 && info.kind == 2 {
-		C.viltrum_file_close(fd)
-		fd = -1
+	if info.kind == 2 {
 		path := c.path()
 		if path.len == 0 || path[path.len - 1] != `/` {
 			c.redirect_slash()

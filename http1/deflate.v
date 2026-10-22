@@ -18,13 +18,13 @@ const min_match = 4 // hashed on 4 bytes; 3-byte matches rarely pay for their co
 const max_match = 258
 const max_chunk = 65534 // positions are stored + 1 in u16, 0 meaning none
 const max_hash_bits = 15
-// Search effort. json-comp scores rps / (bytes per response)^2, and on its bodies these
-// settle there: ~2x miniz level 6's speed for 2.5% more bytes, both measured on the
-// three /json shapes of the profile.
-const search_depth = 8 // chain links tried per position
+// Search effort. json-comp scores rps / (bytes per response)^2; swept on the three
+// /json shapes of the profile with the real dataset, these maximize it. Against depth
+// 8 and inserts up to 16 they take a fifth off the time for 1.6% more bytes.
+const search_depth = 4 // chain links tried per position
 const nice_match = 32 // a match this long ends the search and the lazy step
 const good_match = 8 // past this, the lazy step searches a quarter as deep
-const max_insert = 16 // longer matches enter only their first position into the chains
+const max_insert = 4 // longer matches enter only their first position into the chains
 
 const len_base = [u16(3), 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
 	67, 83, 99, 115, 131, 163, 195, 227, 258]!
@@ -601,15 +601,7 @@ fn huff_lengths(mut keys [288]u32, freq &u32, n int, max_bits int, lens &u8) {
 		}
 		return
 	}
-	for k in 1 .. m {
-		v := keys[k]
-		mut j := k
-		for j > 0 && keys[j - 1] > v {
-			keys[j] = keys[j - 1]
-			j--
-		}
-		keys[j] = v
-	}
+	sort_keys(mut keys, m)
 	// a holds weights, then parent links, then depths (Moffat-Katajainen)
 	mut a := [288]u32{}
 	for k in 0 .. m {
@@ -692,6 +684,64 @@ fn huff_lengths(mut keys [288]u32, freq &u32, n int, max_bits int, lens &u8) {
 	}
 }
 
+// sort_keys sorts keys[..m] ascending. The keys are distinct (the symbol is in the low
+// bits), so any correct sort gives the same order. Insertion sort was a fifth of a
+// JSON page's block: a literal alphabet uses about 80 symbols. Past a few dozen keys
+// this is an LSD radix sort, a byte per pass, as many passes as the largest key needs.
+@[direct_array_access]
+fn sort_keys(mut keys [288]u32, m int) {
+	if m <= 24 {
+		for k in 1 .. m {
+			v := keys[k]
+			mut j := k
+			for j > 0 && keys[j - 1] > v {
+				keys[j] = keys[j - 1]
+				j--
+			}
+			keys[j] = v
+		}
+		return
+	}
+	mut top := u32(0)
+	for k in 0 .. m {
+		top |= keys[k]
+	}
+	mut tmp := [288]u32{}
+	mut shift := u32(0)
+	for shift < 32 && (top >> shift) != 0 {
+		mut count := [257]int{}
+		for k in 0 .. m {
+			count[((keys[k] >> shift) & 0xff) + 1]++
+		}
+		for b in 1 .. 257 {
+			count[b] += count[b - 1]
+		}
+		for k in 0 .. m {
+			b := (keys[k] >> shift) & 0xff
+			tmp[count[b]] = keys[k]
+			count[b]++
+		}
+		for k in 0 .. m {
+			keys[k] = tmp[k]
+		}
+		shift += 8
+	}
+}
+
+const rev8 = make_rev8()
+
+fn make_rev8() [256]u8 {
+	mut t := [256]u8{}
+	for v in 0 .. 256 {
+		mut r := 0
+		for b in 0 .. 8 {
+			r |= ((v >> b) & 1) << (7 - b)
+		}
+		t[v] = u8(r)
+	}
+	return t
+}
+
 // canonical assigns the canonical codes of RFC 1951 3.2.2 for lens, bit-reversed
 // for LSB-first output.
 @[direct_array_access]
@@ -712,13 +762,10 @@ fn canonical(lens &u8, n int, codes &u16) bool {
 		if l == 0 {
 			continue
 		}
-		mut c := next[l]
+		c := next[l]
 		next[l]++
-		mut r := u16(0)
-		for _ in 0 .. l {
-			r = r << 1 | c & 1
-			c >>= 1
-		}
+		// the l-bit code reversed: both bytes reversed and swapped, then shifted down
+		r := (u16(rev8[c & 0xff]) << 8 | u16(rev8[c >> 8])) >> (16 - l)
 		unsafe {
 			codes[s] = r
 		}
@@ -726,11 +773,25 @@ fn canonical(lens &u8, n int, codes &u16) bool {
 	return true
 }
 
-// crc32 is CRC-32 (IEEE) over n bytes at p, eight bytes per step.
+#include "@VMODROOT/http1/crc32_clmul.h"
+
+fn C.viltrum_have_clmul() int
+fn C.viltrum_crc32_clmul(crc u32, p &u8, n usize) u32
+
+// have_clmul is whether this CPU (and compiler) can run crc32_clmul.h.
+const have_clmul = C.viltrum_have_clmul() != 0
+
+// crc32 is CRC-32 (IEEE) over n bytes at p: by carry-less multiplication over the
+// 16-byte blocks where the CPU has it (about 0.1 ns a byte against 0.7), then eight
+// bytes per step from a table.
 @[direct_array_access]
 fn crc32(p &u8, n int) u32 {
 	mut c := u32(0xffffffff)
 	mut i := 0
+	if have_clmul && n >= 64 {
+		i = n & ~15
+		c = C.viltrum_crc32_clmul(c, p, usize(i))
+	}
 	for i + 8 <= n {
 		lo := unsafe { u32(p[i]) | u32(p[i + 1]) << 8 | u32(p[i + 2]) << 16 | u32(p[i + 3]) << 24 } ^ c
 		hi := unsafe { u32(p[i + 4]) | u32(p[i + 5]) << 8 | u32(p[i + 6]) << 16 | u32(p[i + 7]) << 24 }

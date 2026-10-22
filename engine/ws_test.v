@@ -490,12 +490,16 @@ fn deliver_all(mut w Worker, mut h Hub, mut conns []&Conn) []&Conn {
 	return touched
 }
 
-fn test_publish_subscribe_and_direct_send() {
-	mut h := new_hub()
-	h.open(1)!
-	defer {
-		h.close()
+// one_inbox_hub is a Hub for one worker without the eventfd (Hub.open is Linux only):
+// these tests drain the inbox by hand, so nothing polls it.
+fn one_inbox_hub() &Hub {
+	return &Hub{
+		boxes: [&Inbox{}]
 	}
+}
+
+fn test_publish_subscribe_and_direct_send() {
+	mut h := one_inbox_hub()
 	mut w := new_ws_worker(Options{ send_date: false })
 	w.hub = h
 	mut conns := unsafe { []&Conn{len: 16} }
@@ -543,11 +547,7 @@ fn test_publish_subscribe_and_direct_send() {
 }
 
 fn test_publish_to_a_slow_client_closes_it() {
-	mut h := new_hub()
-	h.open(1)!
-	defer {
-		h.close()
-	}
+	mut h := one_inbox_hub()
 	mut w := new_ws_worker(Options{
 		send_date:   false
 		max_pending: 100

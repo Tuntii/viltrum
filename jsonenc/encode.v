@@ -89,7 +89,7 @@ fn put_many(mut out []u8, p &u8, n int) bool {
 	}
 	if room(out, n) {
 		unsafe {
-			vmemcpy(&u8(out.data) + out.len, p, n)
+			C.memcpy(&u8(out.data) + out.len, p, n)
 			out.len += n
 		}
 	} else {
@@ -115,7 +115,7 @@ fn key(mut out []u8, name string, first bool) bool {
 				k = 1
 			}
 			p[k] = `"`
-			vmemcpy(p + k + 1, name.str, name.len)
+			C.memcpy(p + k + 1, name.str, name.len)
 			p[k + 1 + name.len] = `"`
 			p[k + 2 + name.len] = `:`
 			out.len += k + 3 + name.len
@@ -134,8 +134,30 @@ fn key(mut out []u8, name string, first bool) bool {
 const hex_digits = '0123456789abcdef'
 
 // write_string escapes per RFC 8259: quote, backslash and control bytes. UTF-8
-// passes through unchanged.
+// passes through unchanged. A string with nothing to escape, the usual case, goes
+// out quotes and all behind one capacity check.
+@[direct_array_access]
 fn write_string(mut out []u8, s string) bool {
+	if room(out, s.len + 2) {
+		mut clean := true
+		for i in 0 .. s.len {
+			c := s[i]
+			if c < 0x20 || c == `"` || c == `\\` {
+				clean = false
+				break
+			}
+		}
+		if clean {
+			unsafe {
+				mut p := &u8(out.data) + out.len
+				p[0] = `"`
+				C.memcpy(p + 1, s.str, s.len)
+				p[s.len + 1] = `"`
+				out.len += s.len + 2
+			}
+			return true
+		}
+	}
 	_ = put(mut out, `"`)
 	mut run := 0
 	for i in 0 .. s.len {
@@ -180,18 +202,38 @@ fn write_string(mut out []u8, s string) bool {
 	return true
 }
 
-fn write_u64(mut out []u8, n u64) bool {
-	if n == 0 {
-		_ = put(mut out, `0`)
-		return true
+// digit_pairs is "00".."99", for writing integers two digits per division.
+const digit_pairs = make_digit_pairs()
+
+fn make_digit_pairs() [200]u8 {
+	mut t := [200]u8{}
+	for k in 0 .. 100 {
+		t[2 * k] = u8(`0` + k / 10)
+		t[2 * k + 1] = u8(`0` + k % 10)
 	}
+	return t
+}
+
+@[direct_array_access]
+fn write_u64(mut out []u8, n u64) bool {
 	mut tmp := [20]u8{}
 	mut i := 20
 	mut v := n
-	for v > 0 {
+	for v >= 100 {
+		r := int(v % 100) * 2
+		v /= 100
+		i -= 2
+		tmp[i] = digit_pairs[r]
+		tmp[i + 1] = digit_pairs[r + 1]
+	}
+	if v >= 10 {
+		r := int(v) * 2
+		i -= 2
+		tmp[i] = digit_pairs[r]
+		tmp[i + 1] = digit_pairs[r + 1]
+	} else {
 		i--
-		tmp[i] = u8(`0` + v % 10)
-		v /= 10
+		tmp[i] = u8(`0` + v)
 	}
 	_ = put_many(mut out, &tmp[i], 20 - i)
 	return true

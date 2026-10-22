@@ -82,6 +82,9 @@ jobs:
           v test engine/
           v test tests/
 
+      - name: Encoders built with gcc (the CRC carry-less multiply path; tcc skips it)
+        run: v -cc gcc test http1/deflate_test.v jsonenc/
+
       - name: Hot-path lint
         run: bash scripts/hotpath_lint.sh
 

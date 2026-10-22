@@ -63,21 +63,21 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: viltrum
-    env:
-      VMODULES: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: viltrum
 
       - name: Install V
-        working-directory: ${{ runner.temp }}
         run: |
-          curl -fsSL -o v.zip https://github.com/vlang/v/releases/download/0.5.2/${{ matrix.v_zip }}
-          unzip -q v.zip
-          echo "$PWD/v" >> "$GITHUB_PATH"
-          ./v/v version
+          curl -fsSL -o "$RUNNER_TEMP/v.zip" https://github.com/vlang/v/releases/download/0.5.2/${{ matrix.v_zip }}
+          unzip -q "$RUNNER_TEMP/v.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/v" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/v/v" version
+          mkdir -p ~/.vmodules
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmd //c mklink //J "$(cygpath -w ~/.vmodules/viltrum)" "$(cygpath -w "$GITHUB_WORKSPACE")"
+          else
+            ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
+          fi
 
       - name: Unit tests
         run: |

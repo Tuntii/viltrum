@@ -12,6 +12,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Serving is Linux only (epoll); elsewhere engine.serve returns an error. This job
+  # checks that the rest builds and passes its unit tests there.
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            v_zip: v_macos_arm64.zip
+          - os: windows-latest
+            v_zip: v_windows.zip
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install V
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/v.zip" https://github.com/vlang/v/releases/download/0.5.2/${{ matrix.v_zip }}
+          unzip -q "$RUNNER_TEMP/v.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/v" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/v/v" version
+          mkdir -p ~/.vmodules
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmd //c mklink //J "$(cygpath -w ~/.vmodules/viltrum)" "$(cygpath -w "$GITHUB_WORKSPACE")"
+          else
+            ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
+          fi
+
+      - name: Unit tests
+        run: |
+          v test http1/
+          v test jsonenc/
+          v test router/
+          v test engine/
+          v test tests/
+
+      - name: Build examples
+        run: |
+          for e in hello rest features https ws_chat; do
+            v -o "$RUNNER_TEMP/viltrum-$e" examples/$e
+          done
+
   test:
     runs-on: ubuntu-latest
     steps:

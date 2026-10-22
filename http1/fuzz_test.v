@@ -143,3 +143,78 @@ fn mutate(b []u8) []u8 {
 
 	return out
 }
+
+// set_query makes the query string q the whole of c's request. It skips the request
+// line on purpose: decoding must hold up on any bytes, not only on bytes the parser lets in.
+fn set_query(mut c Ctx, q []u8) {
+	c.head.query = Span{
+		start: 0
+		len:   q.len
+	}
+	c.begin(q)
+}
+
+const query_seeds = ['a=1&b=2', 'name=a%20b&flag&x=1+2&k%65y=v', 'q=%C3%A9t%C3%A9', '=v&&a==b&',
+	'%41%4=%4&%zz=%%']
+
+const query_tokens = ['%', '%4', '%41', '%4g', '%G1', '%%', '%00', '%ff', '%FF', '+', '&', '=',
+	'&&', '==', 'a', 'k', '\x00', '\xff']
+
+const query_names = ['a', 'b', 'k', 'q', 'x', 'name', 'key', '', ' ', '%', 'A']
+
+// Random mutations over query strings. Invariants: no panic, and a decoded value is
+// never longer than the query it came from.
+fn test_fuzz_query_decode() {
+	iters := os.getenv_opt('VILTRUM_FUZZ_ITERS') or { '20000' }.int()
+	rand.seed([u32(0x5eed), 0x2])
+	mut c := Ctx.new()
+	for _ in 0 .. iters {
+		mut q := query_seeds[rand.intn(query_seeds.len) or { 0 }].bytes()
+		for _ in 0 .. 1 + (rand.intn(4) or { 0 }) {
+			pos := if q.len == 0 { 0 } else { rand.intn(q.len + 1) or { 0 } }
+			if rand.intn(3) or { 0 } == 0 {
+				tok := query_tokens[rand.intn(query_tokens.len) or { 0 }].bytes()
+				q.insert(pos, tok)
+			} else {
+				q = mutate(q)
+			}
+		}
+		set_query(mut c, q)
+		for name in query_names {
+			v := c.query_param(name) or { continue }
+			assert v.len <= q.len
+		}
+		c.query_int('a') or {}
+	}
+}
+
+// Any bytes, each sent as %XX with mixed-case hex (a space sometimes as '+'), come
+// back exactly.
+fn test_fuzz_query_round_trip() {
+	iters := os.getenv_opt('VILTRUM_FUZZ_ITERS') or { '20000' }.int()
+	rand.seed([u32(0x5eed), 0x3])
+	mut c := Ctx.new()
+	hex := '0123456789abcdef0123456789ABCDEF'
+	for _ in 0 .. iters {
+		raw := []u8{len: rand.intn(24) or { 0 }, init: u8(rand.intn(256) or { 0 })}
+		mut q := 'x=1&k='.bytes()
+		for b in raw {
+			if b == ` ` && rand.intn(2) or { 0 } == 0 {
+				q << `+`
+				continue
+			}
+			up := if rand.intn(2) or { 0 } == 0 { 0 } else { 16 }
+			q << `%`
+			q << hex[up + (b >> 4)]
+			q << hex[up + (b & 0xf)]
+		}
+		q << '&k=second'.bytes()
+		set_query(mut c, q)
+		got := c.query_param('k') or {
+			assert false, q.bytestr()
+			return
+		}
+		assert got.bytes() == raw, q.bytestr()
+		assert c.query_param('x')? == '1'
+	}
+}

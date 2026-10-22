@@ -89,3 +89,21 @@ fn test_symbol_tables_cover_every_length_and_distance() {
 		assert l >= base && l < base + (1 << int(len_xbits[s])), 'length ${l}'
 	}
 }
+
+// crc32 takes the carry-less multiplication path for 64 bytes and up where the CPU
+// has it; every length and alignment around the block sizes must agree with the
+// plain table method.
+fn test_crc32_matches_the_table_method_at_every_length() {
+	src := rand_bytes(4096 + 64, 256, 77)
+	for off in [0, 1, 7, 15] {
+		for n in 0 .. 1100 {
+			p := unsafe { &u8(src.data) + off }
+			mut c := u32(0xffffffff)
+			for i in 0 .. n {
+				c = crc_table[(c ^ unsafe { p[i] }) & 0xff] ^ (c >> 8)
+			}
+			assert crc32(p, n) == ~c, 'offset ${off} length ${n}'
+		}
+	}
+	println('clmul path: ${have_clmul}')
+}

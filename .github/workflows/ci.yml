@@ -5,7 +5,58 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a pull request supersedes its running checks. Pushes to main each get
+# their own group, so every merge is tested.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-{0}', github.ref) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
+  # Serving is Linux only (epoll); elsewhere engine.serve returns an error. This job
+  # checks that the rest builds and passes its unit tests there.
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            v_zip: v_macos_arm64.zip
+          - os: windows-latest
+            v_zip: v_windows.zip
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install V
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/v.zip" https://github.com/vlang/v/releases/download/0.5.2/${{ matrix.v_zip }}
+          unzip -q "$RUNNER_TEMP/v.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/v" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/v/v" version
+          mkdir -p ~/.vmodules
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmd //c mklink //J "$(cygpath -w ~/.vmodules/viltrum)" "$(cygpath -w "$GITHUB_WORKSPACE")"
+          else
+            ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
+          fi
+
+      - name: Unit tests
+        run: |
+          v test http1/
+          v test jsonenc/
+          v test router/
+          v test engine/
+          v test tests/
+
+      - name: Build examples
+        run: |
+          for e in hello rest features https ws_chat; do
+            v -o "$RUNNER_TEMP/viltrum-$e" examples/$e
+          done
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -34,6 +85,9 @@ jobs:
       - name: TLS 1.3 AES-GCM records, built with gcc (tcc builds stay on mbedtls)
         run: v -cc gcc test engine/aesgcm_linux_test.v engine/tls13_linux_test.v engine/tls_linux_test.v
 
+      - name: Encoders built with gcc (the CRC carry-less multiply path; tcc skips it)
+        run: v -cc gcc test http1/deflate_test.v jsonenc/
+
       - name: Hot-path lint
         run: bash scripts/hotpath_lint.sh
 
@@ -49,4 +103,6 @@ jobs:
           v -o /tmp/viltrum-ws-chat examples/ws_chat
 
       - name: Parser fuzz (500k mutations)
-        run: if [ -f http1/fuzz_test.v ]; then VILTRUM_FUZZ_ITERS=500000 v test http1/fuzz_test.v; fi
+        run: |
+          VILTRUM_FUZZ_ITERS=500000 v test http1/fuzz_test.v
+          VILTRUM_FUZZ_ITERS=500000 v test engine/ws_fuzz_test.v

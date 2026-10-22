@@ -41,8 +41,16 @@ fn h_ws(mut c http1.Ctx) {
 	c.ws_upgrade(ws_h)
 }
 
+const file_body = 'f'.repeat(3 * 1024 * 1024) + 'end'
+const file_path = os.join_path(os.temp_dir(), 'viltrum-tls-${os.getpid()}.bin')
+
+fn h_file(mut c http1.Ctx) {
+	c.file(file_path)
+}
+
 fn make_router() &router.Router {
 	mut r := &router.Router{}
+	r.add(.get, '/file', [http1.Handler(h_file)]) or { panic(err) }
 	r.add(.get, '/p/*rest', [http1.Handler(h_path)]) or { panic(err) }
 	r.add(.get, '/ws', [http1.Handler(h_ws)]) or { panic(err) }
 	r.add(.post, '/echo', [http1.Handler(h_echo)]) or { panic(err) }
@@ -549,4 +557,29 @@ fn test_tls13_records_with_openssl() {
 		out := openssl_session(addrs[0], '${args} -quiet -ign_eof', '${echo_last}; sleep 0.4')
 		assert out.ends_with('hello\n'), '${args}: ${out}'
 	}
+}
+
+// Over TLS a streamed file goes through wbuf one buffer at a time.
+fn test_tls_file_is_streamed_in_order() {
+	os.write_file(file_path, file_body) or { panic(err) }
+	defer {
+		os.rm(file_path) or {}
+	}
+	addrs, mut stop := start_tls([tls_opts(tls_testdata, 'a')], Options{})
+	defer {
+		stop.request()
+	}
+	mut s := tls_dial(addrs[0])
+	s.write_string('GET /file HTTP/1.1\r\nHost: x\r\n\r\nGET /file HTTP/1.1\r\nHost: x\r\nRange: bytes=1-2\r\n\r\nGET /p/3 HTTP/1.1\r\nHost: x\r\n\r\n') or {
+		panic(err)
+	}
+	time.sleep(300 * time.millisecond)
+	mut r := TlsReader{}
+	st1, b1 := r.response(mut s) or { panic(err) }
+	assert st1 == 200 && b1.len == file_body.len && b1 == file_body
+	st2, b2 := r.response(mut s) or { panic(err) }
+	assert st2 == 206 && b2 == 'ff'
+	st3, b3 := r.response(mut s) or { panic(err) }
+	assert st3 == 200 && b3 == '/p/3'
+	s.close() or {}
 }

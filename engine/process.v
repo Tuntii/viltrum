@@ -37,6 +37,10 @@ pub mut:
 	ws_code    int      // the code on_close reports
 	subs       []&Topic // topics this connection is subscribed to
 	touched    bool     // in the worker's list of connections to flush
+	// a file answer being streamed after wbuf: the open file, where it is, what is left
+	file_fd   int = -1
+	file_off  i64
+	file_left i64
 }
 
 // Pending is what survives of a request whose response was deferred (Ctx.after).
@@ -131,7 +135,8 @@ pub fn (mut w Worker) process(mut c Conn) {
 		return
 	}
 	mut off := 0
-	for !c.close_after && !c.waiting && off < c.rbuf.len && c.wbuf.len < w.opts.max_pending {
+	for !c.close_after && !c.waiting && c.file_fd < 0 && off < c.rbuf.len
+		&& c.wbuf.len < w.opts.max_pending {
 		msg := http1.view(c.rbuf, off, c.rbuf.len - off)
 		n := http1.frame(msg, mut c.frame, w.opts.limits) or {
 			w.refuse(mut c, err)
@@ -229,12 +234,16 @@ pub fn (mut w Worker) process_waiting(mut c Conn) {
 	for {
 		before := c.rbuf.len
 		w.process(mut c)
-		for c.waiting {
-			now := time.sys_mono_now()
-			if c.pending.due > now {
-				time.sleep(time.Duration(i64(c.pending.due - now)))
+		for c.waiting || c.file_fd >= 0 {
+			if c.file_fd >= 0 {
+				w.inline_file(mut c)
+			} else {
+				now := time.sys_mono_now()
+				if c.pending.due > now {
+					time.sleep(time.Duration(i64(c.pending.due - now)))
+				}
+				w.resume(mut c)
 			}
-			w.resume(mut c)
 			w.process(mut c)
 		}
 		// after an upgrade the rest of the input is WebSocket frames
@@ -243,6 +252,34 @@ pub fn (mut w Worker) process_waiting(mut c Conn) {
 		}
 	}
 	w.timers = Timers{}
+}
+
+// inline_file appends what is left of a streamed file to wbuf, for process_waiting:
+// handle_raw and tests have no socket to stream it to.
+fn (mut w Worker) inline_file(mut c Conn) {
+	n := c.file_left
+	if c.wbuf.cap - c.wbuf.len < n {
+		unsafe { c.wbuf.grow_cap(int(n)) } // cold: tests only
+	}
+	got := http1.read_at(c.file_fd, unsafe { &u8(c.wbuf.data) + c.wbuf.len }, n, c.file_off)
+	if got > 0 {
+		unsafe {
+			c.wbuf.len += int(got)
+		}
+	}
+	c.end_file()
+	if got != n {
+		c.close_after = true // the head promised more than the file has now
+	}
+}
+
+// end_file closes the file being streamed, if any.
+pub fn (mut c Conn) end_file() {
+	if c.file_fd >= 0 {
+		http1.close_file(c.file_fd)
+		c.file_fd = -1
+	}
+	c.file_left = 0
 }
 
 // finish takes the Ctx's response, or its deferral, back into c. idx is the route
@@ -274,6 +311,13 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 	}
 	c.wbuf = x.out
 	c.close_after = x.close_after
+	if x.file_fd >= 0 {
+		// the head is in wbuf; the engine sends the file after it
+		c.file_fd = x.file_fd
+		c.file_off = x.file_off
+		c.file_left = x.file_left
+		x.file_fd = -1
+	}
 	if !isnil(x.ws) && x.status == 101 && !c.close_after {
 		w.ws_open(mut c)
 	}

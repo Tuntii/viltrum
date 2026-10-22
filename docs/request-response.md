@@ -19,7 +19,7 @@ as garbage in tests.
 ## Response
 
 `c.text(status, s)`, `c.text_int(status, n)`, `c.json(status, value)`, `c.bytes(status, content_type, data)`,
-`c.no_content(status)`. Add headers first with `c.set_header(name, value)` (up to 16) and call `c.close()` first
+`c.no_content(status)`, `c.file(path)` (see [files.md](./files.md)). Add headers first with `c.set_header(name, value)` (up to 16) and call `c.close()` first
 to close the connection after the response. One response per request; a second call is ignored (it panics in
 `-d viltrum_debug` builds).
 

@@ -1,5 +1,6 @@
 module engine
 
+import os
 import viltrum.http1
 import viltrum.router
 
@@ -271,4 +272,55 @@ fn test_deferred_response_allocates_nothing() {
 		_ = w.timers.pop()
 	}
 	assert http1.allocated_bytes() - before == 0
+}
+
+// File answers too, once pbuf and the Conn's buffers are grown: a small file, a 304,
+// a range, a directory index, a streamed file (closed after each run), a 404.
+fn test_file_answers_allocate_nothing() {
+	dir := os.join_path(os.temp_dir(), 'viltrum-alloc-${os.getpid()}')
+	os.mkdir_all(os.join_path(dir, 'sub')) or { panic(err) }
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	os.write_file(os.join_path(dir, 'a.css'), 'x'.repeat(3000)) or { panic(err) }
+	os.write_file(os.join_path(dir, 'sub', 'index.html'), '<p>i</p>') or { panic(err) }
+	os.write_file(os.join_path(dir, 'big.bin'), 'y'.repeat(http1.file_inline_max + 1)) or {
+		panic(err)
+	}
+	mut r := &router.Router{}
+	r.add(.get, '/s/*filepath', [
+		http1.Handler(fn [dir] (mut c http1.Ctx) {
+			c.static_file(dir, c.param('filepath') or { '' })
+		}),
+	]) or { panic(err) }
+	mut w := new_worker(r, Options{}, 0)
+	mut c := new_conn()
+	run(mut w, mut c, 'GET /s/a.css HTTP/1.1\r\nHost: x\r\n\r\n'.bytes())
+	etag := c.wbuf.bytestr().all_after('ETag: ').all_before('\r\n')
+	reqs := {
+		'small': 'GET /s/a.css HTTP/1.1\r\nHost: x\r\n\r\n'
+		'304':   'GET /s/a.css HTTP/1.1\r\nHost: x\r\nIf-None-Match: ${etag}\r\n\r\n'
+		'range': 'GET /s/a.css HTTP/1.1\r\nHost: x\r\nRange: bytes=10-19\r\n\r\n'
+		'index': 'GET /s/sub/ HTTP/1.1\r\nHost: x\r\n\r\n'
+		'big':   'GET /s/big.bin HTTP/1.1\r\nHost: x\r\n\r\n'
+		'404':   'GET /s/missing.txt HTTP/1.1\r\nHost: x\r\n\r\n'
+	}
+	for name, raw in reqs {
+		req := raw.bytes()
+		for _ in 0 .. 200 {
+			run(mut w, mut c, req)
+			c.end_file()
+		}
+		before := http1.allocated_bytes()
+		for _ in 0 .. 5000 {
+			run(mut w, mut c, req)
+			c.end_file()
+		}
+		assert http1.allocated_bytes() - before == 0, '${name} allocates'
+	}
+	run(mut w, mut c, reqs['304'].bytes())
+	assert c.wbuf.bytestr().starts_with('HTTP/1.1 304 ')
+	run(mut w, mut c, reqs['big'].bytes())
+	assert c.file_fd >= 0 && c.file_left == http1.file_inline_max + 1
+	c.end_file()
 }

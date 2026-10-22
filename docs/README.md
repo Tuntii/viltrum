@@ -11,6 +11,7 @@ workers, or TLS terminates at a reverse proxy (Caddy, nginx).
 | [getting-started.md](./getting-started.md) | Install, first server |
 | [request-response.md](./request-response.md) | `Ctx` request and response calls, middleware |
 | [connection.md](./connection.md) | Workers, buffers, limits, timeouts |
+| [files.md](./files.md) | Static files: directories, `c.file`, caching validators, ranges |
 | [tls.md](./tls.md) | HTTPS listeners, certificate reload, TLS policy |
 | [ws.md](./ws.md) | WebSocket routes, callbacks, closing, limits |
 | [deploy.md](./deploy.md) | Caddy/nginx, Host, timeouts, supervisor |
@@ -21,7 +22,7 @@ Also: [../CHANGELOG.md](../CHANGELOG.md), [../benches/RESULTS.md](../benches/RES
 
 ## Not on the 1.x core yet
 
-Generic upgrade and hijack, static files, forms and uploads, the HTTP client, non-Linux platforms. They
+Generic upgrade and hijack, forms and uploads, the HTTP client, non-Linux platforms. They
 return on the new core.
 
 ## v0.13 reference (not 1.x)

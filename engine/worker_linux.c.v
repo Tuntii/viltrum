@@ -6,6 +6,7 @@ import viltrum.http1
 import viltrum.router
 
 #include <sys/epoll.h>
+#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 #include <errno.h>
@@ -14,6 +15,7 @@ fn C.epoll_create1(flags int) int
 fn C.epoll_ctl(epfd int, op int, fd int, event &C.epoll_event) int
 fn C.epoll_wait(epfd int, events &C.epoll_event, maxevents int, timeout_ms int) int
 fn C.accept4(sockfd int, addr voidptr, addrlen voidptr, flags int) int
+fn C.sendfile(out_fd int, in_fd int, offset &i64, count usize) isize
 
 @[typedef]
 union C.epoll_data_t {
@@ -32,6 +34,7 @@ mut:
 }
 
 const max_events = 512
+const sendfile_max = i64(1024 * 1024 * 1024) // per call; Linux moves at most ~2 GiB in one
 const shrink_rbuf_above = 64 * 1024
 const shrink_wbuf_above = 256 * 1024
 const busy_msg = 'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\nConnection: close\r\n\r\nservice unavailable'
@@ -425,26 +428,30 @@ fn (mut l Loop) drain(mut c Conn) {
 }
 
 fn (mut l Loop) flush(mut c Conn) {
-	for c.woff < c.wbuf.len {
-		n := l.write(mut c, unsafe { &u8(c.wbuf.data) + c.woff }, c.wbuf.len - c.woff)
-		if n < 0 {
-			if n == -1 {
-				if !c.out_armed {
-					l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLOUT))
-					c.out_armed = true
+	for {
+		for c.woff < c.wbuf.len {
+			n := l.write(mut c, unsafe { &u8(c.wbuf.data) + c.woff }, c.wbuf.len - c.woff)
+			if n < 0 {
+				if n == -1 {
+					l.arm_out(mut c)
+					return
 				}
-				c.deadline_ms = l.now + l.opts.write_timeout.milliseconds()
+				l.close(mut c)
 				return
 			}
-			l.close(mut c)
+			c.woff += n
+		}
+		unsafe {
+			c.wbuf.len = 0
+		}
+		c.woff = 0
+		if c.file_fd < 0 {
+			break
+		}
+		if !l.send_file(mut c) {
 			return
 		}
-		c.woff += n
 	}
-	unsafe {
-		c.wbuf.len = 0
-	}
-	c.woff = 0
 	if c.close_after {
 		l.close(mut c)
 		return
@@ -460,6 +467,58 @@ fn (mut l Loop) flush(mut c Conn) {
 			l.now + l.opts.idle_timeout.milliseconds()
 		}
 	}
+}
+
+// arm_out waits for the socket to take more output; reading pauses meanwhile.
+fn (mut l Loop) arm_out(mut c Conn) {
+	if !c.out_armed {
+		l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLOUT))
+		c.out_armed = true
+	}
+	c.deadline_ms = l.now + l.opts.write_timeout.milliseconds()
+}
+
+// send_file moves the streamed file on once wbuf is out: on cleartext straight from
+// the page cache to the socket (sendfile), over TLS one buffer at a time through
+// wbuf, which flush then writes. False when the socket is full (EPOLLOUT armed) or
+// the connection was closed; true when there is more for flush to do or it is done.
+fn (mut l Loop) send_file(mut c Conn) bool {
+	if !isnil(c.tls) {
+		n := if c.file_left < c.wbuf.cap { c.file_left } else { i64(c.wbuf.cap) }
+		got := http1.read_at(c.file_fd, c.wbuf.data, n, c.file_off)
+		if got <= 0 {
+			l.close(mut c) // the file shrank: the promised Content-Length cannot be kept
+			return false
+		}
+		unsafe {
+			c.wbuf.len = int(got)
+		}
+		c.file_off += got
+		c.file_left -= got
+		if c.file_left == 0 {
+			c.end_file()
+		}
+		return true
+	}
+	for c.file_left > 0 {
+		chunk := if c.file_left < sendfile_max { c.file_left } else { sendfile_max }
+		r := C.sendfile(c.fd, c.file_fd, &c.file_off, usize(chunk)) // advances file_off
+		if r > 0 {
+			c.file_left -= r
+			continue
+		}
+		if r < 0 && (C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK) {
+			l.arm_out(mut c)
+			return false
+		}
+		if r < 0 && C.errno == C.EINTR {
+			continue
+		}
+		l.close(mut c) // an error, or the file shrank (0)
+		return false
+	}
+	c.end_file()
+	return true
 }
 
 // ws_deadline is when a quiet WebSocket connection times out: the handler's idle
@@ -479,6 +538,7 @@ fn (mut l Loop) close(mut c Conn) {
 	if !isnil(c.ws) {
 		l.w.ws_end(mut c)
 	}
+	c.end_file()
 	l.ctl(C.EPOLL_CTL_DEL, c.fd, 0)
 	if !isnil(c.tls) {
 		c.tls.close()

@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="Viltrum" width="140" height="140">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-white.svg">
+    <img src="assets/logo.svg" alt="Viltrum" width="140" height="140">
+  </picture>
 </p>
 
 # Viltrum

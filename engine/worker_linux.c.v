@@ -35,6 +35,8 @@ mut:
 
 const max_events = 512
 const sendfile_max = i64(1024 * 1024 * 1024) // per call; Linux moves at most ~2 GiB in one
+const linger_idle_ms = 5000 // a lingering client quiet this long is closed
+const linger_max_ms = 30000 // and any lingering client after this long
 const shrink_rbuf_above = 64 * 1024
 const shrink_wbuf_above = 256 * 1024
 const busy_msg = 'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\nConnection: close\r\n\r\nservice unavailable'
@@ -167,7 +169,7 @@ fn (mut l Loop) fire() {
 		l.w.resume(mut c)
 		l.drain(mut c)
 		l.read_pending(mut c)
-		if c.fd >= 0 && !c.out_armed {
+		if c.fd >= 0 && !c.out_armed && !c.lingering {
 			c.deadline_ms = l.now + if c.reading {
 				l.opts.read_timeout.milliseconds()
 			} else {
@@ -291,6 +293,10 @@ fn (mut l Loop) on_event(fd int, ev u32) {
 		l.close(mut c)
 		return
 	}
+	if c.lingering {
+		l.discard(mut c)
+		return
+	}
 	if !isnil(c.tls) {
 		c.tls.readable()
 		if c.tls.handshaking {
@@ -301,7 +307,7 @@ fn (mut l Loop) on_event(fd int, ev u32) {
 	if c.out_armed {
 		if ev & u32(C.EPOLLOUT) != 0 {
 			l.flush(mut c)
-			if c.fd >= 0 && !c.out_armed {
+			if c.fd >= 0 && !c.out_armed && !c.lingering {
 				l.drain(mut c)
 				l.read_pending(mut c)
 			}
@@ -348,9 +354,14 @@ fn (mut l Loop) read(mut c Conn, buf &u8, n int) int {
 	if !isnil(c.tls) {
 		return c.tls.read(buf, n)
 	}
-	r := int(C.recv(c.fd, buf, n, 0))
-	if r >= 0 {
-		return r
+	for {
+		r := int(C.recv(c.fd, buf, n, 0))
+		if r >= 0 {
+			return r
+		}
+		if C.errno != C.EINTR {
+			break
+		}
 	}
 	return if C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK { -1 } else { -2 }
 }
@@ -361,9 +372,14 @@ fn (mut l Loop) write(mut c Conn, buf &u8, n int) int {
 	if !isnil(c.tls) {
 		return c.tls.write(buf, n)
 	}
-	r := int(C.send(c.fd, buf, n, C.MSG_NOSIGNAL))
-	if r >= 0 {
-		return r
+	for {
+		r := int(C.send(c.fd, buf, n, C.MSG_NOSIGNAL))
+		if r >= 0 {
+			return r
+		}
+		if C.errno != C.EINTR {
+			break
+		}
 	}
 	return if C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK { -1 } else { -2 }
 }
@@ -377,7 +393,22 @@ fn (mut l Loop) on_readable(mut c Conn) {
 		}
 		if c.rbuf.len == c.rbuf.cap {
 			if c.rbuf.cap >= max_total {
-				l.close(mut c)
+				if !isnil(c.ws) || c.waiting {
+					// input piling up behind a WebSocket message or a deferred response
+					l.close(mut c)
+					return
+				}
+				// one request larger than the limits, which framing has not refused yet:
+				// a chunked body whose size lines push it past them
+				l.w.refuse(mut c, http1.HttpError{
+					status: 413
+					reason: 'payload too large'
+				})
+				unsafe {
+					c.rbuf.len = 0
+				}
+				c.reading = false
+				l.flush(mut c)
 				return
 			}
 			unsafe { c.rbuf.grow_cap(c.rbuf.cap) } // cold: a request larger than the buffer
@@ -397,7 +428,7 @@ fn (mut l Loop) on_readable(mut c Conn) {
 		was_reading := c.reading
 		reqs_before := l.w.requests
 		l.drain(mut c)
-		if c.fd < 0 || c.out_armed {
+		if c.fd < 0 || c.out_armed || c.lingering {
 			return
 		}
 		if !isnil(c.ws) {
@@ -421,7 +452,7 @@ fn (mut l Loop) drain(mut c Conn) {
 		before := c.rbuf.len
 		l.w.process(mut c)
 		l.flush(mut c)
-		if c.fd < 0 || c.out_armed || c.rbuf.len == before {
+		if c.fd < 0 || c.out_armed || c.lingering || c.rbuf.len == before {
 			return
 		}
 	}
@@ -453,7 +484,11 @@ fn (mut l Loop) flush(mut c Conn) {
 		}
 	}
 	if c.close_after {
-		l.close(mut c)
+		if c.linger {
+			l.linger(mut c)
+		} else {
+			l.close(mut c)
+		}
 		return
 	}
 	if c.out_armed {
@@ -519,6 +554,51 @@ fn (mut l Loop) send_file(mut c Conn) bool {
 	}
 	c.end_file()
 	return true
+}
+
+// linger closes a connection whose client may still be sending: the rest of a
+// refused request, or requests pipelined behind a close. Closing with input unread
+// makes the kernel answer with RST, and a client still writing its body may then
+// lose the response before reading it. So the write side is shut (FIN after the
+// response) and input is read and dropped until the client closes, stays quiet for
+// linger_idle_ms, or linger_max_ms pass, as nginx's lingering close does.
+fn (mut l Loop) linger(mut c Conn) {
+	if !isnil(c.tls) {
+		c.tls.close() // close_notify; what the client sends next is not decrypted
+		c.tls = unsafe { nil }
+	}
+	if c.out_armed {
+		l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLIN) | u32(C.EPOLLRDHUP))
+		c.out_armed = false
+	}
+	C.shutdown(c.fd, C.SHUT_WR)
+	c.lingering = true
+	c.reading = false
+	c.linger_end = l.now + linger_max_ms
+	c.deadline_ms = l.now + linger_idle_ms
+	l.discard(mut c)
+}
+
+// discard reads and drops a lingering connection's input; it closes the connection
+// once the client has closed its side. A few reads per event, so a client that keeps
+// sending cannot hold the worker.
+fn (mut l Loop) discard(mut c Conn) {
+	for _ in 0 .. 16 {
+		n := int(C.recv(c.fd, c.rbuf.data, c.rbuf.cap, 0))
+		if n > 0 {
+			idle := l.now + linger_idle_ms
+			c.deadline_ms = if idle < c.linger_end { idle } else { c.linger_end }
+			continue
+		}
+		if n < 0 && C.errno == C.EINTR {
+			continue
+		}
+		if n < 0 && (C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK) {
+			return
+		}
+		l.close(mut c)
+		return
+	}
 }
 
 // ws_deadline is when a quiet WebSocket connection times out: the handler's idle

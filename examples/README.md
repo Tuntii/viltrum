@@ -6,7 +6,7 @@ Link the module first (from the repo root): `bash scripts/install.sh`.
 |---------|------|-------|
 | `hello` | 8080 | text responses, a `:param` |
 | `rest` | 8081 | JSON in and out, shared state behind a mutex (handlers run on every worker thread) |
-| `features` | 8082 | global middleware (logger, cors), groups, decoded query params, gzip, `worker_id`, static files (`/static/`) |
+| `features` | 8082 | global middleware (logger, cors), groups, decoded query params, gzip, `worker_id`, static files (`/static/`), a form with a file upload (`/upload`) |
 | `https` | 8080, 8443 | cleartext and HTTPS listeners on the same workers (`bash scripts/dev-cert.sh` first) |
 | `ws_chat` | 8084 | WebSocket rooms: `:param` and query in `on_open`, state in `s.data`, `subscribe` / `publish` across workers, publishing from another thread |
 
@@ -26,4 +26,4 @@ v run examples/ws_chat
 websocat 'ws://127.0.0.1:8084/chat/lobby?name=ada'   # and a second one as someone else
 ```
 
-Static files, uploads and the HTTP client are not on the 1.x core yet; see the README.
+The HTTP client is not on the 1.x core yet; see the README.

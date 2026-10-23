@@ -74,6 +74,17 @@ fn test_head_end_and_framing_fields_match_the_plain_scans() {
 	}
 }
 
+// without_date blanks the 29-byte value of a Date header.
+fn without_date(out []u8) string {
+	s := out.bytestr()
+	i := s.index('\r\nDate: ') or { return s }
+	start := i + 8
+	if start + 29 > s.len {
+		return s
+	}
+	return s[..start] + '#'.repeat(29) + s[start + 29..]
+}
+
 fn test_fast_writer_matches_the_slow_one() {
 	statuses := [99, 100, 101, 200, 204, 301, 304, 404, 426, 500, 599, 999, 1000]
 	types := ['', 'text/plain', 'bad\r\ntype']
@@ -104,7 +115,8 @@ fn test_fast_writer_matches_the_slow_one() {
 			continue
 		}
 		slow.write_response_slow(status, ct, ce, body.str, body.len)
-		assert fast.out == slow.out, 'status ${status} round ${r}'
+		// each Ctx has its own Date cache, and the second may tick between the writes
+		assert without_date(fast.out) == without_date(slow.out), 'status ${status} round ${r}'
 	}
 	// no room: the fast writer declines and leaves out alone
 	fast.out = []u8{cap: 10}

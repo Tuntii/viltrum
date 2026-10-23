@@ -87,9 +87,10 @@ fn test_bad_pattern_is_reported() {
 // recover leaves a deferred response alone, and handle_raw waits it out.
 fn test_deferred_response() {
 	app := build_app()
-	t0 := time.ticks()
+	// the monotonic clock: time.ticks moves in ~16 ms steps on Windows
+	t0 := time.sys_mono_now()
 	res := app.handle_raw('GET /wait/30 HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
-	assert time.ticks() - t0 >= 30
+	assert time.sys_mono_now() - t0 >= 30_000_000
 	assert res.starts_with('HTTP/1.1 200 OK\r\n') && res.contains('X-Waited: yes\r\n')
 	assert res.ends_with('waited 30') && !res.contains('Connection: close')
 }
@@ -145,6 +146,29 @@ fn test_websocket_behind_gzip() {
 		masked('x'.repeat(100)))!
 	assert r.starts_with('HTTP/1.1 101 ') && r.count('HTTP/1.1') == 1
 	assert !r.contains('Content-Encoding') && r.ends_with('x'.repeat(100))
+}
+
+fn upload(mut c viltrum.Ctx) {
+	f := c.form_file('doc') or {
+		c.text(400, 'no file')
+		return
+	}
+	note := c.form_value('note') or { '' }
+	name := f.safe_filename() or { '' }
+	c.text(200, '${note}|${name}|${f.content_type}|${f.data.bytestr()}')
+}
+
+fn test_form_upload_through_the_app() {
+	mut a := viltrum.new()
+	a.post('/up', upload)
+	body := '--b\r\nContent-Disposition: form-data; name="note"\r\n\r\nhi there\r\n--b\r\nContent-Disposition: form-data; name="doc"; filename="../x.txt"\r\nContent-Type: text/plain\r\n\r\nfile\r\nbody\r\n--b--\r\n'
+	r :=
+		a.handle_raw('POST /up HTTP/1.1\r\nHost: x\r\nContent-Type: multipart/form-data; boundary=b\r\nContent-Length: ${body.len}\r\n\r\n${body}')!
+	assert r.starts_with('HTTP/1.1 200 ')
+		&& r.ends_with('\r\n\r\nhi there|x.txt|text/plain|file\r\nbody')
+	r2 :=
+		a.handle_raw('POST /up HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 6\r\n\r\ndoc=no')!
+	assert r2.starts_with('HTTP/1.1 400 ')
 }
 
 // publish and ws_send need a running server; without one they are dropped quietly.

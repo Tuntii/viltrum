@@ -52,7 +52,8 @@ Success looks like:
 | TLS on the same workers, certificate reload | done (1.2.0) |
 | gzip on viltrum's own DEFLATE encoder | done (1.2.2) |
 | WebSocket (`ws://`, `wss://`) | done (Phase 3) |
-| Generic upgrade, static files, forms and uploads, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
+| Static files (`static_files`, `c.file`): validators, ranges, `sendfile` | done (Phase 4) |
+| Generic upgrade, forms and uploads, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
 
 Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
 [benches/httparena](benches/httparena). On the 2026-10-20 run viltrum was near the top on baseline,
@@ -96,7 +97,9 @@ limited-conn, async and the latency profiles, mid-field on json-comp, and absent
 ## Phase 4 — 1.0 hardening and the missing pieces
 
 - [ ] The known gaps below that matter in production first (lingering close, 413 at the read cap, EINTR)
-- [ ] Static files, forms and uploads back on the new core
+- [x] Static files back on the new core: `app.static_files`, `c.file`, ETag / Last-Modified / 304, byte
+  ranges, large files streamed with `sendfile` ([docs/files.md](docs/files.md))
+- [ ] Forms and uploads back on the new core
 
 ## Phase 5 — HTTP/2 (decision needed)
 

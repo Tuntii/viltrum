@@ -18,6 +18,10 @@ pub type Options = engine.Options
 pub type TlsOptions = engine.TlsOptions
 pub type Listener = engine.Listener
 
+// FileOptions and StaticOptions tune Ctx.file and App.static_files.
+pub type FileOptions = http1.FileOptions
+pub type StaticOptions = http1.StaticOptions
+
 // Ws is one WebSocket connection inside its callbacks: send_text, send_binary,
 // ping, close, subscribe, publish, id, protocol, worker_id, and `data` for the
 // connection's own state.
@@ -153,6 +157,28 @@ pub fn (mut app App) ws(pattern string, h WsHandler, mws ...Handler) {
 	app.handle(.get, pattern, ...ws_chain(h, mws))
 }
 
+// static_files serves the files under dir at prefix, for GET and HEAD:
+// app.static_files('/assets', './public') answers /assets/app.css with
+// ./public/app.css. A directory serves its index.html; names with '.' or '..',
+// and dotfiles unless opts.dotfiles, answer 404 (see Ctx.static_file), and files
+// carry ETag and Last-Modified and honor conditional and range requests (Ctx.file).
+pub fn (mut app App) static_files(prefix string, dir string, opts StaticOptions) {
+	for m in [Method.get, .head] {
+		app.handle(m, static_pattern(prefix), static_handler(dir, opts))
+	}
+}
+
+fn static_pattern(prefix string) string {
+	p := prefix.trim_right('/')
+	return p + '/*filepath'
+}
+
+fn static_handler(dir string, opts StaticOptions) Handler {
+	return fn [dir, opts] (mut c Ctx) {
+		c.static_file(dir, c.param('filepath') or { '' }, opts)
+	}
+}
+
 fn ws_chain(h WsHandler, mws []Handler) []Handler {
 	hp := &http1.WsHandler{
 		on_open:      http1.WsOpen(h.on_open)
@@ -214,6 +240,13 @@ pub fn (mut g Group) delete(pattern string, handlers ...Handler) {
 
 pub fn (mut g Group) ws(pattern string, h WsHandler, mws ...Handler) {
 	g.handle(.get, pattern, ...ws_chain(h, mws))
+}
+
+// static_files is App.static_files under the group's prefix, behind its middleware.
+pub fn (mut g Group) static_files(prefix string, dir string, opts StaticOptions) {
+	for m in [Method.get, .head] {
+		g.handle(m, static_pattern(prefix), static_handler(dir, opts))
+	}
 }
 
 fn join_path(prefix string, pattern string) string {

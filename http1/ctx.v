@@ -35,6 +35,11 @@ pub mut:
 	responded   bool
 	capture     bool // gzip and other body-rewriting middleware set this around next()
 	cap_type    string
+	wrote       bool // the response went straight to out, past capture (file answers)
+	// a file answer's body, streamed by the engine after the head: fd, offset, bytes
+	file_fd   int = -1
+	file_off  i64
+	file_left i64
 	// deferred response (after): the engine reads these once the chain returns
 	deferred  bool
 	defer_ms  int
@@ -60,6 +65,11 @@ mut:
 	cbuf   []u8   // decoded chunked bodies
 	jbuf   []u8   // JSON bodies and captured bodies
 	ws_acc [28]u8 // Sec-WebSocket-Accept until the 101 is written
+	// file answers: the path being opened, and header values until they are written
+	pbuf    []u8
+	etag    [56]u8
+	lastmod [29]u8
+	crange  [64]u8
 }
 
 pub fn Ctx.new() Ctx {
@@ -67,6 +77,7 @@ pub fn Ctx.new() Ctx {
 		qbuf: []u8{cap: 2048}
 		cbuf: []u8{cap: 8 * 1024}
 		jbuf: []u8{cap: 16 * 1024}
+		pbuf: []u8{cap: 512}
 	}
 }
 
@@ -80,6 +91,8 @@ pub fn (mut c Ctx) begin(msg []u8) {
 	c.deferred = false
 	c.ws = unsafe { nil }
 	c.capture = false
+	c.wrote = false
+	c.file_fd = -1
 	c.close_after = !c.head.keep_alive
 	c.idx = 0
 	c.nextra = 0
@@ -462,6 +475,15 @@ fn (mut c Ctx) write_response(status int, content_type string, content_encoding 
 
 // write_response_slow is the piece-by-piece writer, for what the fast one declines.
 fn (mut c Ctx) write_response_slow(status int, content_type string, content_encoding string, body voidptr, n int) {
+	length := if body_allowed(status) { i64(n) } else { i64(-1) }
+	c.write_head(status, content_type, content_encoding, length)
+	if n > 0 && body_allowed(status) && c.head.method != .head {
+		unsafe { c.out.push_many(body, n) }
+	}
+}
+
+// write_head writes the status line and headers; length < 0 leaves Content-Length out.
+fn (mut c Ctx) write_head(status int, content_type string, content_encoding string, length i64) {
 	write_status_line(mut c.out, status)
 	if content_type.len > 0 {
 		write_header(mut c.out, 'Content-Type', if valid_value(content_type) {
@@ -473,9 +495,9 @@ fn (mut c Ctx) write_response_slow(status int, content_type string, content_enco
 	if content_encoding.len > 0 {
 		write_header(mut c.out, 'Content-Encoding', content_encoding)
 	}
-	if body_allowed(status) {
+	if length >= 0 {
 		append_str(mut c.out, 'Content-Length: ')
-		append_int(mut c.out, n)
+		append_int(mut c.out, length)
 		append_str(mut c.out, crlf)
 	}
 	for k in 0 .. c.nextra {
@@ -493,9 +515,6 @@ fn (mut c Ctx) write_response_slow(status int, content_type string, content_enco
 		append_str(mut c.out, 'Connection: keep-alive\r\n')
 	}
 	append_str(mut c.out, crlf)
-	if n > 0 && body_allowed(status) && c.head.method != .head {
-		unsafe { c.out.push_many(body, n) }
-	}
 }
 
 // write_response_fast writes what write_response does with one capacity check and

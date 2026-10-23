@@ -96,7 +96,8 @@ pub fn gzip_middleware(mut c Ctx) {
 	c.capture = true
 	c.next()
 	c.capture = false
-	if !c.responded {
+	// nothing to send, or already sent (a file answer)
+	if !c.responded || c.wrote {
 		return
 	}
 	body := c.captured_body()

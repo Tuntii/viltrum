@@ -63,13 +63,13 @@ buffer and are valid until the handler returns; `.clone()` what you keep.
 | Middleware | `recover`, `gzip`, `cors`, `logger` (`recover` cannot catch panics, see below) |
 | JSON | `c.json(200, value)`: compile-time encoder, no reflection |
 | TLS | `app.listen_tls`, or `app.serve` for cleartext and TLS together: TLS 1.3, certificates reloaded from disk without a restart ([docs/tls.md](docs/tls.md)) |
+| Static files | `app.static_files('/assets', './public')`, `c.file(path)`: ETag, Last-Modified, 304, byte ranges, large files sent with `sendfile` ([docs/files.md](docs/files.md)) |
 | WebSocket | `app.ws(pattern, handler)`: RFC 6455 on the same workers, `ws://` and `wss://`, callbacks per message with no allocation, topics (`subscribe` / `publish`) across workers ([docs/ws.md](docs/ws.md)) |
 | Tests | `app.handle_raw(raw)` serves a raw request in-process |
 
 > **`recover` and panics.** V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).
 
-Not on the 1.x core yet (they return later): static files, forms and uploads, the HTTP client, serving
-off Linux.
+Not on the 1.x core yet (they return later): forms and uploads, the HTTP client, serving off Linux.
 
 ---
 
@@ -161,7 +161,7 @@ Inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-
 
 **1.3:** WebSocket on the same workers ([docs/ws.md](docs/ws.md)).
 
-**Next:** hardening, static files and forms on the new core ([ROADMAP.md](ROADMAP.md)).
+**Next:** hardening, forms and uploads on the new core ([ROADMAP.md](ROADMAP.md)).
 
 ---
 

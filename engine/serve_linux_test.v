@@ -1,6 +1,7 @@
 module engine
 
 import net
+import os
 import time
 import viltrum.http1
 import viltrum.router
@@ -17,6 +18,14 @@ fn h_echo(mut c http1.Ctx) {
 
 fn h_big(mut c http1.Ctx) {
 	c.text(200, big_body)
+}
+
+// A file past file_inline_max, so it is streamed with sendfile after the head.
+const file_body = 'f'.repeat(3 * 1024 * 1024) + 'end'
+const file_path = os.join_path(os.temp_dir(), 'viltrum-serve-${os.getpid()}.bin')
+
+fn h_file(mut c http1.Ctx) {
+	c.file(file_path)
 }
 
 fn h_delay_done(mut c http1.Ctx, ms u64) {
@@ -74,6 +83,7 @@ fn make_router() &router.Router {
 	r.add(.get, '/chat', [http1.Handler(h_chat)]) or { panic(err) }
 	r.add(.post, '/echo', [http1.Handler(h_echo)]) or { panic(err) }
 	r.add(.get, '/big', [http1.Handler(h_big)]) or { panic(err) }
+	r.add(.get, '/file', [http1.Handler(h_file)]) or { panic(err) }
 	r.add(.get, '/delay/:ms', [http1.Handler(h_delay)]) or { panic(err) }
 	return r
 }
@@ -615,4 +625,65 @@ fn test_websocket_publish_across_workers() {
 	for mut c in conns {
 		c.close() or {}
 	}
+}
+
+// A streamed file, read late so sendfile stops on a full socket, then a range of it
+// and a plain request pipelined behind: all in order, all whole.
+fn test_file_is_streamed_in_order() {
+	os.write_file(file_path, file_body) or { panic(err) }
+	defer {
+		os.rm(file_path) or {}
+	}
+	addr, mut stop := start(Options{})
+	defer {
+		stop.request()
+	}
+	mut c := dial(addr)
+	c.write(('GET /file HTTP/1.1\r\nHost: x\r\n\r\n' +
+		'GET /file HTTP/1.1\r\nHost: x\r\nRange: bytes=-3\r\n\r\n' +
+		'GET /p/after HTTP/1.1\r\nHost: x\r\n\r\n').bytes()) or { panic(err) }
+	time.sleep(300 * time.millisecond)
+	mut r := Reader{}
+	st1, whole := r.response(mut c) or { panic(err) }
+	assert st1 == 200 && whole.len == file_body.len && whole == file_body
+	st2, tail := r.response(mut c) or { panic(err) }
+	assert st2 == 206 && tail == 'end'
+	st3, after := r.response(mut c) or { panic(err) }
+	assert st3 == 200 && after == '/p/after'
+	c.close() or {}
+}
+
+fn open_fds() int {
+	return (os.ls('/proc/self/fd') or { [] }).len
+}
+
+// Clients that leave mid-file: the open file is closed with the connection.
+fn test_file_closed_with_the_connection() {
+	os.write_file(file_path, file_body) or { panic(err) }
+	defer {
+		os.rm(file_path) or {}
+	}
+	addr, mut stop := start(Options{
+		write_timeout: time.second
+	})
+	defer {
+		stop.request()
+	}
+	before := open_fds()
+	for _ in 0 .. 8 {
+		mut c := dial(addr)
+		c.write('GET /file HTTP/1.1\r\nHost: x\r\n\r\n'.bytes()) or { panic(err) }
+		time.sleep(20 * time.millisecond)
+		c.close() or {}
+	}
+	// a client that stays but never reads is cut by write_timeout, more than socket
+	// buffers hold still unsent
+	mut idle := dial(addr)
+	idle.write('GET /file HTTP/1.1\r\nHost: x\r\n\r\n'.repeat(20).bytes()) or { panic(err) }
+	time.sleep(3500 * time.millisecond)
+	got, _ := read_until_eof(mut idle)
+	assert got < 20 * file_body.len
+	idle.close() or {}
+	time.sleep(200 * time.millisecond)
+	assert open_fds() <= before
 }

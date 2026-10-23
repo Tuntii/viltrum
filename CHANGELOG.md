@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.0](https://github.com/Tuntii/viltrum/compare/v1.3.2...v1.4.0) (2026-10-23)
+
+### Features
+
+* static files on the 1.x core (static_files, c.file) ([d17aa55](https://github.com/Tuntii/viltrum/commit/d17aa55cee94a495d654c1638d812ef267a449b4))
+
+### Bug Fixes
+
+* **static:** report directories without opening them (Windows cannot) ([ccfbbfd](https://github.com/Tuntii/viltrum/commit/ccfbbfdd5b68912e698621fd701b627f2be34466))
+
 ## [1.3.2](https://github.com/Tuntii/viltrum/compare/v1.3.1...v1.3.2) (2026-10-22)
 
 ### Performance Improvements

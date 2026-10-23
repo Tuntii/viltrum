@@ -10,5 +10,10 @@
   `max_headers` 32 (431). `Options.max_conns` (503 and close).
 - Timeouts: `read_timeout` 30 s from a request's first byte, `idle_timeout` 60 s between requests,
   `write_timeout` 30 s without write progress.
-- Framing and parse errors answer 4xx after any earlier pipelined responses, then close.
+- Framing and parse errors answer 4xx after any earlier pipelined responses, then close. A request too large
+  for the limits answers 413 whether its `Content-Length` says so or a chunked body grows past them.
+- Lingering close: when the client may still be sending (a refused request, requests pipelined behind a
+  close), the engine sends the response, shuts its side, and reads and drops input until the client closes,
+  5 s pass without input, or 30 s in all. Closing at once would answer the unread input with a reset, which
+  can destroy the response before a client still writing its upload reads it.
 - SIGINT/SIGTERM stop accepting; open connections are closed within a second.

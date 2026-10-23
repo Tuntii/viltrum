@@ -28,10 +28,15 @@ fn test_framing_errors_carry_status() {
 	assert status_of('POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello') == 400
 	assert status_of('POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\n') == 400
 	assert status_of('POST / HTTP/1.1\r\nTransfer-Encoding: chunked, chunked\r\n\r\n0\r\n\r\n') == 400
-	for cl in ['abc', '+5', '-1', '5, 5', '4294967301', '99999999999999999999', ''] {
+	for cl in ['abc', '+5', '-1', '5, 5', '5 5', ''] {
 		assert status_of('POST / HTTP/1.1\r\nContent-Length: ${cl}\r\n\r\nhello') == 400, cl
 	}
-	assert status_of('POST / HTTP/1.1\r\nContent-Length: 2000000\r\n\r\n') == 413
+	// lengths past the limit, however long, are too large rather than malformed
+	for cl in ['2000000', '4294967301', '99999999999999999999'] {
+		assert status_of('POST / HTTP/1.1\r\nContent-Length: ${cl}\r\n\r\n') == 413, cl
+	}
+	lead := 'POST / HTTP/1.1\r\nContent-Length: 00000000002\r\n\r\n20'
+	assert frame_all(lead)! == lead.len
 	big := 'GET / HTTP/1.1\r\nX: ' + 'a'.repeat(70000)
 	assert status_of(big) == 431
 	assert status_of(big + '\r\n\r\n') == 431

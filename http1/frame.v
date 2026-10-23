@@ -99,7 +99,7 @@ pub fn frame(buf []u8, mut f Frame, lim Limits) !int {
 			if n > lim.max_body_bytes {
 				return refuse(413, 'payload too large')
 			}
-			f.content_length = n
+			f.content_length = int(n)
 		}
 		f.expect_continue = ex.found() && eq_ci(str_view(head, ex.start, ex.len), '100-continue')
 	}
@@ -251,10 +251,12 @@ fn field_at(head []u8, i int, j int, name_lower string, mut s Span) {
 	}
 }
 
-// parse_content_length accepts 1*DIGIT only (RFC 9112 section 6.3): no sign, list or overflow.
+// parse_content_length accepts 1*DIGIT only (RFC 9112 section 6.3): no sign or list.
+// A value past what an int holds stops growing there, so it is refused with 413 like
+// any other length over the limit rather than taken for a malformed one.
 @[direct_array_access]
-fn parse_content_length(b []u8) ?int {
-	if b.len == 0 || b.len > 10 {
+fn parse_content_length(b []u8) ?i64 {
+	if b.len == 0 {
 		return none
 	}
 	mut n := i64(0)
@@ -262,10 +264,9 @@ fn parse_content_length(b []u8) ?int {
 		if c < `0` || c > `9` {
 			return none
 		}
-		n = n * 10 + i64(c - `0`)
+		if n <= max_i32 {
+			n = n * 10 + i64(c - `0`)
+		}
 	}
-	if n > max_i32 {
-		return none
-	}
-	return int(n)
+	return n
 }

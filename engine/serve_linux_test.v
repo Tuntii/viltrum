@@ -687,3 +687,72 @@ fn test_file_closed_with_the_connection() {
 	time.sleep(200 * time.millisecond)
 	assert open_fds() <= before
 }
+
+// A client that writes its whole upload before reading: the 413 comes before the
+// body, and the connection is drained rather than reset, so the upload completes and
+// the 413 is still there to read.
+fn test_refused_upload_is_drained_not_reset() {
+	addr, mut stop := start(Options{})
+	defer {
+		stop.request()
+	}
+	body := 'u'.repeat(4 * 1024 * 1024)
+	mut c := dial(addr)
+	c.write('POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.len}\r\n\r\n'.bytes()) or {
+		panic(err)
+	}
+	time.sleep(50 * time.millisecond) // the 413 is out and the server is closing
+	c.write(body.bytes()) or { assert false, 'upload reset: ${err}' }
+	mut r := Reader{}
+	st, _ := r.response(mut c) or { panic(err) }
+	assert st == 413
+	assert r.closed(mut c)
+	c.close() or {}
+}
+
+// A chunked body of one-byte chunks reaches the read cap on its size lines before the
+// body limit: 413, not a silent close.
+fn test_chunk_overhead_at_the_read_cap_is_413() {
+	addr, mut stop := start(Options{
+		limits: http1.Limits{
+			max_body_bytes: 64 * 1024
+		}
+	})
+	defer {
+		stop.request()
+	}
+	mut c := dial(addr)
+	head := 'POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n'
+	c.write((head + '1\r\nx\r\n'.repeat(60000)).bytes()) or { assert false, 'reset: ${err}' }
+	mut r := Reader{}
+	st, body := r.response(mut c) or { panic(err) }
+	assert st == 413 && body == 'payload too large'
+	assert r.closed(mut c)
+	c.close() or {}
+}
+
+// A lingering client that neither sends nor closes is closed after linger_idle_ms.
+fn test_lingering_client_is_closed() {
+	addr, mut stop := start(Options{})
+	defer {
+		stop.request()
+	}
+	mut c := dial(addr)
+	c.write('GET /p/x HTTP/1.1\r\nHost : x\r\n\r\n'.bytes()) or { panic(err) }
+	mut r := Reader{}
+	st, _ := r.response(mut c) or { panic(err) }
+	assert st == 400
+	assert r.closed(mut c) // the server's FIN follows the response
+	// lingering, what the client sends is dropped without a reset
+	c.write('more'.bytes()) or { panic(err) }
+	time.sleep(100 * time.millisecond)
+	c.write('more'.bytes()) or { assert false, 'reset while lingering: ${err}' }
+	// once the server has closed, the next write is answered with RST
+	time.sleep((linger_idle_ms + 1500) * time.millisecond)
+	c.write('late'.bytes()) or {}
+	time.sleep(100 * time.millisecond)
+	mut reset := false
+	c.write('late'.bytes()) or { reset = true }
+	assert reset, 'still lingering after linger_idle_ms'
+	c.close() or {}
+}

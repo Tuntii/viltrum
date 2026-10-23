@@ -41,6 +41,11 @@ pub mut:
 	file_fd   int = -1
 	file_off  i64
 	file_left i64
+	// closing: the client may still be sending (a refused request, input dropped
+	// behind a close), so the engine drains it before closing (Loop.linger)
+	linger     bool
+	lingering  bool
+	linger_end i64
 }
 
 // Pending is what survives of a request whose response was deferred (Ctx.after).
@@ -84,6 +89,8 @@ pub fn (mut c Conn) reset(fd int) {
 	c.ws_frag = 0
 	c.ws_closing = false
 	c.ws_code = 0
+	c.linger = false
+	c.lingering = false
 }
 
 // Worker serves the requests of one event loop. It owns the Ctx, the Date cache
@@ -158,6 +165,7 @@ pub fn (mut w Worker) process(mut c Conn) {
 		}
 	}
 	if c.close_after {
+		c.linger = c.linger || off < c.rbuf.len
 		off = c.rbuf.len
 	}
 	c.reading = off < c.rbuf.len && isnil(c.ws)
@@ -336,4 +344,5 @@ fn (mut w Worker) refuse(mut c Conn, err IError) {
 	x.text(status, err.msg())
 	c.wbuf = x.out
 	c.close_after = true
+	c.linger = true // the rest of the request may still be on its way
 }

@@ -9,7 +9,8 @@
 
 [![ci](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml/badge.svg)](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/Tuntii/viltrum)](https://github.com/Tuntii/viltrum/releases)
-[![HTTP Arena H/1.1](https://img.shields.io/endpoint?url=https://http-arena.com/badge/viltrum/h1.json)](https://http-arena.com/#type=experimental&tuned=0)
+[![HTTP Arena H/1.1](https://img.shields.io/endpoint?url=https://http-arena.com/badge/viltrum/h1.json)](https://http-arena.com/frameworks/viltrum/)
+[![HTTP Arena WebSocket](https://img.shields.io/endpoint?url=https://http-arena.com/badge/viltrum/ws.json)](https://http-arena.com/frameworks/viltrum/)
 
 You write routes. Viltrum owns the wire: its own HTTP/1.1 engine, one epoll worker per CPU, pipelining, and no
 allocation per request inside the framework. No third-party stack under the hood.
@@ -77,39 +78,37 @@ Not on the 1.x core yet (they return later): the HTTP client, serving off Linux.
 
 ---
 
-## Numbers (laptop, not a lab)
+## Numbers
 
-v0.12.1, `-prod`, this developer machine (Ryzen 7 4800H). Three-run median, 2026-09-25. Re-run yourself.
+### HttpArena: first on HTTP/1.1 and on WebSocket
 
-| Workload | Rough result |
-|----------|----------------|
-| `GET /` sustained (oha, 10s, c=50) | ~217k req/s (Axum peer ~221k on the same run) |
-| `GET /` sustained (oha, 10s, c=100) | ~194k req/s (Axum peer ~247k) |
-| WebSocket echo (Python client) | ~11–23k msg/s (2026-07-23, client-bound; not re-run) |
+[HttpArena](https://http-arena.com) runs every entry on the same 64-thread machine with the same load generator.
+In the 2026-10-23 results Viltrum is **first of 13 on HTTP/1.1** (composite 7786) and **first of 11 on
+WebSocket** (composite 3000) in its category, with nine gold medals and one silver. The medals with their
+results:
 
-### HttpArena (shared 64-thread box, 2026-10-14, v0.13.0, `epoll_cores` entry)
+| | Profile | Connections | Result | Place |
+|:-:|---------|------------:|-------:|------:|
+| 🥇 | Baseline | 4,096 | 4.06M req/s | 1 / 13 |
+| 🥇 | Short-lived connections | 4,096 | 2.70M req/s | 1 / 13 |
+| 🥇 | JSON, gzip | 4,096 | 899K req/s | 1 / 12 |
+| 🥇 | JSON over TLS | 4,096 | 1.61M req/s | 1 / 12 |
+| 🥈 | Async (`/delay`) | 32,000 | 2.49M req/s | 2 / 11 |
+| 🥇 | WebSocket echo | 512 | 4.27M msg/s | 1 / 11 |
+| 🥇 | WebSocket echo, pipelined | 512 | 62.5M msg/s | 1 / 11 |
+| 🥇 | WebSocket echo, short-lived | 512 | 2.22M msg/s | 1 / 11 |
 
-The independent run, next to everything else on the same machine. Viltrum is mid-pack on plain HTTP and
-WebSocket, and far behind on compressed JSON (fixed in v0.13.1: gzip ~3.5× faster locally, not yet re-run there).
+The other medals, every profile and every connection count are on
+[http-arena.com/frameworks/viltrum](https://http-arena.com/frameworks/viltrum/).
 
-| Profile | viltrum | Rank | Field median | Axum |
-|---------|--------:|-----:|-------------:|-----:|
-| baseline, 4096 conns | 595k | 99 / 151 | 1.16M | 1.08M |
-| pipelined, 4096 conns | 981k | 98 / 140 | 2.49M | 6.48M |
-| limited-conn, 4096 conns | 524k | 79 / 151 | 565k | 685k |
-| json-comp, 4096 conns | 14k | 123 / 125 | 195k | 268k |
-| echo-ws, 4096 conns | 2.13M | 32 / 55 | 2.29M | — |
+The category is **Experimental**: HttpArena's label for young frameworks without much production use yet. Its
+default leaderboard shows flagship and emerging entries; tick Experimental to see Viltrum there. All three are
+scored the same way, and the default view's leader has a composite of 7306.
 
-It used 11–23 of the 64 cores on the HTTP profiles; GC pauses under many threads are the likely limit. Earlier
-single-VM runs ([PIPELINE.md](benches/compare/PIPELINE.md)) showed viltrum ahead of Axum, which did not hold
-on modern hardware. The entry lives in [benches/httparena](benches/httparena).
-
-```bash
-bash benches/run.sh
-bash benches/run_ws.sh
-```
-
-Method notes: [benches/RESULTS.md](benches/RESULTS.md).
+Two weeks earlier (2026-10-14, v0.13.0) the same benchmark had Viltrum mid-pack: baseline 595K req/s, 99th of
+151, and gzip JSON 14K req/s, 123rd of 125. What changed since is in the [release notes](https://github.com/Tuntii/viltrum/releases)
+and [ROADMAP.md](ROADMAP.md). The entry lives in [benches/httparena](benches/httparena); method notes are in
+[benches/RESULTS.md](benches/RESULTS.md).
 
 ---
 

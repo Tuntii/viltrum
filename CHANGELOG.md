@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.5.0](https://github.com/Tuntii/viltrum/compare/v1.4.0...v1.5.0) (2026-10-23)
+
+### Features
+
+* forms and uploads on the 1.x core (form_value, form_file, form_parts) ([72fe4e3](https://github.com/Tuntii/viltrum/commit/72fe4e36005534d3740ebccde44b1289fc31db64))
+
+### Bug Fixes
+
+* **engine:** handle_raw never answers a deferred response early ([221a6f9](https://github.com/Tuntii/viltrum/commit/221a6f9d27bfc25f43395d759ce7aa83923a609a))
+* **engine:** lingering close, 413 at the read cap, EINTR on recv/send ([7fae422](https://github.com/Tuntii/viltrum/commit/7fae4229192be53c228d9bc57d179954e6fb9301))
+
 ## [1.4.0](https://github.com/Tuntii/viltrum/compare/v1.3.2...v1.4.0) (2026-10-23)
 
 ### Features

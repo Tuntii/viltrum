@@ -87,9 +87,10 @@ fn test_bad_pattern_is_reported() {
 // recover leaves a deferred response alone, and handle_raw waits it out.
 fn test_deferred_response() {
 	app := build_app()
-	t0 := time.ticks()
+	// the monotonic clock: time.ticks moves in ~16 ms steps on Windows
+	t0 := time.sys_mono_now()
 	res := app.handle_raw('GET /wait/30 HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
-	assert time.ticks() - t0 >= 30
+	assert time.sys_mono_now() - t0 >= 30_000_000
 	assert res.starts_with('HTTP/1.1 200 OK\r\n') && res.contains('X-Waited: yes\r\n')
 	assert res.ends_with('waited 30') && !res.contains('Connection: close')
 }

@@ -246,8 +246,12 @@ pub fn (mut w Worker) process_waiting(mut c Conn) {
 			if c.file_fd >= 0 {
 				w.inline_file(mut c)
 			} else {
-				now := time.sys_mono_now()
-				if c.pending.due > now {
+				// a sleep can end early (Windows rounds it down to whole milliseconds)
+				for {
+					now := time.sys_mono_now()
+					if now >= c.pending.due {
+						break
+					}
 					time.sleep(time.Duration(i64(c.pending.due - now)))
 				}
 				w.resume(mut c)

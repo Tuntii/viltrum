@@ -10,6 +10,7 @@
 | `c.query_param('q')`, `c.query_int('n')` | first query value, `%XX` and `+` decoded |
 | `c.header('name')`, `c.header_values('name')` | first field (any case) / iterator over repeated fields |
 | `c.body()`, `c.body_int()` | body bytes (chunked bodies arrive decoded) |
+| `c.form_value('f')`, `c.form_int('n')`, `c.form_file('doc')`, `c.form_parts()` | urlencoded and multipart forms ([forms.md](./forms.md)) |
 | `c.worker_id()` | index of the worker thread |
 
 Every string and slice above is a view into connection buffers, valid until the handler returns. Clone what

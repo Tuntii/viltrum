@@ -53,7 +53,8 @@ Success looks like:
 | gzip on viltrum's own DEFLATE encoder | done (1.2.2) |
 | WebSocket (`ws://`, `wss://`) | done (Phase 3) |
 | Static files (`static_files`, `c.file`): validators, ranges, `sendfile` | done (Phase 4) |
-| Generic upgrade, forms and uploads, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
+| Forms and uploads (`form_value`, `form_file`, `form_parts`) | done (Phase 4) |
+| Generic upgrade, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
 
 Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
 [benches/httparena](benches/httparena). On the 2026-10-20 run viltrum was near the top on baseline,
@@ -96,10 +97,12 @@ limited-conn, async and the latency profiles, mid-field on json-comp, and absent
 
 ## Phase 4 — 1.0 hardening and the missing pieces
 
-- [ ] The known gaps below that matter in production first (lingering close, 413 at the read cap, EINTR)
+- [x] The known gaps below that matter in production first: lingering close, 413 at the read cap and for
+  any oversized `Content-Length`, EINTR on recv/send
 - [x] Static files back on the new core: `app.static_files`, `c.file`, ETag / Last-Modified / 304, byte
   ranges, large files streamed with `sendfile` ([docs/files.md](docs/files.md))
-- [ ] Forms and uploads back on the new core
+- [x] Forms and uploads back on the new core: `c.form_value`, `c.form_file`, `c.form_parts`, parsed in place
+  ([docs/forms.md](docs/forms.md))
 
 ## Phase 5 — HTTP/2 (decision needed)
 
@@ -119,11 +122,9 @@ None are smuggling or correctness bugs on valid traffic; pull when touched or as
 
 | Area | Gap |
 |------|-----|
-| Engine | No lingering close (a client still uploading may get RST instead of the 413/400); land with uploads |
-| Engine | rbuf full at the cap closes silently instead of 413 (only via chunk overhead); EINTR on recv/send closes |
 | Engine | `epoll_ctl(DEL)` result unchecked; listener leak on startup failure; port 0 binds a different port per worker |
 | Engine | `is_http10` misses a request with a leading bare CRLF (may send 100 Continue to HTTP/1.0) |
-| HTTP | No `Allow` header on 405; 10-digit Content-Length > i32 answers 400 instead of 413 |
+| HTTP | No `Allow` header on 405 |
 | Router | Duplicate static route silently ignored (first wins); 404/405 cost O(routes) |
 | Middleware | Global `cors` answers every OPTIONS; `logger` prints status 0 when nothing responded; gzip `Vary` only on bodies ≥ 256 B and q-value scan stops at space, not tab |
 | gzip | `tdefl_compressor_alloc` nil and `tdefl_init` result unchecked |

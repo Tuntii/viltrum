@@ -187,20 +187,25 @@ pub fn (c &Ctx) param_int(name string) ?i64 {
 // decoded. A value without escapes is a view into the request; a decoded one lives
 // in a per-request buffer. Both are valid until the handler returns.
 pub fn (mut c Ctx) query_param(name string) ?string {
-	end := c.head.query.start + c.head.query.len
-	mut i := c.head.query.start
+	return c.pair_value(c.buf, c.head.query.start, c.head.query.start + c.head.query.len, name)
+}
+
+// pair_value finds name among the urlencoded pairs of src[start..end] (a query string
+// or a form body) and returns its value decoded.
+fn (mut c Ctx) pair_value(src []u8, start int, end int, name string) ?string {
+	mut i := start
 	for i < end {
 		ks := i
-		for i < end && c.buf[i] != `&` && c.buf[i] != `=` {
+		for i < end && src[i] != `&` && src[i] != `=` {
 			i++
 		}
 		ke := i
 		mut vs := i
 		mut ve := i
-		if i < end && c.buf[i] == `=` {
+		if i < end && src[i] == `=` {
 			i++
 			vs = i
-			for i < end && c.buf[i] != `&` {
+			for i < end && src[i] != `&` {
 				i++
 			}
 			ve = i
@@ -208,8 +213,8 @@ pub fn (mut c Ctx) query_param(name string) ?string {
 		if i < end {
 			i++
 		}
-		if ke > ks && c.key_is(ks, ke, name) {
-			return c.decoded(vs, ve)
+		if ke > ks && c.key_is(src, ks, ke, name) {
+			return c.decoded(src, vs, ve)
 		}
 	}
 	return none
@@ -237,12 +242,12 @@ pub fn (c &Ctx) worker_id() int {
 	return c.worker
 }
 
-fn (mut c Ctx) key_is(s int, e int, name string) bool {
-	if !needs_decode(c.buf, s, e) {
-		return str_view(c.buf, s, e - s) == name
+fn (mut c Ctx) key_is(src []u8, s int, e int, name string) bool {
+	if !needs_decode(src, s, e) {
+		return str_view(src, s, e - s) == name
 	}
 	mark := c.qbuf.len
-	ok := c.decoded(s, e) == name
+	ok := c.decoded(src, s, e) == name
 	unsafe {
 		c.qbuf.len = mark
 	}
@@ -258,22 +263,22 @@ fn needs_decode(buf []u8, s int, e int) bool {
 	return false
 }
 
-fn (mut c Ctx) decoded(s int, e int) string {
-	if !needs_decode(c.buf, s, e) {
-		return str_view(c.buf, s, e - s)
+fn (mut c Ctx) decoded(src []u8, s int, e int) string {
+	if !needs_decode(src, s, e) {
+		return str_view(src, s, e - s)
 	}
 	start := c.qbuf.len
 	mut k := s
 	for k < e {
-		ch := c.buf[k]
+		ch := src[k]
 		if ch == `+` {
 			c.qbuf << ` `
 			k++
 			continue
 		}
 		if ch == `%` && k + 2 < e {
-			hi := hex_value(c.buf[k + 1])
-			lo := hex_value(c.buf[k + 2])
+			hi := hex_value(src[k + 1])
+			lo := hex_value(src[k + 2])
 			if hi >= 0 && lo >= 0 {
 				c.qbuf << u8(hi * 16 + lo)
 				k += 3

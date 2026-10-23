@@ -147,6 +147,29 @@ fn test_websocket_behind_gzip() {
 	assert !r.contains('Content-Encoding') && r.ends_with('x'.repeat(100))
 }
 
+fn upload(mut c viltrum.Ctx) {
+	f := c.form_file('doc') or {
+		c.text(400, 'no file')
+		return
+	}
+	note := c.form_value('note') or { '' }
+	name := f.safe_filename() or { '' }
+	c.text(200, '${note}|${name}|${f.content_type}|${f.data.bytestr()}')
+}
+
+fn test_form_upload_through_the_app() {
+	mut a := viltrum.new()
+	a.post('/up', upload)
+	body := '--b\r\nContent-Disposition: form-data; name="note"\r\n\r\nhi there\r\n--b\r\nContent-Disposition: form-data; name="doc"; filename="../x.txt"\r\nContent-Type: text/plain\r\n\r\nfile\r\nbody\r\n--b--\r\n'
+	r :=
+		a.handle_raw('POST /up HTTP/1.1\r\nHost: x\r\nContent-Type: multipart/form-data; boundary=b\r\nContent-Length: ${body.len}\r\n\r\n${body}')!
+	assert r.starts_with('HTTP/1.1 200 ')
+		&& r.ends_with('\r\n\r\nhi there|x.txt|text/plain|file\r\nbody')
+	r2 :=
+		a.handle_raw('POST /up HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 6\r\n\r\ndoc=no')!
+	assert r2.starts_with('HTTP/1.1 400 ')
+}
+
 // publish and ws_send need a running server; without one they are dropped quietly.
 fn test_publish_without_a_server_is_dropped() {
 	mut a := viltrum.new()

@@ -22,6 +22,9 @@ pub type Listener = engine.Listener
 pub type FileOptions = http1.FileOptions
 pub type StaticOptions = http1.StaticOptions
 
+// FormPart is one part of a multipart/form-data body (Ctx.form_file, Ctx.form_parts).
+pub type FormPart = http1.FormPart
+
 // Ws is one WebSocket connection inside its callbacks: send_text, send_binary,
 // ping, close, subscribe, publish, id, protocol, worker_id, and `data` for the
 // connection's own state.

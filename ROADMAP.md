@@ -124,12 +124,11 @@ None are smuggling or correctness bugs on valid traffic; pull when touched or as
 |------|-----|
 | Engine | `epoll_ctl(DEL)` result unchecked; listener leak on startup failure; port 0 binds a different port per worker |
 | Engine | `is_http10` misses a request with a leading bare CRLF (may send 100 Continue to HTTP/1.0) |
-| HTTP | No `Allow` header on 405 |
 | Router | Duplicate static route silently ignored (first wins); 404/405 cost O(routes) |
 | Middleware | Global `cors` answers every OPTIONS; `logger` prints status 0 when nothing responded; gzip `Vary` only on bodies ≥ 256 B and q-value scan stops at space, not tab |
 | gzip | `tdefl_compressor_alloc` nil and `tdefl_init` result unchecked |
 | JSON | `snprintf` result unchecked; struct field names written unescaped |
-| API | `Ctx` exposes internals as `pub mut` (`buf`, `out`, `chain`, `idx`, …); request counter not on `App`; groups lack `head`/`options` |
+| API | `Ctx` exposes internals as `pub mut` (`buf`, `out`, `chain`, `idx`, …); request counter not on `App` |
 | Buffers | Shrink only on close, not when a grown connection goes idle |
 | Tests | Positive control for `allocated_bytes()`; alloc guard around `DateCache.format`; `%`-escape in the zero-alloc gate; cumulative chunked cap across chunks; trailers split across reads; exact-32-fields accept; EMFILE path; suite under `-d viltrum_debug`; CI `v fmt -verify` |
 | Lint | `router/` not linted; map/array literals not linted (the zero-alloc gate is the real enforcement) |

@@ -24,6 +24,10 @@ vls.log
 !/benches/httparena/
 !/benches/autobahn/
 !/benches/AUTOBAHN.md
+!/benches/hotpath/
+/benches/hotpath/*
+!/benches/hotpath/main.v
+!/benches/hotpath/README.md
 # Side-by-side vs Axum (source only; not target/)
 !/benches/compare/
 /benches/compare/**

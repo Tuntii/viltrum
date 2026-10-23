@@ -4,12 +4,13 @@
 
 | Call | Returns |
 |------|---------|
-| `c.method()` | `Method` enum (`.get`, `.post`, …, `.other`) |
+| `c.method()`, `c.method_name()` | `Method` enum (`.get`, `.post`, …, `.other`) / the method as sent (`'GET'`, `'PROPFIND'`); `Method.name()` gives `'GET'` for an enum value |
 | `c.path()`, `c.query()` | raw path (no query) and raw query string |
 | `c.param('id')`, `c.param_int('id')` | route params |
 | `c.query_param('q')`, `c.query_int('n')` | first query value, `%XX` and `+` decoded |
 | `c.header('name')`, `c.header_values('name')` | first field (any case) / iterator over repeated fields |
-| `c.body()`, `c.body_int()` | body bytes (chunked bodies arrive decoded) |
+| `c.cookie('name')` | a request cookie's value (every `Cookie` header searched, quotes removed) |
+| `c.body()`, `c.body_text()`, `c.body_int()` | body bytes (chunked bodies arrive decoded) / the same as a string view, for decoders: `json.decode(User, c.body_text())` |
 | `c.form_value('f')`, `c.form_int('n')`, `c.form_file('doc')`, `c.form_parts()` | urlencoded and multipart forms ([forms.md](./forms.md)) |
 | `c.worker_id()` | index of the worker thread |
 
@@ -19,13 +20,49 @@ as garbage in tests.
 
 ## Response
 
-`c.text(status, s)`, `c.text_int(status, n)`, `c.json(status, value)`, `c.bytes(status, content_type, data)`,
-`c.no_content(status)`, `c.file(path)` (see [files.md](./files.md)). Add headers first with `c.set_header(name, value)` (up to 16) and call `c.close()` first
+`c.text(status, s)`, `c.text_int(status, n)`, `c.json(status, value)`, `c.html(status, s)`,
+`c.bytes(status, content_type, data)`, `c.no_content(status)`, `c.redirect(status, location)`, `c.file(path)`
+(see [files.md](./files.md)). Add headers first with `c.set_header(name, value)` (up to 16) and call `c.close()` first
 to close the connection after the response. One response per request; a second call is ignored (it panics in
 `-d viltrum_debug` builds).
 
 The framework writes `Content-Length`, `Date` (on by default) and `Server` (if `Options.server_header` is set).
-HEAD answers keep `Content-Length` and drop the body.
+HEAD answers keep `Content-Length` and drop the body. A 405 carries `Allow` with the methods the path has.
+
+### HTML, redirects, cookies
+
+```v
+app.post('/login', fn (mut c viltrum.Ctx) {
+	// ...check the form...
+	c.set_cookie(name: 'session', value: token, max_age: 7 * 24 * 3600)
+	c.redirect(303, '/items') // 303: the browser follows a form POST with a GET
+})
+
+app.get('/items', fn (mut c viltrum.Ctx) {
+	token := c.cookie('session') or {
+		c.redirect(303, '/login')
+		return
+	}
+	c.html(200, render_items(token))
+})
+
+app.post('/logout', fn (mut c viltrum.Ctx) {
+	c.clear_cookie(name: 'session')
+	c.redirect(303, '/login')
+})
+```
+
+- `c.html(status, s)` answers `text/html; charset=utf-8`.
+- `c.redirect(status, location)` answers 301, 302, 303, 307 or 308 with `Location` and an empty body. A location
+  holding CR or LF is dropped, like any header value.
+- `c.set_cookie(viltrum.Cookie{...})` adds a `Set-Cookie`. The defaults are the safe ones for a session:
+  `Path=/`, `HttpOnly`, `SameSite=Lax`. `max_age` in seconds (0 keeps it a session cookie), `secure`, `domain`,
+  `same_site: .strict | .lax | .cross_site | .unset` (`.cross_site` is `SameSite=None` and always sends
+  `Secure`, which browsers require for it). A cookie whose name, value, path or domain could not travel in a
+  cookie is dropped. `c.clear_cookie(name: ..., path: ...)` sends it again with `Max-Age=0`.
+
+These compose their header values in a 512-byte buffer inside the `Ctx`, so they allocate nothing; a response
+whose composed headers exceed it drops the one that did not fit (panics under `-d viltrum_debug`).
 
 ## Deferred responses
 

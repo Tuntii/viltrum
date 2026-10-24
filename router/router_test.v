@@ -14,7 +14,6 @@ fn build() &Router {
 		r.add(.get, p, chain()) or { panic(err) }
 	}
 	r.add(.post, '/a/b', chain()) or { panic(err) }
-	r.add(.get, '/a/b', chain()) or { panic(err) } // duplicate: the first one wins
 	return r
 }
 
@@ -106,4 +105,17 @@ fn test_static_beats_dynamic() {
 	}
 	idx, _ := lookup(r, .get, '/u/7')
 	assert idx == 0
+}
+
+fn test_duplicate_routes_are_refused() {
+	mut r := build()
+	for p in ['/a/b', '/a/b/', '//a/b', '/u/:user', '/files/*path'] {
+		if _ := r.add(.get, p, chain()) {
+			assert false, 'accepted a second GET ' + p
+		}
+	}
+	r.add(.get, '/u/:id/x', chain()) or { panic(err) } // a different shape
+	r.add(.put, '/a/b', chain()) or { panic(err) } // a different method
+	idx, _ := lookup(r, .get, '/a/b')
+	assert idx == 1
 }

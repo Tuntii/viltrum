@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.9.0](https://github.com/Tuntii/viltrum/compare/v1.8.0...v1.9.0) (2026-10-24)
+
+### Features
+
+* **engine:** HTTP/2 over TLS, chosen by ALPN on both handshake paths ([1772850](https://github.com/Tuntii/viltrum/commit/1772850ac84486180aeed558d064af32ac7db30e))
+
 ## [1.8.0](https://github.com/Tuntii/viltrum/compare/v1.7.0...v1.8.0) (2026-10-24)
 
 ### Features

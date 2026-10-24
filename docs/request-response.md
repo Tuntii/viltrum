@@ -85,7 +85,8 @@ app.get('/delay/:ms', fn (mut c viltrum.Ctx) {
 By the time `cb` runs the request is gone: path, params, headers and body read empty, and headers set before
 `after` are dropped, so pass what `cb` needs in `arg` (a value, or an index into your own per-worker state).
 Requests pipelined behind a deferred one wait their turn, the connection's timeouts pause while it waits, and
-a connection that closes first simply drops its response. Middleware that runs after `c.next()` sees no
+a connection that closes first simply drops its response. Over HTTP/2 only the request's own stream waits;
+the connection's other streams are answered meanwhile ([docs/http2.md](http2.md)). Middleware that runs after `c.next()` sees no
 response yet, so a deferred response is not gzipped. `ms <= 0` calls `cb` right away. Timers have millisecond
 granularity and round up.
 

@@ -2,10 +2,12 @@ module engine
 
 // Timer is a deferred response due on the connection at fd. gen tells a timer for
 // an earlier connection on the same fd (closed since) from one for the current one.
+// stream is the HTTP/2 stream it answers, 0 on HTTP/1.1.
 struct Timer {
-	due u64 // time.sys_mono_now() ns
-	fd  int
-	gen u32
+	due    u64 // time.sys_mono_now() ns
+	fd     int
+	gen    u32
+	stream u32
 }
 
 // Timers is a binary min-heap on due. It grows to the most responses ever pending
@@ -15,11 +17,12 @@ mut:
 	a []Timer
 }
 
-fn (mut t Timers) push(due u64, fd int, gen u32) {
+fn (mut t Timers) push(due u64, fd int, gen u32, stream u32) {
 	t.a << Timer{
-		due: due
-		fd:  fd
-		gen: gen
+		due:    due
+		fd:     fd
+		gen:    gen
+		stream: stream
 	} // cold: grows to the peak pending count once
 	mut i := t.a.len - 1
 	for i > 0 {

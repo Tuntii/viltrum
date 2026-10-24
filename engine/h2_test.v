@@ -2,6 +2,7 @@ module engine
 
 import os
 import rand
+import time
 import viltrum.http1
 import viltrum.http2
 import viltrum.router
@@ -31,12 +32,18 @@ fn h2_file(mut c http1.Ctx) {
 	c.file(h2_file_path, http1.FileOptions{})
 }
 
+// h2_defer_cb defers again arg more times, then answers
 fn h2_defer_cb(mut c http1.Ctx, arg u64) {
+	if arg > 0 {
+		c.after(1, h2_defer_cb, arg - 1)
+		return
+	}
 	c.text(200, 'late')
 }
 
 fn h2_defer(mut c http1.Ctx) {
-	c.after(10, h2_defer_cb, 0)
+	c.set_header('X-Dropped', 'set before after') // dropped, as on HTTP/1.1
+	c.after(10, h2_defer_cb, u64(c.query_int('n') or { 0 }))
 }
 
 fn h2_status(mut c http1.Ctx) {
@@ -759,15 +766,82 @@ fn test_large_header_list_answers_431() {
 	assert cl.responses(parse(take(mut w, mut c)))[3].body == '2'.bytes()
 }
 
+// fire answers every deferred response on c, as the event loop does once each is due,
+// without waiting for them; responses deferred again on the way are answered too.
+fn fire(mut w Worker, mut c Conn) int {
+	mut n := 0
+	for w.timers.a.len > 0 {
+		t := w.timers.pop()
+		assert t.fd == c.fd && t.gen == c.gen && t.stream != 0
+		if w.h2_resume(mut c, t.stream) {
+			n++
+		}
+	}
+	return n
+}
+
+// A deferred response waits on its own stream only: the streams after it are answered
+// at once, and it follows when its timer is due, deferred again or not.
 fn test_deferred_and_404() {
 	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
 	mut c := open(mut w, [])
 	mut cl := Client{}
 	mut b := cl.get(1, '/defer')
 	b << cl.get(3, '/nope')
+	b << cl.get(5, '/defer?n=2')
+	b << cl.get(7, '/baseline2?a=1&b=2')
+	t0 := time.sys_mono_now()
 	feed(mut w, mut c, b)
 	r := cl.responses(parse(take(mut w, mut c)))
-	assert r[1].status == '501' && r[3].status == '404'
+	assert 1 !in r && 5 !in r && r[3].status == '404' && r[7].body == '3'.bytes()
+	assert c.h2.waiting == 2 && c.h2.open == 2 && c.h2_waits() && !c.reading
+	assert w.timers.a.len == 2 && w.timers.a[0].due >= t0 + 10 * u64(time.millisecond)
+	assert fire(mut w, mut c) == 4 // stream 5 waited three times
+	r2 := cl.responses(parse(take(mut w, mut c)))
+	for id in [u32(1), 5] {
+		assert r2[id].status == '200' && r2[id].body == 'late'.bytes() && r2[id].ended
+		assert 'x-dropped' !in r2[id].headers
+	}
+	assert c.h2.open == 0 && c.h2.waiting == 0 && !c.h2_waits() && !c.close_after
+}
+
+// The window a waiting stream gets meanwhile, from WINDOW_UPDATE and from a change of
+// SETTINGS_INITIAL_WINDOW_SIZE, is the window its response goes out on.
+fn test_deferred_follows_window() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [[u32(http2.settings_initial_window_size), 0]])
+	mut cl := Client{}
+	feed(mut w, mut c, cl.get(1, '/defer'))
+	take(mut w, mut c)
+	mut b := settings([[u32(http2.settings_initial_window_size), 1]])
+	b << window_update(1, 2)
+	feed(mut w, mut c, b)
+	take(mut w, mut c)
+	fire(mut w, mut c)
+	r := cl.responses(parse(take(mut w, mut c)))
+	assert r[1].status == '200' && r[1].body == 'lat'.bytes() && !r[1].ended
+	feed(mut w, mut c, window_update(1, 10))
+	fs := parse(take(mut w, mut c))
+	assert fs.len == 1 && fs[0].payload == 'e'.bytes() && fs[0].flags == http2.flag_end_stream
+	assert c.h2.open == 0
+}
+
+// A stream the client resets while it waits drops its response: the timer finds
+// nothing to answer, and the slot is free again.
+fn test_deferred_stream_reset() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	mut b := cl.get(1, '/defer')
+	b << frame(http2.frame_rst_stream, 0, 1, [u8(0), 0, 0, 8]) // CANCEL
+	feed(mut w, mut c, b)
+	assert c.h2.open == 0 && c.h2.waiting == 0 && !c.h2_waits()
+	assert fire(mut w, mut c) == 0
+	assert take(mut w, mut c).len == 0
+	// a closing connection answers no deferred stream either
+	feed(mut w, mut c, cl.get(3, '/defer'))
+	w.h2_fail(mut c, http2.err_no_error)
+	assert fire(mut w, mut c) == 0
 }
 
 // requests is n copies of frames on streams from id on, two apart: the client's
@@ -822,6 +896,32 @@ fn test_h2_allocates_nothing() {
 		}
 		assert http1.allocated_bytes() - before == 0, '${path} allocates'
 	}
+}
+
+// and a deferred response: parked on its stream, answered when its timer is due
+fn test_h2_deferred_allocates_nothing() {
+	mut w := new_worker(h2_router(), Options{}, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	warm := requests(mut cl, '/defer', 1, 200, false)
+	reqs := requests(mut cl, '/defer', 401, 5000, false)
+	mut before := u64(0)
+	for k, b in [warm, reqs] {
+		if k == 1 {
+			before = http1.allocated_bytes()
+		}
+		for req in b {
+			unsafe { c.rbuf.push_many(req.data, req.len) }
+			w.process(mut c)
+			t := w.timers.pop()
+			assert w.h2_resume(mut c, t.stream)
+			unsafe {
+				c.wbuf.len = 0
+			}
+		}
+	}
+	assert http1.allocated_bytes() - before == 0
+	assert c.h2.open == 0
 }
 
 // random frames and mutated good ones never upset the worker, and what it writes is

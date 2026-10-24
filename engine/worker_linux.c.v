@@ -162,7 +162,8 @@ fn (l &Loop) wait_ns() i64 {
 }
 
 // fire writes every deferred response that is due, then serves what was pipelined
-// behind each. A timer whose connection has closed (or been reused) is dropped.
+// behind each. A timer whose connection has closed (or been reused), or whose HTTP/2
+// stream was reset, is dropped.
 fn (mut l Loop) fire() {
 	if l.w.timers.a.len == 0 {
 		return
@@ -174,13 +175,21 @@ fn (mut l Loop) fire() {
 			continue
 		}
 		mut c := l.conns[t.fd]
-		if c.fd != t.fd || c.gen != t.gen || !c.waiting {
+		if c.fd != t.fd || c.gen != t.gen {
 			continue
 		}
-		l.w.resume(mut c)
+		if t.stream != 0 {
+			if isnil(c.h2) || !l.w.h2_resume(mut c, t.stream) {
+				continue
+			}
+		} else if c.waiting {
+			l.w.resume(mut c)
+		} else {
+			continue
+		}
 		l.drain(mut c)
 		l.read_pending(mut c)
-		if c.fd >= 0 && !c.out_armed && !c.lingering {
+		if c.fd >= 0 && !c.out_armed && !c.lingering && !l.h2_held_deadline(mut c) {
 			c.deadline_ms = l.now + if c.reading {
 				l.opts.read_timeout.milliseconds()
 			} else {
@@ -746,7 +755,7 @@ fn (mut l Loop) sweep() {
 	}
 	for i in 0 .. l.conns.len {
 		// a waiting connection is answered by its timer, not timed out
-		if isnil(l.conns[i]) || l.conns[i].fd < 0 || l.conns[i].waiting
+		if isnil(l.conns[i]) || l.conns[i].fd < 0 || l.conns[i].waiting || l.conns[i].h2_waits()
 			|| l.now <= l.conns[i].deadline_ms {
 			continue
 		}

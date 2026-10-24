@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.11.0](https://github.com/Tuntii/viltrum/compare/v1.10.0...v1.11.0) (2026-10-24)
+
+### Features
+
+* **engine:** deferred responses (c.after) over HTTP/2 ([b40f1f9](https://github.com/Tuntii/viltrum/commit/b40f1f976d1517397989dee0b148a370b1827155))
+
 ## [1.10.0](https://github.com/Tuntii/viltrum/compare/v1.9.0...v1.10.0) (2026-10-24)
 
 ### Features

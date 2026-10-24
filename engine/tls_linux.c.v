@@ -11,6 +11,7 @@ fn C.mbedtls_ssl_set_user_data_p(ssl &C.mbedtls_ssl_context, p voidptr)
 fn C.mbedtls_ssl_get_user_data_p(ssl &C.mbedtls_ssl_context) voidptr
 fn C.viltrum_tls_conf(conf &C.mbedtls_ssl_config, cert_cb fn (&C.mbedtls_ssl_context) int, drbg &C.mbedtls_ctr_drbg_context) i32
 fn C.viltrum_tls_reset(ssl &C.mbedtls_ssl_context) i32
+fn C.viltrum_tls_fresh(ssl &C.mbedtls_ssl_context) int
 fn C.viltrum_tls_set_bio(ssl &C.mbedtls_ssl_context, b &C.viltrum_bio, fd &int, buf &u8, cap usize)
 fn C.viltrum_tls_check_pair(crt &C.mbedtls_x509_crt, key &C.mbedtls_pk_context, drbg &C.mbedtls_ctr_drbg_context) i32
 fn C.viltrum_tls_load_key(key &C.mbedtls_pk_context, path &char, drbg &C.mbedtls_ctr_drbg_context) i32
@@ -327,6 +328,13 @@ fn (mut t TlsConn) write(buf &u8, n int) int {
 		return -1
 	}
 	return -2
+}
+
+// fresh reports a handshake that has not processed a ClientHello yet. Its next step
+// is the expensive one: the key exchange and the certificate signature, together
+// milliseconds of CPU with an RSA key.
+fn (t &TlsConn) fresh() bool {
+	return C.viltrum_tls_fresh(&t.ssl) != 0
 }
 
 // pending reports input that epoll cannot see: in mbedtls or in the read-ahead.

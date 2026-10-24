@@ -27,6 +27,7 @@ pub mut:
 	pending     Pending
 	tls         &TlsConn = unsafe { nil } // the TLS session while this connection is TLS
 	tls_keep    &TlsConn = unsafe { nil } // kept across connections so mbedtls' buffers are reused
+	hs_queued   bool // its next handshake step waits in the worker's queue (Loop.next_handshake)
 	// WebSocket, once the connection is upgraded
 	ws         &http1.WsHandler = unsafe { nil }
 	ws_data    voidptr
@@ -81,6 +82,7 @@ pub fn (mut c Conn) reset(fd int) {
 	c.counted = false
 	c.waiting = false
 	c.tls = unsafe { nil }
+	c.hs_queued = false
 	c.ws = unsafe { nil }
 	c.ws_data = unsafe { nil }
 	unsafe {

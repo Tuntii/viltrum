@@ -207,6 +207,12 @@ static int viltrum_tls_is13(const mbedtls_ssl_context *ssl) {
 	return mbedtls_ssl_get_version_number(ssl) == MBEDTLS_SSL_VERSION_TLS1_3;
 }
 
+// viltrum_tls_fresh is true until a ClientHello has been processed: the next step is
+// the one that runs the key exchange and signs with the certificate's key.
+static int viltrum_tls_fresh(const mbedtls_ssl_context *ssl) {
+	return ssl->MBEDTLS_PRIVATE(state) <= MBEDTLS_SSL_CLIENT_HELLO;
+}
+
 // viltrum_tls13_expand is HKDF-Expand-Label (RFC 8446 7.1) with an empty context:
 // out_len bytes of label ("key", "iv", "traffic upd") from secret, over SHA-256 or
 // SHA-384 as the cipher suite says.

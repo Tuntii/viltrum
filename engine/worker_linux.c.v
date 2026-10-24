@@ -60,6 +60,8 @@ mut:
 	inbox      &Inbox = unsafe { nil }
 	posts      []&http1.WsPost // the inbox's last batch
 	touched    []&Conn         // connections a batch wrote to, to flush
+	hs         []int           // fds whose first handshake step waits, oldest first from hs_head
+	hs_head    int
 }
 
 fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opts Options, hub &Hub, mut stop Stop, mut count ConnCount) {
@@ -107,7 +109,9 @@ fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opt
 fn (mut l Loop) run() {
 	mut events := [max_events]C.epoll_event{}
 	for !l.stop.requested() {
-		n := C.viltrum_epoll_wait(l.epfd, &events[0], max_events, l.wait_ns())
+		// with handshakes queued, only look for what is ready and run the next one
+		wait := if l.hs_head < l.hs.len { i64(0) } else { l.wait_ns() }
+		n := C.viltrum_epoll_wait(l.epfd, &events[0], max_events, wait)
 		l.now = time.ticks()
 		for i in 0 .. n {
 			fd := unsafe { events[i].data.fd }
@@ -127,6 +131,7 @@ fn (mut l Loop) run() {
 			l.sweep()
 			l.last_sweep = l.now
 		}
+		l.next_handshake()
 	}
 	for i in 0 .. l.conns.len {
 		if !isnil(l.conns[i]) && l.conns[i].fd >= 0 {
@@ -305,7 +310,11 @@ fn (mut l Loop) on_event(fd int, ev u32) {
 	if !isnil(c.tls) {
 		c.tls.readable()
 		if c.tls.handshaking {
-			l.handshake(mut c)
+			if c.tls.fresh() {
+				l.queue_handshake(mut c)
+			} else {
+				l.handshake(mut c)
+			}
 			return
 		}
 	}
@@ -321,6 +330,38 @@ fn (mut l Loop) on_event(fd int, ev u32) {
 	}
 	if ev & (u32(C.EPOLLIN) | u32(C.EPOLLRDHUP)) != 0 {
 		l.on_readable(mut c)
+	}
+}
+
+// queue_handshake defers c's first handshake step to next_handshake.
+fn (mut l Loop) queue_handshake(mut c Conn) {
+	if !c.hs_queued {
+		c.hs_queued = true
+		l.hs << c.fd // cold: grows to the most handshakes ever waiting at once
+	}
+}
+
+// next_handshake runs the oldest queued first handshake step. That step signs with
+// the certificate's key: milliseconds of CPU with RSA, where a request takes
+// microseconds. Run as they came, a burst of new connections held every open
+// connection on the worker behind all of their handshakes (tens of milliseconds
+// when a client opens hundreds at once); one per turn of the loop, with what is
+// ready served in between, holds them behind one at most.
+fn (mut l Loop) next_handshake() {
+	for l.hs_head < l.hs.len {
+		fd := l.hs[l.hs_head]
+		l.hs_head++
+		// the fd may have closed, or been reused by a connection queued again later
+		if fd < l.conns.len && !isnil(l.conns[fd]) && l.conns[fd].fd == fd && l.conns[fd].hs_queued {
+			mut c := l.conns[fd]
+			c.hs_queued = false
+			l.handshake(mut c)
+			break
+		}
+	}
+	if l.hs_head == l.hs.len && l.hs_head > 0 {
+		l.hs.clear()
+		l.hs_head = 0
 	}
 }
 
@@ -624,6 +665,7 @@ fn (mut l Loop) close(mut c Conn) {
 		l.w.ws_end(mut c)
 	}
 	c.end_file()
+	c.hs_queued = false
 	// the result does not matter: closing the fd, never dup'd, drops it from epoll too
 	l.ctl(C.EPOLL_CTL_DEL, c.fd, 0)
 	if !isnil(c.tls) {

@@ -16,6 +16,7 @@ app.static_files('/docs', './site', max_age: 3600, index: 'index.html')
 | `index` | `'index.html'` | served for a directory; `''` answers 404 instead |
 | `max_age` | `-1` | seconds for `Cache-Control: max-age`; `-1` sends no `Cache-Control` |
 | `dotfiles` | `false` | serve names starting with `.` (`.env`, `.git/…`) |
+| `precompressed` | `false` | serve `name.br` or `name.gz` beside a file to clients that accept it (see below) |
 
 A directory requested without its trailing slash (`/docs/guide`) gets a 301 to `/docs/guide/`, query kept, so
 relative links in its index resolve. Other methods answer 405 with `Allow: GET, HEAD`.
@@ -51,6 +52,18 @@ A missing, unreadable or non-regular file answers 404.
 
 File answers bypass `gzip`: the body is not read into memory to be compressed, and a compressed body would no
 longer match `Content-Range`.
+
+Compressed copies made ahead of time are another matter. With `precompressed: true` (as nginx's
+`gzip_static` and `brotli_static`), a request for `app.css` whose `Accept-Encoding` takes `br` gets
+`app.css.br` if it exists, else one taking `gzip` gets `app.css.gz`, else `app.css` itself. The copy goes out
+with the original's `Content-Type`, `Content-Encoding: br` or `gzip`, and its own ETag, and every answer from
+such a route carries `Vary: Accept-Encoding` so caches keep the forms apart. Copies are read from disk on each
+request like the files themselves: replace one and the next answer has the new bytes. Making them is up to
+you (`brotli -k`, `gzip -k` at build time); viltrum never compresses a file.
+
+```v
+app.static_files('/assets', './public', precompressed: true, max_age: 86400)
+```
 
 ## How it is sent
 

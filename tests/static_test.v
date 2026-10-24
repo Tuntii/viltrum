@@ -243,3 +243,45 @@ fn test_group_static_behind_middleware() {
 	assert status(r) == 200 && header(r, 'x-group') == 'yes'
 	assert header(r, 'cache-control') == 'max-age=3600'
 }
+
+// precompressed: name.br or name.gz from disk to a client that accepts it, with the
+// file's own Content-Type and Vary; the file itself to everyone else.
+fn test_precompressed_variants() {
+	base, root := make_tree()
+	defer {
+		os.rmdir_all(base) or {}
+	}
+	os.write_file(os.join_path(root, 'app.css.br'), 'BROTLI-BYTES') or { panic(err) }
+	os.write_file(os.join_path(root, 'app.css.gz'), 'GZIP-BYTES!') or { panic(err) }
+	os.write_file(os.join_path(root, 'hello.txt.gz'), 'GZ-HELLO') or { panic(err) }
+	a := static_app(root, precompressed: true)
+	br := get(a, '/assets/app.css', 'Accept-Encoding: br;q=1, gzip;q=0.8\r\n')
+	assert status(br) == 200 && body(br) == 'BROTLI-BYTES'
+	assert header(br, 'content-encoding') == 'br'
+	assert header(br, 'content-type') == 'text/css; charset=utf-8'
+	assert header(br, 'vary') == 'Accept-Encoding'
+	gz := get(a, '/assets/app.css', 'Accept-Encoding: gzip, deflate\r\n')
+	assert body(gz) == 'GZIP-BYTES!' && header(gz, 'content-encoding') == 'gzip'
+	assert header(gz, 'etag') != header(br, 'etag') // each representation its own tag
+	identity := get(a, '/assets/app.css', '')
+	assert body(identity).len == 1400 && header(identity, 'content-encoding') == ''
+	assert header(identity, 'vary') == 'Accept-Encoding'
+	refused := get(a, '/assets/app.css', 'Accept-Encoding: br;q=0, gzip;q=0\r\n')
+	assert body(refused).len == 1400
+	// a file without a .br copy falls back to the .gz one, then to itself
+	h := get(a, '/assets/hello.txt', 'Accept-Encoding: br, gzip\r\n')
+	assert body(h) == 'GZ-HELLO' && header(h, 'content-encoding') == 'gzip'
+	plain := get(a, '/assets/docs/index.html', 'Accept-Encoding: br, gzip\r\n')
+	assert body(plain) == '<h1>docs</h1>' && header(plain, 'content-encoding') == ''
+	// the copies follow the disk like the files do
+	os.write_file(os.join_path(root, 'app.css.br'), 'NEW-BROTLI') or { panic(err) }
+	again := get(a, '/assets/app.css', 'Accept-Encoding: br\r\n')
+	assert body(again) == 'NEW-BROTLI'
+	// HEAD names the coding too
+	hd := a.handle_raw('HEAD /assets/app.css HTTP/1.1\r\nHost: x\r\nAccept-Encoding: br\r\n\r\n')!
+	assert header(hd, 'content-encoding') == 'br' && header(hd, 'content-length') == '10'
+	// off by default: no Vary, no variants
+	off := static_app(root, viltrum.StaticOptions{})
+	o := get(off, '/assets/app.css', 'Accept-Encoding: br\r\n')
+	assert body(o).len == 1400 && header(o, 'vary') == '' && header(o, 'content-encoding') == ''
+}

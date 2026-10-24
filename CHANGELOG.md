@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.0](https://github.com/Tuntii/viltrum/compare/v1.6.1...v1.7.0) (2026-10-24)
+
+### Features
+
+* **engine:** viltrum's own TLS 1.3 handshake for X25519 and RSA certificates ([26e0977](https://github.com/Tuntii/viltrum/commit/26e09772f1b55cb869715ed4ce54039a13da3a41))
+* **engine:** X25519 and RSA-PSS signing in C, for the TLS 1.3 handshake ([f644282](https://github.com/Tuntii/viltrum/commit/f644282b1d6e8eaf968fc6f4c0735ade424c00c3))
+
+### Performance Improvements
+
+* **engine:** one TLS handshake per turn of the loop, requests served between ([4df30e0](https://github.com/Tuntii/viltrum/commit/4df30e0355123b3a066281b000bf0ba7907680bf))
+
 ## [1.6.1](https://github.com/Tuntii/viltrum/compare/v1.6.0...v1.6.1) (2026-10-24)
 
 ### Bug Fixes

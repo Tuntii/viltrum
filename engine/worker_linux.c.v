@@ -86,7 +86,7 @@ fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opt
 		}
 		l.h2c << h2c
 		if t := ln.tls {
-			srv := new_tls_server(t, index == 0) or {
+			srv := new_tls_server(t, index == 0, ln.http2) or {
 				eprintln('[viltrum] worker ${index}: ${err.msg()}') // cold: startup failure
 				ok = false
 				unsafe { &TlsServer(nil) }
@@ -388,6 +388,10 @@ fn (mut l Loop) handshake(mut c Conn) {
 	}
 	if r == hs_done {
 		c.deadline_ms = l.now + l.opts.idle_timeout.milliseconds()
+		if c.tls.h2 {
+			// ALPN chose h2: our SETTINGS go out now, the client's preface comes next
+			l.w.h2_open(mut c)
+		}
 		l.on_readable(mut c)
 	}
 }

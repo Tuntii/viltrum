@@ -41,7 +41,8 @@ typedef struct {
 	uint8_t session_id[32];
 	size_t session_id_len;
 	uint8_t share[32]; // the client's X25519 public key
-	int alpn;          // 0: no ALPN offered, 1: offered with http/1.1
+	int alpn;          // what ALPN chose: 0 none offered, 1 http/1.1, 2 h2
+	int h2;            // set by the caller: the listener speaks h2, so h2 is chosen when offered
 } viltrum_hs13_hello;
 
 // What the rest of the handshake needs once the server flight is out.
@@ -114,7 +115,9 @@ static viltrum_hs13_rd viltrum_hs13_sub(viltrum_hs13_rd *r, size_t n) {
 // hs13 serves, or malformed before it said TLS 1.3); -1: a TLS 1.3 hello that breaks
 // the rules, refuse the connection.
 static int viltrum_hs13_parse(const uint8_t *msg, size_t len, viltrum_hs13_hello *h) {
+	int h2_ok = h->h2; // the caller's, kept across the reset
 	memset(h, 0, sizeof(*h));
+	h->h2 = h2_ok;
 	int v13 = 0; // the hello offers TLS 1.3: from here on its faults are ours to refuse
 	viltrum_hs13_rd r = viltrum_hs13_rd_new(msg, len);
 	if (viltrum_hs13_u8(&r) != 1 || viltrum_hs13_u24(&r) != len - 4 || !r.ok) {
@@ -144,7 +147,7 @@ static int viltrum_hs13_parse(const uint8_t *msg, size_t len, viltrum_hs13_hello
 	int comp_null_only = comp.n == 1 && viltrum_hs13_u8(&comp) == 0;
 	uint32_t seen[VILTRUM_HS13_MAX_EXT];
 	int nseen = 0;
-	int x25519_group = 0, share = 0, pss = 0, alpn = 0, alpn_h11 = 0, defer = 0;
+	int x25519_group = 0, share = 0, pss = 0, alpn = 0, alpn_h11 = 0, alpn_h2 = 0, defer = 0;
 	while (exts.n > 0) {
 		uint32_t type = viltrum_hs13_u16(&exts);
 		viltrum_hs13_rd ext = viltrum_hs13_sub(&exts, viltrum_hs13_u16(&exts));
@@ -226,6 +229,7 @@ static int viltrum_hs13_parse(const uint8_t *msg, size_t len, viltrum_hs13_hello
 					goto malformed;
 				}
 				alpn_h11 |= plen == 8 && memcmp(proto, "http/1.1", 8) == 0;
+				alpn_h2 |= plen == 2 && memcmp(proto, "h2", 2) == 0;
 			}
 			break;
 		}
@@ -249,13 +253,16 @@ static int viltrum_hs13_parse(const uint8_t *msg, size_t len, viltrum_hs13_hello
 	if (legacy_version != 0x0303 || !comp_null_only) {
 		goto malformed;
 	}
-	if (defer || !suite || !x25519_group || !share || !pss || (alpn && !alpn_h11)) {
+	// ALPN takes h2 when both sides speak it, else http/1.1; a client offering neither
+	// is mbedtls' to answer
+	int chosen = (h->h2 && alpn_h2) ? 2 : alpn_h11 ? 1 : 0;
+	if (defer || !suite || !x25519_group || !share || !pss || (alpn && !chosen)) {
 		return 0;
 	}
 	memcpy(h->random, random, 32);
 	memcpy(h->session_id, sid, sid_len);
 	h->session_id_len = sid_len;
-	h->alpn = alpn;
+	h->alpn = alpn ? chosen : 0;
 	return 1;
 malformed:
 	// a TLS 1.3 hello hs13 refuses; anything else is mbedtls' to judge, as before hs13
@@ -507,18 +514,19 @@ static int viltrum_hs13_flight_with(const uint8_t rnd[96], const uint8_t *ch, si
 		|| viltrum_hs13_traffic(c_hs, keys->c_key, keys->c_iv) || viltrum_gcm_init(tx, s_key, 16) != 0) {
 		goto done;
 	}
-	// EncryptedExtensions: ALPN when the client asked
+	// EncryptedExtensions: ALPN when the client asked, with the protocol chosen
+	static const uint8_t alpn_h11[15] = {0, 16, 0, 11, 0, 9, 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+	static const uint8_t alpn_h2[9] = {0, 16, 0, 5, 0, 3, 2, 'h', '2'};
+	const uint8_t *alpn_ext = h->alpn == 2 ? alpn_h2 : alpn_h11;
+	size_t alpn_len = h->alpn == 2 ? sizeof(alpn_h2) : h->alpn == 1 ? sizeof(alpn_h11) : 0;
 	msg[m++] = 8;
 	msg[m++] = 0;
 	msg[m++] = 0;
-	msg[m++] = h->alpn ? 2 + 15 : 2;
+	msg[m++] = (uint8_t)(2 + alpn_len);
 	msg[m++] = 0;
-	msg[m++] = h->alpn ? 15 : 0;
-	if (h->alpn) {
-		static const uint8_t alpn_ext[15] = {0, 16, 0, 11, 0, 9, 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
-		memcpy(msg + m, alpn_ext, sizeof(alpn_ext));
-		m += sizeof(alpn_ext);
-	}
+	msg[m++] = (uint8_t)alpn_len;
+	memcpy(msg + m, alpn_ext, alpn_len);
+	m += alpn_len;
 	if (mbedtls_sha256_update(&th_run, msg, m) || mbedtls_sha256_update(&th_run, cert, cert_len)
 		|| viltrum_hs13_seal(tx, s_iv, &seq, msg, m, out, cap, &n)
 		|| viltrum_hs13_seal(tx, s_iv, &seq, cert, cert_len, out, cap, &n)

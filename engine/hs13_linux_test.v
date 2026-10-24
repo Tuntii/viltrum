@@ -299,6 +299,28 @@ fn parse(m []u8) int {
 	return C.viltrum_hs13_parse(m.data, usize(m.len), &h)
 }
 
+// alpn_chosen is what ALPN chooses for m on a listener that speaks h2 or not, or -1
+// when hs13 does not serve m.
+fn alpn_chosen(m []u8, h2 bool) int {
+	mut h := C.viltrum_hs13_hello{}
+	h.h2 = if h2 { 1 } else { 0 }
+	if C.viltrum_hs13_parse(m.data, usize(m.len), &h) != 1 {
+		return -1
+	}
+	return h.alpn
+}
+
+fn test_hs13_alpn_choice() {
+	assert alpn_chosen(hello(), true) == 0
+	assert alpn_chosen(hello(alpn: ['h2', 'http/1.1']), true) == 2
+	assert alpn_chosen(hello(alpn: ['http/1.1', 'h2']), true) == 2 // our preference, not the client's
+	assert alpn_chosen(hello(alpn: ['h2', 'http/1.1']), false) == 1
+	assert alpn_chosen(hello(alpn: ['http/1.1']), true) == 1
+	assert alpn_chosen(hello(alpn: ['h2']), true) == 2
+	assert alpn_chosen(hello(alpn: ['h2']), false) == -1 // mbedtls' to answer
+	assert alpn_chosen(hello(alpn: ['h3', 'spdy/3']), true) == -1
+}
+
 // Which ClientHellos hs13 serves (1), leaves to mbedtls (0) or refuses (-1).
 // The parser is plain C: it runs in every build, tcc's included.
 fn test_hs13_parse_decisions() {

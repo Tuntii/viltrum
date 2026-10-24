@@ -72,7 +72,7 @@ enable.
 | Versions | TLS 1.3 preferred, TLS 1.2 minimum (mbedtls 3 has no SSLv3, TLS 1.0 or 1.1) |
 | Suites | AEAD only: AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305, with ECDHE in TLS 1.2 |
 | Groups | x25519, secp256r1, secp384r1 |
-| ALPN | `http/1.1` (viltrum does not speak HTTP/2) |
+| ALPN | `http/1.1`; `h2` first on a listener with `http2` set ([http2.md](./http2.md)) |
 | SNI | not required; the listener's certificate is served either way |
 | Session resumption | off: no tickets, every connection does a full handshake |
 | Close | `close_notify` before the socket closes |
@@ -113,4 +113,3 @@ Each TLS connection holds about 50 KB for record buffers. The gcc build gets the
 - ACME / Let's Encrypt inside viltrum (use certbot or the proxy's ACME and point `TlsOptions` at the files)
 - Client certificates (mTLS)
 - Encrypted private keys
-- HTTP/2 over ALPN

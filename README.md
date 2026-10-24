@@ -68,7 +68,7 @@ buffer and are valid until the handler returns; `.clone()` what you keep.
 | Middleware | `recover`, `gzip`, `cors`, `logger` (`recover` cannot catch panics, see below) |
 | JSON | `c.json(200, value)`: compile-time encoder, no reflection |
 | TLS | `app.listen_tls`, or `app.serve` for cleartext and TLS together: TLS 1.3, certificates reloaded from disk without a restart ([docs/tls.md](docs/tls.md)) |
-| HTTP/2 | `Listener{ addr, http2: true }`: cleartext HTTP/2 (h2c, prior knowledge) beside HTTP/1.1 on the same port, through the same router and `Ctx`; HPACK, flow control, the RFC 9113 limits ([docs/http2.md](docs/http2.md)) |
+| HTTP/2 | `Listener{ addr, http2: true }`: HTTP/2 over TLS (ALPN) and cleartext (h2c, prior knowledge), beside HTTP/1.1 on the same port, through the same router and `Ctx`; HPACK, flow control, the RFC 9113 limits ([docs/http2.md](docs/http2.md)) |
 | Static files | `app.static_files('/assets', './public')`, `c.file(path)`: ETag, Last-Modified, 304, byte ranges, large files sent with `sendfile` ([docs/files.md](docs/files.md)) |
 | Forms | `c.form_value`, `c.form_file`, `c.form_parts`: urlencoded and multipart bodies parsed in place, no allocation ([docs/forms.md](docs/forms.md)) |
 | WebSocket | `app.ws(pattern, handler)`: RFC 6455 on the same workers, `ws://` and `wss://`, callbacks per message with no allocation, topics (`subscribe` / `publish`) across workers ([docs/ws.md](docs/ws.md)) |
@@ -167,9 +167,9 @@ Inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-
 
 **1.3:** WebSocket on the same workers ([docs/ws.md](docs/ws.md)).
 
-**1.8:** HTTP/2 cleartext beside HTTP/1.1 ([docs/http2.md](docs/http2.md)).
+**1.8–1.9:** HTTP/2 beside HTTP/1.1, cleartext and over TLS ([docs/http2.md](docs/http2.md)).
 
-**Next:** HTTP/2 over TLS, the rest of the 1.0 review backlog, the HTTP client ([ROADMAP.md](ROADMAP.md)).
+**Next:** the HttpArena HTTP/2 profiles, the rest of the 1.0 review backlog, the HTTP client ([ROADMAP.md](ROADMAP.md)).
 
 ---
 

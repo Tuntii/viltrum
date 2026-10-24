@@ -76,14 +76,6 @@ fn free_addr() string {
 // start_tls serves one listener per entry (cleartext for an empty TlsOptions) and
 // returns their addresses.
 fn start_tls(kinds []TlsOptions, opts Options) ([]string, &Stop) {
-	mut stop := new_stop()
-	o := Options{
-		...opts
-		workers:        2
-		handle_signals: false
-		stop:           stop
-		send_date:      false
-	}
 	mut addrs := []string{}
 	mut ls := []Listener{}
 	for k in kinds {
@@ -100,11 +92,26 @@ fn start_tls(kinds []TlsOptions, opts Options) ([]string, &Stop) {
 			}
 		}
 	}
+	return addrs, serve_test(ls, opts)
+}
+
+// serve_test serves ls with the test router on two workers until the Stop it
+// returns is requested; every address takes connections when it returns.
+fn serve_test(ls []Listener, opts Options) &Stop {
+	mut stop := new_stop()
+	o := Options{
+		...opts
+		workers:        2
+		handle_signals: false
+		stop:           stop
+		send_date:      false
+	}
 	r := make_router()
 	spawn fn [ls, r, o] () {
 		serve_listeners(ls, r, o) or { eprintln(err) }
 	}()
-	for a in addrs {
+	for l in ls {
+		a := l.addr
 		for _ in 0 .. 100 {
 			mut c := net.dial_tcp(a) or {
 				time.sleep(20 * time.millisecond)
@@ -115,7 +122,7 @@ fn start_tls(kinds []TlsOptions, opts Options) ([]string, &Stop) {
 		}
 	}
 	time.sleep(50 * time.millisecond)
-	return addrs, stop
+	return stop
 }
 
 fn dial(addr string) &net.TcpConn {
@@ -426,6 +433,54 @@ fn test_tls_versions_and_close_notify() {
 		os.execute('printf "GET /p/bye HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n" | openssl s_client -connect ${a} -quiet -ign_eof 2>&1')
 	assert closing.output.contains('/p/bye'), closing.output
 	assert !closing.output.contains('unexpected eof'), closing.output
+}
+
+// On a listener with http2 set, ALPN chooses h2 when the client offers it, on both
+// handshake paths (TLS 1.3 is hs13's in gcc builds, TLS 1.2 is always mbedtls'), and
+// the connection then speaks HTTP/2; a client offering only http/1.1 keeps it.
+fn test_alpn_h2() {
+	if !have_openssl() || os.execute('curl --version').exit_code != 0 {
+		eprintln('skip: openssl or curl not found')
+		return
+	}
+	a := free_addr()
+	mut stop := serve_test([
+		Listener{
+			addr:  a
+			tls:   tls_opts(tls_testdata, 'a')
+			http2: true
+		},
+	], Options{})
+	defer {
+		stop.request()
+	}
+	for v in ['-tls1_3', '-tls1_2'] {
+		h2 := os.execute('echo | openssl s_client -connect ${a} ${v} -alpn h2,http/1.1 2>&1')
+		assert h2.output.contains('ALPN protocol: h2'), h2.output
+		h11 := os.execute('echo | openssl s_client -connect ${a} ${v} -alpn http/1.1 2>&1')
+		assert h11.output.contains('ALPN protocol: http/1.1'), h11.output
+	}
+	for v in ['--tlsv1.3', '--tlsv1.2 --tls-max 1.2'] {
+		r := os.execute('curl -sk ${v} --http2 -w " %{http_version}" https://${a}/p/over-h2')
+		assert r.output == '/p/over-h2 2', r.output
+		r11 := os.execute('curl -sk ${v} --http1.1 -w " %{http_version}" https://${a}/p/over-h1')
+		assert r11.output == '/p/over-h1 1.1', r11.output
+	}
+	body := os.join_path(os.temp_dir(), 'viltrum-h2-body-${os.getpid()}')
+	os.write_file(body, 'x'.repeat(200000)) or { panic(err) }
+	defer {
+		os.rm(body) or {}
+	}
+	post :=
+		os.execute('curl -sk --http2 --data-binary @${body} -o /dev/null -w "%{size_download} %{http_version}" https://${a}/echo')
+	assert post.output == '200000 2', post.output
+	// a TLS listener without http2 keeps ALPN to http/1.1
+	addrs, mut stop2 := start_tls([tls_opts(tls_testdata, 'a')], Options{})
+	defer {
+		stop2.request()
+	}
+	plain := os.execute('curl -sk --http2 -w " %{http_version}" https://${addrs[0]}/p/x')
+	assert plain.output == '/p/x 1.1', plain.output
 }
 
 // A pair rename-swapped on disk is served on new handshakes within a couple of

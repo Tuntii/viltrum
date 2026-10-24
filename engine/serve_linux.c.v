@@ -56,7 +56,7 @@ pub fn serve_listeners(listeners []Listener, r &router.Router, opts Options) ! {
 				tls_init()!
 				tls = true
 			}
-			mut probe := new_tls_server(t, false)!
+			mut probe := new_tls_server(t, false, ln.http2)!
 			probe.free()
 		}
 	}

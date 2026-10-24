@@ -88,8 +88,8 @@ jobs:
       - name: Unit tests under viltrum_debug
         run: v -d viltrum_debug test router/ engine/ tests/
 
-      - name: TLS 1.3 AES-GCM records, built with gcc (tcc builds stay on mbedtls)
-        run: v -cc gcc test engine/aesgcm_linux_test.v engine/tls13_linux_test.v engine/tls_linux_test.v
+      - name: TLS 1.3 handshake (hs13) and AES-GCM records, built with gcc (tcc builds stay on mbedtls)
+        run: v -cc gcc test engine/aesgcm_linux_test.v engine/tls13_linux_test.v engine/tls_linux_test.v engine/hs13_linux_test.v
 
       - name: Encoders built with gcc (the CRC carry-less multiply path; tcc skips it)
         run: v -cc gcc test http1/deflate_test.v jsonenc/
@@ -112,3 +112,4 @@ jobs:
         run: |
           VILTRUM_FUZZ_ITERS=500000 v test http1/fuzz_test.v
           VILTRUM_FUZZ_ITERS=500000 v test engine/ws_fuzz_test.v
+          VILTRUM_FUZZ_ITERS=500000 v test engine/hs13_linux_test.v

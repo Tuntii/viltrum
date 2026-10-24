@@ -25,6 +25,10 @@ pub type StaticOptions = http1.StaticOptions
 // FormPart is one part of a multipart/form-data body (Ctx.form_file, Ctx.form_parts).
 pub type FormPart = http1.FormPart
 
+// Cookie is a Set-Cookie line for Ctx.set_cookie; see http1.Cookie for the defaults.
+pub type Cookie = http1.Cookie
+pub type SameSite = http1.SameSite
+
 // Ws is one WebSocket connection inside its callbacks: send_text, send_binary,
 // ping, close, subscribe, publish, id, protocol, worker_id, and `data` for the
 // connection's own state.
@@ -241,6 +245,14 @@ pub fn (mut g Group) delete(pattern string, handlers ...Handler) {
 	g.handle(.delete, pattern, ...handlers)
 }
 
+pub fn (mut g Group) head(pattern string, handlers ...Handler) {
+	g.handle(.head, pattern, ...handlers)
+}
+
+pub fn (mut g Group) options(pattern string, handlers ...Handler) {
+	g.handle(.options, pattern, ...handlers)
+}
+
 pub fn (mut g Group) ws(pattern string, h WsHandler, mws ...Handler) {
 	g.handle(.get, pattern, ...ws_chain(h, mws))
 }
@@ -286,6 +298,7 @@ fn not_found(mut c Ctx) {
 }
 
 fn method_not_allowed(mut c Ctx) {
+	c.set_allow()
 	c.text(405, 'method not allowed')
 }
 

@@ -39,5 +39,5 @@ pub fn cors(origin string) Handler {
 pub fn logger(mut c Ctx) {
 	sw := time.new_stopwatch()
 	c.next()
-	println('${c.method()} ${c.path()} ${c.status} ${sw.elapsed().microseconds()}us')
+	println('${c.method_name()} ${c.path()} ${c.status} ${sw.elapsed().microseconds()}us')
 }

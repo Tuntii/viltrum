@@ -186,3 +186,42 @@ fn test_publish_without_a_server_is_dropped() {
 	r := a.handle_raw('GET /room HTTP/1.1\r\n' + ws_up + masked('hi'))!
 	assert r.starts_with('HTTP/1.1 101 ') && r.ends_with('\x81\x02ok')
 }
+
+fn dx_page(mut c viltrum.Ctx) {
+	visits := (c.cookie('visits') or { '0' }).int()
+	c.set_cookie(name: 'visits', value: '${visits + 1}', max_age: 60)
+	c.html(200, '<b>${c.method_name()}</b>')
+}
+
+fn dx_done(mut c viltrum.Ctx) {
+	c.redirect(303, '/page')
+}
+
+// The handler conveniences through a real app, and 405s that say what is allowed,
+// with and without global middleware (the two ways a 405 is answered).
+fn test_dx_helpers_and_allow_on_405() {
+	for global in [false, true] {
+		mut a := viltrum.new()
+		if global {
+			a.use(viltrum.recover)
+		}
+		a.get('/page', dx_page)
+		a.post('/page', dx_done)
+		mut g := a.group('/g')
+		g.head('/h', hello)
+		g.options('/h', hello)
+		r1 := a.handle_raw('GET /page HTTP/1.1\r\nHost: x\r\nCookie: visits=41\r\n\r\n')!
+		assert r1.contains('Content-Type: text/html; charset=utf-8\r\n')
+		assert r1.contains('Set-Cookie: visits=42; Path=/; Max-Age=60; HttpOnly; SameSite=Lax\r\n')
+		assert r1.ends_with('<b>GET</b>')
+		r2 := a.handle_raw('POST /page HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n')!
+		assert r2.starts_with('HTTP/1.1 303 ') && r2.contains('Location: /page\r\n')
+		r3 := a.handle_raw('DELETE /page HTTP/1.1\r\nHost: x\r\n\r\n')!
+		assert r3.starts_with('HTTP/1.1 405 '), 'global=${global}'
+		assert r3.contains('\r\nAllow: GET, HEAD, POST\r\n'), 'global=${global}'
+		r4 := a.handle_raw('OPTIONS /g/h HTTP/1.1\r\nHost: x\r\n\r\n')!
+		assert r4.starts_with('HTTP/1.1 200 ')
+		r5 := a.handle_raw('GET /g/h HTTP/1.1\r\nHost: x\r\n\r\n')!
+		assert r5.contains('\r\nAllow: HEAD, OPTIONS\r\n'), 'global=${global}'
+	}
+}

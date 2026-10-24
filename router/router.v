@@ -130,6 +130,27 @@ pub fn (r &Router) find(method http1.Method, path string, mut m Match) int {
 	return not_found
 }
 
+// allowed returns the methods with a route for path, one bit per http1.Method (HEAD
+// whenever GET), for the Allow header of a 405. cold: only a 405 calls it.
+pub fn (r &Router) allowed(path string) u16 {
+	mut plen := path.len
+	for plen > 1 && path[plen - 1] == `/` {
+		plen--
+	}
+	mut m := Match{}
+	mut mask := u16(0)
+	for i in 0 .. r.routes.len {
+		bit := u16(1) << int(r.routes[i].method)
+		if mask & bit == 0 && match_segs(r.routes[i].segs, path, plen, mut m) {
+			mask |= bit
+		}
+	}
+	if mask & (u16(1) << int(http1.Method.get)) != 0 {
+		mask |= u16(1) << int(http1.Method.head)
+	}
+	return mask
+}
+
 fn (r &Router) find_method(method http1.Method, path string, plen int, mut m Match) int {
 	clean := is_clean(path, plen)
 	if clean {

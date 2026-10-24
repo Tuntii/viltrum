@@ -48,6 +48,9 @@ pub mut:
 	// WebSocket upgrade (ws_upgrade): the engine takes the connection over after a 101
 	ws       &WsHandler = unsafe { nil }
 	ws_proto int
+	// methods with a route for this path, one bit per Method; the engine sets it only
+	// before a 405 chain runs (see set_allow)
+	allow u16
 	// chain
 	chain []Handler
 	idx   int
@@ -65,6 +68,10 @@ mut:
 	cbuf   []u8   // decoded chunked bodies
 	jbuf   []u8   // JSON bodies and captured bodies
 	ws_acc [28]u8 // Sec-WebSocket-Accept until the 101 is written
+	// header values composed in place (Set-Cookie, Allow); see dx.v
+	hval      [512]u8
+	nhval     int
+	hval_full bool
 	// file answers: the path being opened, and header values until they are written
 	pbuf    []u8
 	etag    [56]u8

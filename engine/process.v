@@ -211,8 +211,11 @@ fn (mut w Worker) serve(mut c Conn, msg []u8) {
 				len:   w.m.spans[k].len
 			}
 		}
+	} else if idx == router.method_not_allowed {
+		x.chain = w.r.on_405
+		x.allow = w.r.allowed(x.path())
 	} else {
-		x.chain = if idx == router.method_not_allowed { w.r.on_405 } else { w.r.on_404 }
+		x.chain = w.r.on_404
 	}
 	if x.chain.len > 0 {
 		x.chain[0](mut x)
@@ -315,6 +318,7 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 		if idx == router.not_found {
 			x.text(404, 'not found')
 		} else if idx == router.method_not_allowed {
+			x.set_allow()
 			x.text(405, 'method not allowed')
 		} else {
 			x.close()

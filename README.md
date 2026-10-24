@@ -50,8 +50,9 @@ fn main() {
 }
 ```
 
-Handlers get a `Ctx`: request views (`path`, `param`, `query_param`, `header`, `body`) and a response writer
-(`text`, `text_int`, `json`, `bytes`, `no_content`, `set_header`). Request strings point into the connection's
+Handlers get a `Ctx`: request views (`path`, `param`, `query_param`, `header`, `cookie`, `body`) and a response
+writer (`text`, `json`, `html`, `bytes`, `redirect`, `no_content`, `set_header`, `set_cookie`), none of which
+allocates. Request strings point into the connection's
 buffer and are valid until the handler returns; `.clone()` what you keep.
 
 ---

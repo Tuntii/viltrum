@@ -116,8 +116,10 @@ Decided on 2026-10-24: cleartext h2 first, then h2 over TLS via ALPN. Design:
 [docs/design/1.x-http2.md](docs/design/1.x-http2.md).
 
 - [x] HPACK (RFC 7541) in `viltrum.http2`, held to the RFC's examples and fuzzed
-- [ ] h2c: prior knowledge on a cleartext listener beside HTTP/1.1, requests through the same router,
-      middleware and `Ctx`; flow control and the limits HTTP/2 needs (stream count, CONTINUATION, resets)
+- [x] h2c: prior knowledge on a cleartext listener beside HTTP/1.1, requests through the same router,
+      middleware and `Ctx`; flow control and the limits HTTP/2 needs (stream count, CONTINUATION, resets);
+      h2spec 144/146 ([docs/http2.md](docs/http2.md))
+- [ ] `c.after` (deferred responses) over HTTP/2: a timer per stream
 - [ ] h2 over TLS, chosen by ALPN, on both handshake paths (mbedtls and our own)
 - [ ] HttpArena's HTTP/2 profiles: baseline-h2, static-h2, baseline-h2c, json-h2c
 

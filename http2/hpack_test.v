@@ -204,7 +204,7 @@ fn test_too_large_keeps_the_table() {
 	e.field(mut b1, 'after', 'kept', .incremental)
 	mut out := []u8{}
 	mut fs := Fields{}
-	assert d.decode(b1, mut out, mut fs, 200) == hpack_too_large
+	assert d.decode(b1, mut out, mut fs, 250) == hpack_too_large
 	assert list(out, fs) == [':method: GET']
 	assert d.t.size == e.t.size && d.t.count == 2
 	mut b2 := []u8{}
@@ -221,6 +221,27 @@ fn test_too_large_keeps_the_table() {
 	}
 	out.clear()
 	assert d.decode(b3, mut out, mut fs, 1 << 20) == hpack_too_large && fs.n == max_block_fields
+}
+
+// One byte can name a 4 KB entry: a block that refers to it over and over is refused
+// as malformed once its list is far past the limit, instead of decoded to the end.
+fn test_amplified_block_is_refused() {
+	mut d := new_decoder(default_table_size)
+	mut b := []u8{}
+	mut e := new_encoder(default_table_size)
+	e.field(mut b, 'x', 'y'.repeat(4000), .incremental)
+	for _ in 0 .. 20 {
+		b << 0x80 | u8(static_len + 1)
+	}
+	mut out := []u8{}
+	mut fs := Fields{}
+	assert d.decode(b, mut out, mut fs, 64 * 1024) == hpack_too_large // 21 x 4 KB: past the limit, not far past it
+	for _ in 0 .. 1000 {
+		b << 0x80 | u8(static_len + 1)
+	}
+	out.clear()
+	assert d.decode(b, mut out, mut fs, 64 * 1024) == hpack_bad
+	assert out.len < 70 * 1024 // what was over the limit was never copied
 }
 
 fn test_encoder_size_updates() {

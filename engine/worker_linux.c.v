@@ -49,6 +49,7 @@ mut:
 	epfd       int
 	lfds       []int        // one listening socket per Listener
 	srvs       []&TlsServer // per Listener: this worker's TLS state, nil for cleartext
+	h2c        []bool       // per Listener: HTTP/2 with prior knowledge beside HTTP/1.1
 	conns      []&Conn      // open connections, indexed by fd
 	free       []&Conn      // closed connections, kept with their buffers for the next accept
 	opts       Options
@@ -80,6 +81,12 @@ fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opt
 	l.w.hub = hub
 	mut ok := l.epfd >= 0 && l.ctl(C.EPOLL_CTL_ADD, l.inbox.efd, u32(C.EPOLLIN))
 	for i, ln in listeners {
+		mut h2c := ln.http2
+		if t := ln.tls {
+			h2c = false // over TLS, HTTP/2 is chosen by ALPN
+			_ = t
+		}
+		l.h2c << h2c
 		if t := ln.tls {
 			srv := new_tls_server(t, index == 0) or {
 				eprintln('[viltrum] worker ${index}: ${err.msg()}') // cold: startup failure
@@ -261,6 +268,7 @@ fn (mut l Loop) accept_all(li int) {
 		c.gen = l.w.gen
 		c.counted = counted
 		c.deadline_ms = l.now + l.opts.idle_timeout.milliseconds()
+		c.h2_ok = l.h2c[li]
 		if !isnil(srv) {
 			// the handshake runs under the read timeout, like a partial request
 			c.deadline_ms = l.now + l.opts.read_timeout.milliseconds()
@@ -439,8 +447,9 @@ fn (mut l Loop) on_readable(mut c Conn) {
 		}
 		if c.rbuf.len == c.rbuf.cap {
 			if c.rbuf.cap >= max_total {
-				if !isnil(c.ws) || c.waiting {
-					// input piling up behind a WebSocket message or a deferred response
+				if !isnil(c.ws) || c.waiting || !isnil(c.h2) {
+					// input piling up behind a WebSocket message, a deferred response, or
+					// HTTP/2 frames not taken (they are at most 16 KiB, so never one request)
 					l.close(mut c)
 					return
 				}
@@ -477,7 +486,8 @@ fn (mut l Loop) on_readable(mut c Conn) {
 		if c.fd < 0 || c.out_armed || c.lingering {
 			return
 		}
-		if !isnil(c.ws) {
+		if l.h2_held_deadline(mut c) {
+		} else if !isnil(c.ws) {
 			c.deadline_ms = l.ws_deadline(c)
 		} else if c.reading && (!was_reading || l.w.requests != reqs_before) {
 			c.deadline_ms = l.now + l.opts.read_timeout.milliseconds()
@@ -522,11 +532,15 @@ fn (mut l Loop) flush(mut c Conn) {
 			c.wbuf.len = 0
 		}
 		c.woff = 0
-		if c.file_fd < 0 {
-			break
+		if c.file_fd >= 0 {
+			if !l.send_file(mut c) {
+				return
+			}
+			continue
 		}
-		if !l.send_file(mut c) {
-			return
+		// HTTP/2 output that flow control held back goes out as the socket takes it
+		if isnil(c.h2) || !l.w.h2_pump(mut c) {
+			break
 		}
 	}
 	if c.close_after {
@@ -540,14 +554,32 @@ fn (mut l Loop) flush(mut c Conn) {
 	if c.out_armed {
 		l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLIN) | u32(C.EPOLLRDHUP))
 		c.out_armed = false
-		c.deadline_ms = if !isnil(c.ws) {
-			l.ws_deadline(c)
-		} else if c.reading {
-			l.now + l.opts.read_timeout.milliseconds()
-		} else {
-			l.now + l.opts.idle_timeout.milliseconds()
+		if !l.h2_held_deadline(mut c) {
+			c.deadline_ms = if !isnil(c.ws) {
+				l.ws_deadline(c)
+			} else if c.reading {
+				l.now + l.opts.read_timeout.milliseconds()
+			} else {
+				l.now + l.opts.idle_timeout.milliseconds()
+			}
 		}
 	}
+}
+
+// h2_held_deadline gives an HTTP/2 connection whose output waits on the client's
+// windows the write timeout, counted from when that output last moved: frames that
+// move none of it (PING, unknown types) do not put it off. False when nothing waits.
+fn (mut l Loop) h2_held_deadline(mut c Conn) bool {
+	if isnil(c.h2) || c.h2.sending == 0 {
+		return false
+	}
+	mut h := c.h2
+	if h.sent != h.sent_seen {
+		h.sent_seen = h.sent
+		h.progress = l.now
+	}
+	c.deadline_ms = h.progress + l.opts.write_timeout.milliseconds()
+	return true
 }
 
 // arm_out waits for the socket to take more output; reading pauses meanwhile.
@@ -663,6 +695,10 @@ fn (mut l Loop) close(mut c Conn) {
 	}
 	if !isnil(c.ws) {
 		l.w.ws_end(mut c)
+	}
+	if !isnil(c.h2) {
+		c.h2.close_streams()
+		c.h2 = unsafe { nil }
 	}
 	c.end_file()
 	c.hs_queued = false

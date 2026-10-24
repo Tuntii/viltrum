@@ -16,7 +16,7 @@ pub const hpack_ok = 0
 pub const hpack_bad = -1 // a malformed block: a connection error (COMPRESSION_ERROR)
 pub const hpack_too_large = -2 // the list passed the size or field limit; the table is still in step
 
-pub const max_block_fields = 64 // the most fields a decoded block reports
+pub const max_block_fields = 256 // the most fields a decoded block reports (cookies come one crumb a field)
 
 // the static table (Appendix A); index 0 is unused
 const static_names = ['', ':authority', ':method', ':method', ':path', ':path', ':scheme', ':scheme',
@@ -128,10 +128,14 @@ fn (t &Table) value_off(s int) int {
 	return (int(t.off[s]) + int(t.nlen[s])) % default_table_size
 }
 
-// copy_out appends n bytes of the ring from off to out.
+// copy_out appends n bytes of the ring from off to out, in at most two copies.
 fn (t &Table) copy_out(off int, n int, mut out []u8) {
-	for k in 0 .. n {
-		out << t.bytes[(off + k) % default_table_size]
+	first := if off + n <= default_table_size { n } else { default_table_size - off }
+	unsafe {
+		out.push_many(&t.bytes[off], first)
+		if n > first {
+			out.push_many(&t.bytes[0], n - first)
+		}
 	}
 }
 
@@ -244,6 +248,15 @@ pub fn new_decoder(table_size int) &Decoder {
 	return d
 }
 
+// reset readies the Decoder for a new connection with the same table size.
+pub fn (mut d Decoder) reset() {
+	d.t.size = 0
+	d.t.first = 0
+	d.t.count = 0
+	d.t.wpos = 0
+	d.t.max = d.limit
+}
+
 // name_of appends the name of table entry idx (static or dynamic) to out; false when
 // there is no such entry.
 fn (d &Decoder) name_of(idx int, mut out []u8) bool {
@@ -259,6 +272,20 @@ fn (d &Decoder) name_of(idx int, mut out []u8) bool {
 	s := d.t.slot(i)
 	d.t.copy_out(int(d.t.off[s]), int(d.t.nlen[s]), mut out)
 	return true
+}
+
+// entry_lens is the name and value lengths of table entry idx; a name length of -1
+// when there is no such entry.
+fn (d &Decoder) entry_lens(idx int) (int, int) {
+	if idx <= static_len {
+		return static_names[idx].len, static_values[idx].len
+	}
+	i := idx - static_len
+	if i > d.t.count {
+		return -1, 0
+	}
+	s := d.t.slot(i)
+	return int(d.t.nlen[s]), int(d.t.vlen[s])
 }
 
 // value_of appends the value of table entry idx to out (the entry exists).
@@ -278,10 +305,15 @@ fn (d &Decoder) value_of(idx int, mut out []u8) {
 // their positions put in fs. hpack_ok, hpack_bad, or hpack_too_large when the list
 // passes max_size bytes (as fs.size counts) or max_block_fields fields: fs then holds
 // the fields that fit, and the table is in step all the same, so the connection can
-// go on.
+// go on. A list far past max_size (four times it, or 64 KiB past it) is hpack_bad:
+// one byte can name a 4 KB entry, so a block decoded to the end regardless would let a
+// few kilobytes cost seconds. Fields past the limit that the tables hold are not copied.
 pub fn (mut d Decoder) decode(src []u8, mut out []u8, mut fs Fields, max_size int) int {
 	fs.n = 0
 	fs.size = 0
+	m := if max_size < max_int { max_size } else { max_int }
+	hard := if 4 * m > m + 65536 { 4 * m } else { m + 65536 }
+	mut total := 0
 	mut over := false
 	mut fields_seen := false
 	mut p := 0
@@ -301,14 +333,36 @@ pub fn (mut d Decoder) decode(src []u8, mut out []u8, mut fs Fields, max_size in
 		mark := out.len
 		mut name_len := 0
 		if b & 0x80 != 0 {
-			// indexed field
+			// indexed field: sized from the table, copied only when it is kept
 			idx, q := read_int(src, p, 7)
-			if q < 0 || idx == 0 || !d.name_of(idx, mut out) {
+			if q < 0 || idx == 0 {
 				return hpack_bad
 			}
-			name_len = out.len - mark
-			d.value_of(idx, mut out)
+			nl, vl := d.entry_lens(idx)
+			if nl < 0 {
+				return hpack_bad
+			}
 			p = q
+			size := nl + vl + entry_overhead
+			total += size
+			if total > hard {
+				return hpack_bad
+			}
+			if over || fs.n == max_block_fields || fs.size + size > max_size {
+				over = true
+				continue
+			}
+			d.name_of(idx, mut out)
+			d.value_of(idx, mut out)
+			fs.f[fs.n] = HField{
+				name_off:  mark
+				name_len:  nl
+				value_off: mark + nl
+				value_len: vl
+			}
+			fs.n++
+			fs.size += size
+			continue
 		} else {
 			// a literal: with incremental indexing (01), without (0000) or never (0001)
 			n := if b & 0x40 != 0 { 6 } else { 4 }
@@ -338,6 +392,10 @@ pub fn (mut d Decoder) decode(src []u8, mut out []u8, mut fs Fields, max_size in
 		}
 		value_len := out.len - mark - name_len
 		size := name_len + value_len + entry_overhead
+		total += size
+		if total > hard {
+			return hpack_bad
+		}
 		if over || fs.n == max_block_fields || fs.size + size > max_size {
 			// keep decoding so the table stays in step, but hold no more
 			over = true
@@ -381,6 +439,17 @@ pub fn new_encoder(table_size int) &Encoder {
 	mut e := &Encoder{}
 	e.t.max = if table_size < default_table_size { table_size } else { default_table_size }
 	return e
+}
+
+// reset readies the Encoder for a new connection: an empty table of the default size.
+pub fn (mut e Encoder) reset() {
+	e.t.size = 0
+	e.t.first = 0
+	e.t.count = 0
+	e.t.wpos = 0
+	e.t.max = default_table_size
+	e.update_min = -1
+	e.update = -1
 }
 
 // set_limit applies the peer's SETTINGS_HEADER_TABLE_SIZE. The table never grows

@@ -2,6 +2,7 @@ module engine
 
 import time
 import viltrum.http1
+import viltrum.http2
 import viltrum.router
 
 pub const read_buf_size = 8 * 1024
@@ -28,6 +29,10 @@ pub mut:
 	tls         &TlsConn = unsafe { nil } // the TLS session while this connection is TLS
 	tls_keep    &TlsConn = unsafe { nil } // kept across connections so mbedtls' buffers are reused
 	hs_queued   bool // its next handshake step waits in the worker's queue (Loop.next_handshake)
+	// HTTP/2, once the connection speaks it (h2.v)
+	h2      &H2Conn = unsafe { nil }
+	h2_keep &H2Conn = unsafe { nil } // kept across connections, tables and buffers included
+	h2_ok   bool // HTTP/2 is allowed and the first bytes may be its preface
 	// WebSocket, once the connection is upgraded
 	ws         &http1.WsHandler = unsafe { nil }
 	ws_data    voidptr
@@ -83,6 +88,8 @@ pub fn (mut c Conn) reset(fd int) {
 	c.waiting = false
 	c.tls = unsafe { nil }
 	c.hs_queued = false
+	c.h2 = unsafe { nil }
+	c.h2_ok = false
 	c.ws = unsafe { nil }
 	c.ws_data = unsafe { nil }
 	unsafe {
@@ -110,6 +117,15 @@ pub mut:
 	ws       http1.Ws
 	hub      &Hub = unsafe { nil } // where publish and send go; nil drops them (handle_raw)
 	topics   map[string]&Topic // this worker's subscribers per topic
+	// HTTP/2 scratch (h2.v), sized on the first HTTP/2 connection: decoded fields, the
+	// request as an HTTP/1.1 head and its body, the response the handler wrote, and
+	// its header block
+	h2dec  []u8
+	h2fs   http2.Fields
+	h2req  []u8
+	h2body []u8
+	h2out  []u8
+	h2blk  []u8
 }
 
 pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
@@ -142,6 +158,33 @@ pub fn (mut w Worker) process(mut c Conn) {
 	if !isnil(c.ws) {
 		w.ws_process(mut c)
 		return
+	}
+	if !isnil(c.h2) {
+		w.h2_process(mut c)
+		return
+	}
+	if c.h2_ok {
+		// the first bytes on a listener that also speaks HTTP/2 with prior knowledge
+		match h2_preface_state(c.rbuf) {
+			1 {
+				w.h2_open(mut c)
+				w.h2_process(mut c)
+				return
+			}
+			0 {
+				c.reading = true // a preface cut short runs under the read timeout
+				return
+			}
+			-2 {
+				// an HTTP/2 preface gone wrong (RFC 9113 3.4)
+				w.h2_open(mut c)
+				w.h2_fail(mut c, http2.err_protocol)
+				return
+			}
+			else {
+				c.h2_ok = false
+			}
+		}
 	}
 	mut off := 0
 	for !c.close_after && !c.waiting && c.file_fd < 0 && off < c.rbuf.len
@@ -212,6 +255,18 @@ fn (mut w Worker) serve(mut c Conn, msg []u8) {
 	} else {
 		x.set_body(http1.view(msg, c.frame.head_end, c.frame.content_length))
 	}
+	idx := w.run_chain(mut x)
+	w.finish(mut c, idx)
+	w.requests++
+	$if viltrum_debug ? {
+		// Poison the request so a handler that kept a view reads garbage in tests.
+		unsafe { C.memset(msg.data, 0xA5, msg.len) }
+	}
+}
+
+// run_chain routes the request in x and runs its chain; the route lookup's result
+// (an index, or router.not_found / method_not_allowed) picks the default answer.
+fn (mut w Worker) run_chain(mut x http1.Ctx) int {
 	idx := w.r.find(x.head.method, x.path(), mut w.m)
 	if idx >= 0 {
 		x.chain = w.r.routes[idx].chain
@@ -232,12 +287,7 @@ fn (mut w Worker) serve(mut c Conn, msg []u8) {
 	if x.chain.len > 0 {
 		x.chain[0](mut x)
 	}
-	w.finish(mut c, idx)
-	w.requests++
-	$if viltrum_debug ? {
-		// Poison the request so a handler that kept a view reads garbage in tests.
-		unsafe { C.memset(msg.data, 0xA5, msg.len) }
-	}
+	return idx
 }
 
 // resume writes the response deferred on c; the caller then serves what was
@@ -326,17 +376,7 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 		c.wbuf = x.out
 		return
 	}
-	if !x.responded {
-		if idx == router.not_found {
-			x.text(404, 'not found')
-		} else if idx == router.method_not_allowed {
-			x.set_allow()
-			x.text(405, 'method not allowed')
-		} else {
-			x.close()
-			x.text(500, 'internal error')
-		}
-	}
+	w.answer_default(idx)
 	c.wbuf = x.out
 	c.close_after = x.close_after
 	if x.file_fd >= 0 {
@@ -348,6 +388,24 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 	}
 	if !isnil(x.ws) && x.status == 101 && !c.close_after {
 		w.ws_open(mut c)
+	}
+}
+
+// answer_default answers a request whose chain wrote no response: 404 or 405 when
+// no route took it, 500 (and close) when one did and wrote nothing.
+fn (mut w Worker) answer_default(idx int) {
+	mut x := &w.ctx
+	if x.responded {
+		return
+	}
+	if idx == router.not_found {
+		x.text(404, 'not found')
+	} else if idx == router.method_not_allowed {
+		x.set_allow()
+		x.text(405, 'method not allowed')
+	} else {
+		x.close()
+		x.text(500, 'internal error')
 	}
 }
 

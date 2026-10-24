@@ -68,6 +68,7 @@ buffer and are valid until the handler returns; `.clone()` what you keep.
 | Middleware | `recover`, `gzip`, `cors`, `logger` (`recover` cannot catch panics, see below) |
 | JSON | `c.json(200, value)`: compile-time encoder, no reflection |
 | TLS | `app.listen_tls`, or `app.serve` for cleartext and TLS together: TLS 1.3, certificates reloaded from disk without a restart ([docs/tls.md](docs/tls.md)) |
+| HTTP/2 | `Listener{ addr, http2: true }`: cleartext HTTP/2 (h2c, prior knowledge) beside HTTP/1.1 on the same port, through the same router and `Ctx`; HPACK, flow control, the RFC 9113 limits ([docs/http2.md](docs/http2.md)) |
 | Static files | `app.static_files('/assets', './public')`, `c.file(path)`: ETag, Last-Modified, 304, byte ranges, large files sent with `sendfile` ([docs/files.md](docs/files.md)) |
 | Forms | `c.form_value`, `c.form_file`, `c.form_parts`: urlencoded and multipart bodies parsed in place, no allocation ([docs/forms.md](docs/forms.md)) |
 | WebSocket | `app.ws(pattern, handler)`: RFC 6455 on the same workers, `ws://` and `wss://`, callbacks per message with no allocation, topics (`subscribe` / `publish`) across workers ([docs/ws.md](docs/ws.md)) |
@@ -121,6 +122,7 @@ and [ROADMAP.md](ROADMAP.md). The entry lives in [benches/httparena](benches/htt
 | Request shape / middleware | [docs/request-response.md](docs/request-response.md) |
 | Accept → close | [docs/connection.md](docs/connection.md) |
 | HTTPS | [docs/tls.md](docs/tls.md) |
+| HTTP/2 | [docs/http2.md](docs/http2.md) |
 | WebSocket | [docs/ws.md](docs/ws.md) |
 | Proxy deploy | [docs/deploy.md](docs/deploy.md) |
 | Full index | [docs/README.md](docs/README.md) |
@@ -134,7 +136,7 @@ and [ROADMAP.md](ROADMAP.md). The entry lives in [benches/httparena](benches/htt
 | `examples/ws_chat` | 8084 |
 
 ```bash
-v test http1/ jsonenc/ router/ engine/ tests/
+v test http1/ http2/ jsonenc/ router/ engine/ tests/
 ```
 
 ---
@@ -165,7 +167,9 @@ Inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-
 
 **1.3:** WebSocket on the same workers ([docs/ws.md](docs/ws.md)).
 
-**Next:** the rest of the 1.0 review backlog, the HTTP client ([ROADMAP.md](ROADMAP.md)).
+**1.8:** HTTP/2 cleartext beside HTTP/1.1 ([docs/http2.md](docs/http2.md)).
+
+**Next:** HTTP/2 over TLS, the rest of the 1.0 review backlog, the HTTP client ([ROADMAP.md](ROADMAP.md)).
 
 ---
 

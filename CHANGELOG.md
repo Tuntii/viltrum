@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.1](https://github.com/Tuntii/viltrum/compare/v1.5.0...v1.5.1) (2026-10-24)
+
+### Performance Improvements
+
+* **engine:** wake deferred responses on time, not on the next millisecond ([e9e2749](https://github.com/Tuntii/viltrum/commit/e9e2749b18a590506cd3f6dbe54e5ebd90d66bb8))
+
 ## [1.5.0](https://github.com/Tuntii/viltrum/compare/v1.4.0...v1.5.0) (2026-10-23)
 
 ### Features

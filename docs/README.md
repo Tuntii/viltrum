@@ -14,6 +14,7 @@ workers, or TLS terminates at a reverse proxy (Caddy, nginx).
 | [files.md](./files.md) | Static files: directories, `c.file`, caching validators, ranges |
 | [forms.md](./forms.md) | Urlencoded forms, multipart uploads, upload limits |
 | [tls.md](./tls.md) | HTTPS listeners, certificate reload, TLS policy |
+| [http2.md](./http2.md) | HTTP/2 cleartext (h2c) beside HTTP/1.1, what handlers see, limits |
 | [ws.md](./ws.md) | WebSocket routes, callbacks, closing, limits |
 | [deploy.md](./deploy.md) | Caddy/nginx, Host, timeouts, supervisor |
 | [releasing.md](./releasing.md) | Semantic-release and commit conventions |

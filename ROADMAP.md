@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-10-24 · current release: **v1.6.0**
+Last updated: 2026-10-24 · current release: **v1.7.0**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** HTTP/1.1 engine: one `SO_REUSEPORT`
 epoll worker per CPU, pipelining, and no allocation per request inside the framework. Not a thin wrapper.
@@ -110,9 +110,18 @@ merged and waits for their next run. The HttpArena entry moves to v1.5.1 (timers
 - [x] Forms and uploads back on the new core: `c.form_value`, `c.form_file`, `c.form_parts`, parsed in place
   ([docs/forms.md](docs/forms.md))
 
-## Phase 5 — HTTP/2 (decision needed)
+## Phase 5 — HTTP/2
 
-Not planned today. Revisit after Phases 1–3: cleartext h2 first, then h2 over TLS via ALPN.
+Decided on 2026-10-24: cleartext h2 first, then h2 over TLS via ALPN. Design:
+[docs/design/1.x-http2.md](docs/design/1.x-http2.md).
+
+- [x] HPACK (RFC 7541) in `viltrum.http2`, held to the RFC's examples and fuzzed
+- [x] h2c: prior knowledge on a cleartext listener beside HTTP/1.1, requests through the same router,
+      middleware and `Ctx`; flow control and the limits HTTP/2 needs (stream count, CONTINUATION, resets);
+      h2spec 144/146 ([docs/http2.md](docs/http2.md))
+- [ ] `c.after` (deferred responses) over HTTP/2: a timer per stream
+- [ ] h2 over TLS, chosen by ALPN, on both handshake paths (mbedtls and our own)
+- [ ] HttpArena's HTTP/2 profiles: baseline-h2, static-h2, baseline-h2c, json-h2c
 
 ## Phase 6 — Community
 

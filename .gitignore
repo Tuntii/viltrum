@@ -24,6 +24,7 @@ vls.log
 !/benches/httparena/
 !/benches/autobahn/
 !/benches/AUTOBAHN.md
+!/benches/h2spec/
 !/benches/hotpath/
 /benches/hotpath/*
 !/benches/hotpath/main.v

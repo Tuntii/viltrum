@@ -33,11 +33,15 @@ pub:
 	key_file  string // private key, unencrypted
 }
 
-// Listener is one address to serve; with tls set it speaks HTTPS.
+// Listener is one address to serve; with tls set it speaks HTTPS. With http2 set, a
+// cleartext listener also serves HTTP/2 to clients that start with its preface (prior
+// knowledge, as `curl --http2-prior-knowledge` and proxies speaking h2c do), and
+// HTTP/1.1 to the rest.
 pub struct Listener {
 pub:
-	addr string
-	tls  ?TlsOptions
+	addr  string
+	tls   ?TlsOptions
+	http2 bool
 }
 
 // Stop asks a running server to shut down; workers notice within a second.

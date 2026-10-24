@@ -46,6 +46,7 @@ jobs:
       - name: Unit tests
         run: |
           v test http1/
+          v test http2/
           v test jsonenc/
           v test router/
           v test engine/
@@ -77,6 +78,7 @@ jobs:
       - name: Unit tests
         run: |
           v test http1/
+          v test http2/
           v test jsonenc/
           v test router/
           v test engine/
@@ -113,3 +115,5 @@ jobs:
           VILTRUM_FUZZ_ITERS=500000 v test http1/fuzz_test.v
           VILTRUM_FUZZ_ITERS=500000 v test engine/ws_fuzz_test.v
           VILTRUM_FUZZ_ITERS=500000 v test engine/hs13_linux_test.v
+          VILTRUM_FUZZ_ITERS=500000 v test http2/hpack_test.v
+          VILTRUM_FUZZ_ITERS=500000 v test engine/h2_test.v

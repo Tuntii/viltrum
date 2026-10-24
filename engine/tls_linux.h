@@ -47,14 +47,16 @@ static const uint16_t viltrum_tls_groups[] = {
 	MBEDTLS_SSL_IANA_TLS_GROUP_NONE,
 };
 
-// We speak HTTP/1.1 only, so that is all ALPN offers.
+// What ALPN offers: HTTP/1.1, and h2 first on a listener that speaks it (mbedtls
+// takes the first of ours the client also offers).
 static const char *viltrum_tls_alpn[] = {"http/1.1", NULL};
+static const char *viltrum_tls_alpn_h2[] = {"h2", "http/1.1", NULL};
 
 // viltrum_tls_conf applies the server policy to conf. The certificate comes from
 // cert_cb on every handshake rather than being bound here, which is what lets a
 // replaced file take effect without touching live connections.
 static int viltrum_tls_conf(mbedtls_ssl_config *conf, int (*cert_cb)(mbedtls_ssl_context *),
-		mbedtls_ctr_drbg_context *drbg) {
+		mbedtls_ctr_drbg_context *drbg, int h2) {
 	int ret = mbedtls_ssl_config_defaults(conf, MBEDTLS_SSL_IS_SERVER,
 		MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
 	if (ret != 0) {
@@ -71,7 +73,7 @@ static int viltrum_tls_conf(mbedtls_ssl_config *conf, int (*cert_cb)(mbedtls_ssl
 	// no ticket keys are configured; do not promise tickets in TLS 1.3 either
 	mbedtls_ssl_conf_new_session_tickets(conf, 0);
 #endif
-	ret = mbedtls_ssl_conf_alpn_protocols(conf, viltrum_tls_alpn);
+	ret = mbedtls_ssl_conf_alpn_protocols(conf, h2 ? viltrum_tls_alpn_h2 : viltrum_tls_alpn);
 	if (ret != 0) {
 		return ret;
 	}

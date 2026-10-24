@@ -9,7 +9,7 @@ fn C.mbedtls_ssl_close_notify(ssl &C.mbedtls_ssl_context) i32
 fn C.mbedtls_ssl_check_pending(ssl &C.mbedtls_ssl_context) i32
 fn C.mbedtls_ssl_set_user_data_p(ssl &C.mbedtls_ssl_context, p voidptr)
 fn C.mbedtls_ssl_get_user_data_p(ssl &C.mbedtls_ssl_context) voidptr
-fn C.viltrum_tls_conf(conf &C.mbedtls_ssl_config, cert_cb fn (&C.mbedtls_ssl_context) int, drbg &C.mbedtls_ctr_drbg_context) i32
+fn C.viltrum_tls_conf(conf &C.mbedtls_ssl_config, cert_cb fn (&C.mbedtls_ssl_context) int, drbg &C.mbedtls_ctr_drbg_context, h2 int) i32
 fn C.viltrum_tls_reset(ssl &C.mbedtls_ssl_context) i32
 fn C.viltrum_tls_fresh(ssl &C.mbedtls_ssl_context) int
 fn C.viltrum_tls_set_bio(ssl &C.mbedtls_ssl_context, b &C.viltrum_bio, fd &int, buf &u8, cap usize)
@@ -92,14 +92,16 @@ mut:
 	bad_cert  C.viltrum_file_id // the last pair that failed to load, not retried until a file changes
 	bad_key   C.viltrum_file_id
 	logs      bool // one worker reports reload failures, not all of them
+	h2        bool // ALPN offers h2 before http/1.1
 }
 
 // new_tls_server sets up a worker's TLS state and loads the pair. cold: startup.
-fn new_tls_server(o TlsOptions, logs bool) !&TlsServer {
+fn new_tls_server(o TlsOptions, logs bool, h2 bool) !&TlsServer {
 	mut s := &TlsServer{
 		cert_file: o.cert_file
 		key_file:  o.key_file
 		logs:      logs
+		h2:        h2
 	}
 	C.mbedtls_entropy_init(&s.entropy)
 	C.mbedtls_ctr_drbg_init(&s.drbg)
@@ -107,7 +109,7 @@ fn new_tls_server(o TlsOptions, logs bool) !&TlsServer {
 	if C.viltrum_tls_seed(&s.drbg, &s.entropy) != 0 {
 		return error('viltrum: TLS random generator failed to seed')
 	}
-	ret := C.viltrum_tls_conf(&s.conf, tls_pick_cert, &s.drbg)
+	ret := C.viltrum_tls_conf(&s.conf, tls_pick_cert, &s.drbg, if h2 { 1 } else { 0 })
 	if ret != 0 {
 		return error('viltrum: TLS config failed (${ret})') // cold: startup
 	}
@@ -217,6 +219,7 @@ mut:
 	keys        C.viltrum_hs13_keys
 	hs_out      []u8 // hs13's server flight
 	hs_off      int  // bytes of it sent
+	h2          bool // ALPN chose h2: the connection speaks HTTP/2 once the handshake is done
 }
 
 // tls_pick_cert is mbedtls' certificate callback, run on every handshake: the
@@ -267,6 +270,8 @@ fn (mut c Conn) tls_start(srv &TlsServer) bool {
 	C.viltrum_tls_set_export(&t.ssl, &t.secrets)
 	t.fd = &c.fd
 	t.fast = false
+	t.h2 = false
+	t.hello.h2 = if srv.h2 { 1 } else { 0 }
 	t.handshaking = true
 	t.wlen = 0
 	t.hs13 = if hs13_supported { hs13_hello } else { hs13_off }
@@ -305,6 +310,8 @@ fn (mut t TlsConn) handshake() int {
 	ret := C.mbedtls_ssl_handshake(&t.ssl)
 	if ret == 0 {
 		t.handshaking = false
+		p := &u8(C.mbedtls_ssl_get_alpn_protocol(&t.ssl))
+		t.h2 = !isnil(p) && unsafe { p[0] == `h` && p[1] == `2` && p[2] == 0 }
 		t.release()
 		t.go_fast()
 		return hs_done

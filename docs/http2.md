@@ -1,9 +1,9 @@
-# HTTP/2 (`h2c`)
+# HTTP/2
 
 Viltrum serves HTTP/2 from the same epoll workers as HTTP/1.1, through the same router, middleware and `Ctx`:
-a handler does not know which protocol it answers. This release serves **cleartext HTTP/2 with prior
-knowledge** (h2c), the form reverse proxies, load balancers and service meshes speak to the applications
-behind them. HTTP/2 over TLS, chosen by ALPN, comes next.
+a handler does not know which protocol it answers. It serves **HTTP/2 over TLS**, chosen by ALPN, as browsers
+speak it, and **cleartext HTTP/2 with prior knowledge** (h2c), the form reverse proxies, load balancers and
+service meshes speak to the applications behind them.
 
 ## Quick start
 
@@ -25,6 +25,29 @@ curl --http2-prior-knowledge http://127.0.0.1:8080/   # HTTP/2
 curl http://127.0.0.1:8080/                           # HTTP/1.1, same port
 ```
 
+Over TLS, the same flag makes ALPN offer `h2` before `http/1.1`:
+
+```v
+app.serve([
+	viltrum.Listener{
+		addr:  '0.0.0.0:8443'
+		http2: true
+		tls:   viltrum.TlsOptions{
+			cert_file: 'certs/dev.crt'
+			key_file:  'certs/dev.key'
+		}
+	},
+])!
+```
+
+```bash
+curl -k https://127.0.0.1:8443/            # HTTP/2 (curl offers h2 first)
+curl -k --http1.1 https://127.0.0.1:8443/  # HTTP/1.1, same port
+```
+
+Both handshake paths choose it: our own TLS 1.3 handshake and mbedtls (TLS 1.2, and the hellos ours leaves to
+it). A client that offers only `http/1.1`, or no ALPN at all, gets HTTP/1.1.
+
 A listener with `http2` set reads the first bytes of each connection: the HTTP/2 connection preface makes it an
 HTTP/2 connection, anything else is served as HTTP/1.1 (RFC 9113 3.3, as nginx and h2o do). The
 `Upgrade: h2c` route from HTTP/1.1 is not offered; RFC 9113 deprecated it.
@@ -33,9 +56,8 @@ HTTP/2 connection, anything else is served as HTTP/1.1 (RFC 9113 3.3, as nginx a
 
 | Symbol | Role |
 |--------|------|
-| `Listener{ addr, http2: true }` | a cleartext listener that serves HTTP/2 to clients that start with its preface, and HTTP/1.1 to the rest |
-
-`http2` on a TLS listener does nothing yet.
+| `Listener{ addr, http2: true }` | cleartext: HTTP/2 to clients that start with its preface, HTTP/1.1 to the rest |
+| `Listener{ addr, http2: true, tls: ... }` | TLS: HTTP/2 to clients ALPN agrees `h2` with, HTTP/1.1 to the rest |
 
 ## What a handler sees
 
@@ -77,9 +99,9 @@ HTTP/1.1 head parser, so every rule a request is held to there holds here too.
 ## How it is checked
 
 - Every example of RFC 7541 (HPACK) Appendix C, both directions; HPACK and frame handling fuzzed in CI.
-- [h2spec](https://github.com/summerwind/h2spec) 2.6.0 (`bash benches/h2spec/run.sh`): 144 of 146 pass, one is
-  skipped. The one failure is "invalid connection
-  preface": the test sends `INVALID CONNECTION PREFACE`, which a listener that also serves HTTP/1.1 reads as a
+- [h2spec](https://github.com/summerwind/h2spec) 2.6.0 (`bash benches/h2spec/run.sh`): over TLS, 145 of 146
+  pass, one skipped, on both handshake paths. Cleartext, 144 pass: the one failure is "invalid connection
+  preface", where the test sends `INVALID CONNECTION PREFACE`, which a listener that also serves HTTP/1.1 reads as a
   bad HTTP/1.1 request and answers 400. A preface that starts `PRI * HTTP/2.0` and then goes wrong gets the
   GOAWAY the test expects.
 - curl and h2load as clients; HTTP/2 requests allocate nothing once a worker is warm, as HTTP/1.1 ones do (the

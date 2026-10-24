@@ -33,10 +33,10 @@ pub:
 	key_file  string // private key, unencrypted
 }
 
-// Listener is one address to serve; with tls set it speaks HTTPS. With http2 set, a
-// cleartext listener also serves HTTP/2 to clients that start with its preface (prior
-// knowledge, as `curl --http2-prior-knowledge` and proxies speaking h2c do), and
-// HTTP/1.1 to the rest.
+// Listener is one address to serve; with tls set it speaks HTTPS. With http2 set it
+// also serves HTTP/2: over TLS to clients ALPN agrees h2 with, in cleartext to clients
+// that start with its preface (prior knowledge, as `curl --http2-prior-knowledge` and
+// proxies speaking h2c do). Everyone else gets HTTP/1.1.
 pub struct Listener {
 pub:
 	addr  string

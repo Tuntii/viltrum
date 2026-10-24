@@ -15,6 +15,7 @@ struct C.viltrum_hs13_hello {
 	share          [32]u8
 	session_id_len usize
 	alpn           int
+	h2             int
 }
 
 @[typedef]
@@ -313,6 +314,7 @@ fn (mut t TlsConn) hs13_open_finished(p &u8, length int) int {
 	r.tx_seq = 0
 	t.fast = true
 	t.handshaking = false
+	t.h2 = t.hello.alpn == 2
 	t.hs13 = hs13_off
 	return hs_done
 }

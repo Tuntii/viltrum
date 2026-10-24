@@ -213,8 +213,18 @@ fn (mut w Worker) h2_process(mut c Conn) {
 	mut h := c.h2
 	mut off := 0
 	if !h.preface {
-		if c.rbuf.len < http2.preface.len {
+		// checked here as well as on a cleartext listener: after ALPN the connection is
+		// HTTP/2 before its first byte
+		state := h2_preface_state(c.rbuf)
+		if state == 0 {
 			c.reading = true
+			return
+		}
+		if state < 0 {
+			w.h2_fail(mut c, http2.err_protocol)
+			unsafe {
+				c.rbuf.len = 0
+			}
 			return
 		}
 		off = http2.preface.len

@@ -83,17 +83,17 @@ Not on the 1.x core yet (they return later): the HTTP client, serving off Linux.
 ### HttpArena: first on HTTP/1.1 and on WebSocket
 
 [HttpArena](https://http-arena.com) runs every entry on the same 64-thread machine with the same load generator.
-In the 2026-10-23 results Viltrum is **first of 14 on HTTP/1.1** (composite 7686) and **first of 11 on
-WebSocket** (composite 3000) in its category, with seven gold medals, two silver and one bronze. The medals
-with their results:
+In the 2026-10-23 results Viltrum is **first of 13 on HTTP/1.1** (composite 7786) and **first of 11 on
+WebSocket** (composite 3000) in its category, with nine gold medals and one silver. The medals with their
+results:
 
 | | Profile | Connections | Result | Place |
 |:-:|---------|------------:|-------:|------:|
-| 🥈 | Baseline | 4,096 | 4.06M req/s | 2 / 14 |
-| 🥈 | Short-lived connections | 4,096 | 2.70M req/s | 2 / 14 |
-| 🥇 | JSON, gzip | 4,096 | 899K req/s | 1 / 13 |
-| 🥇 | JSON over TLS | 4,096 | 1.61M req/s | 1 / 13 |
-| 🥉 | Async (`/delay`) | 32,000 | 2.49M req/s | 3 / 12 |
+| 🥇 | Baseline | 4,096 | 4.06M req/s | 1 / 13 |
+| 🥇 | Short-lived connections | 4,096 | 2.70M req/s | 1 / 13 |
+| 🥇 | JSON, gzip | 4,096 | 899K req/s | 1 / 12 |
+| 🥇 | JSON over TLS | 4,096 | 1.61M req/s | 1 / 12 |
+| 🥈 | Async (`/delay`) | 32,000 | 2.49M req/s | 2 / 11 |
 | 🥇 | WebSocket echo | 512 | 4.27M msg/s | 1 / 11 |
 | 🥇 | WebSocket echo, pipelined | 512 | 62.5M msg/s | 1 / 11 |
 | 🥇 | WebSocket echo, short-lived | 512 | 2.22M msg/s | 1 / 11 |

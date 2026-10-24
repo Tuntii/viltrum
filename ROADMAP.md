@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-10-24 · current release: **v1.5.0**
+Last updated: 2026-10-22 · current release: **v1.2.2**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** HTTP/1.1 engine: one `SO_REUSEPORT`
 epoll worker per CPU, pipelining, and no allocation per request inside the framework. Not a thin wrapper.
@@ -57,11 +57,8 @@ Success looks like:
 | Generic upgrade, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
 
 Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
-[benches/httparena](benches/httparena) and runs v1.3.2. In the 2026-10-23 results viltrum is first of 14 on
-HTTP/1.1 (composite 7686) and first of 11 on WebSocket in the Experimental category: gold on json-comp,
-json-tls and the three echo-ws profiles, silver on baseline and short-lived, bronze on async. 8gbit is
-the weakest cell. The [the-benchmarker](https://github.com/the-benchmarker/web-frameworks) entry (v1.3.2) is
-merged and waits for their next run.
+[benches/httparena](benches/httparena). On the 2026-10-20 run viltrum was near the top on baseline,
+limited-conn, async and the latency profiles, mid-field on json-comp, and absent from every TLS profile.
 
 ---
 
@@ -80,7 +77,8 @@ merged and waits for their next run.
       zero-alloc gate on the TLS path
 - [x] CI, `docs/tls.md` for 1.x, README status
 - [x] Release (minor): v1.2.0
-- [x] HttpArena: `json-tls` and `8gbit` (`POST /echo`, 10–100 KB bodies including chunked), `tls_check`
+- [ ] HttpArena: `json-tls` and `8gbit` (`POST /echo`, 10–100 KB bodies including chunked), `tls_check`
+      (entry validated, waiting for the benchmark run)
 
 ## Phase 2 — Compressed JSON throughput
 
@@ -95,7 +93,7 @@ merged and waits for their next run.
 - [x] Upgrade on the epoll worker: `app.ws` with middleware on the upgrade request (generic hijack stays
       out until something needs it)
 - [x] RFC 6455 frames, non-blocking, with limits; WSS on top of Phase 1; zero-alloc gate on the echo path
-- [x] HttpArena echo-ws profiles
+- [ ] HttpArena echo-ws profiles (entry validated)
 
 ## Phase 4 — 1.0 hardening and the missing pieces
 
@@ -113,7 +111,7 @@ Not planned today. Revisit after Phases 1–3: cleartext h2 first, then h2 over 
 ## Phase 6 — Community
 
 - [ ] Examples and the [full-stack starter](https://github.com/Tuntii/full-stack-viltrum-template) on 1.x
-- [ ] Write-ups of the engine design and the benchmark method, on [tuntii.com](https://tuntii.com)
+- [ ] Write-ups of the engine design and the benchmark method
 - [ ] Answer issues quickly; credit outside contributions in release notes
 
 ---

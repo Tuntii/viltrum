@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.6.0](https://github.com/Tuntii/viltrum/compare/v1.5.1...v1.6.0) (2026-10-24)
+
+### Features
+
+* request helpers without a cost on the hot path ([49e67d5](https://github.com/Tuntii/viltrum/commit/49e67d56dcc88407f185bd63bcc70d6cf8e48c82))
+
 ## [1.5.1](https://github.com/Tuntii/viltrum/compare/v1.5.0...v1.5.1) (2026-10-24)
 
 ### Performance Improvements

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.8.0](https://github.com/Tuntii/viltrum/compare/v1.7.0...v1.8.0) (2026-10-24)
+
+### Features
+
+* **engine:** HTTP/2 cleartext (h2c) beside HTTP/1.1 on the same listener ([727fe60](https://github.com/Tuntii/viltrum/commit/727fe60502c50459c08b964294f97756d84efe52))
+* **http2:** HPACK header compression, the first piece of HTTP/2 ([5cfed6b](https://github.com/Tuntii/viltrum/commit/5cfed6b0138455be1a3cf2f9b573f073861d17bb))
+
+### Bug Fixes
+
+* **engine:** the buffer shrink limits live in shared code, for the HTTP/2 path off Linux ([0621105](https://github.com/Tuntii/viltrum/commit/062110594eb17d89ae5c5b766270bed8e1799c0d))
+
 ## [1.7.0](https://github.com/Tuntii/viltrum/compare/v1.6.1...v1.7.0) (2026-10-24)
 
 ### Features

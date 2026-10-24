@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.1](https://github.com/Tuntii/viltrum/compare/v1.6.0...v1.6.1) (2026-10-24)
+
+### Bug Fixes
+
+* **engine:** empty lines before a request, port 0, and listener setup failures ([c0b30cb](https://github.com/Tuntii/viltrum/commit/c0b30cb157967c9736d56622868338c05f8b6d72))
+* **middleware:** logger status for unanswered requests, tab after a gzip q-value ([0096314](https://github.com/Tuntii/viltrum/commit/0096314594cbb44b6be73b3906db981086e3b9e3))
+* **router:** refuse a second route with the same method and shape ([d8ac38e](https://github.com/Tuntii/viltrum/commit/d8ac38e703c01d7007b1e3ab91277f39ac9f1c4f))
+
 ## [1.6.0](https://github.com/Tuntii/viltrum/compare/v1.5.1...v1.6.0) (2026-10-24)
 
 ### Features

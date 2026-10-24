@@ -26,7 +26,7 @@ pub fn accepts_gzip(v string) bool {
 				if i + 1 < v.len && lower(v[i]) == `q` && v[i + 1] == `=` {
 					i += 2
 					qs := i
-					for i < v.len && v[i] != `,` && v[i] != `;` && v[i] != ` ` {
+					for i < v.len && v[i] != `,` && v[i] != `;` && v[i] != ` ` && v[i] != `\t` {
 						i++
 					}
 					q_zero = is_q_zero(v, qs, i)
@@ -90,8 +90,9 @@ fn contains_ci(s string, lower_lit string) bool {
 }
 
 // gzip_middleware compresses text and JSON bodies of 256 bytes or more for clients
-// that accept gzip, and sets Vary on every compressible response. Register it
-// before the handlers whose bodies it should compress.
+// that accept gzip, and sets Vary on every response it could have compressed: a
+// smaller body is the same for every client. Register it before the handlers whose
+// bodies it should compress.
 pub fn gzip_middleware(mut c Ctx) {
 	c.capture = true
 	c.next()

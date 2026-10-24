@@ -35,9 +35,18 @@ pub fn cors(origin string) Handler {
 }
 
 // logger prints one line per request. It formats and writes per request, so it
-// allocates: leave it out of benchmarks.
+// allocates: leave it out of benchmarks. A deferred response (Ctx.after) is logged
+// as "after", before it is written.
 pub fn logger(mut c Ctx) {
 	sw := time.new_stopwatch()
 	c.next()
-	println('${c.method_name()} ${c.path()} ${c.status} ${sw.elapsed().microseconds()}us')
+	// the engine answers 500 for a chain that wrote nothing
+	status := if c.deferred {
+		'after'
+	} else if c.responded {
+		c.status.str()
+	} else {
+		'500'
+	}
+	println('${c.method_name()} ${c.path()} ${status} ${sw.elapsed().microseconds()}us')
 }

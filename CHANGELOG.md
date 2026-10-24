@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.10.0](https://github.com/Tuntii/viltrum/compare/v1.9.0...v1.10.0) (2026-10-24)
+
+### Features
+
+* **http1:** static files serve their precompressed .br and .gz copies ([ff57de2](https://github.com/Tuntii/viltrum/commit/ff57de20edbc3667002179cf8866a0449acb7fe8))
+
+### Bug Fixes
+
+* **http1:** no GC scope pins in static file answers ([fcc297a](https://github.com/Tuntii/viltrum/commit/fcc297a9e76b3f6c37f1be28841a55a13752eb23))
+
 ## [1.9.0](https://github.com/Tuntii/viltrum/compare/v1.8.0...v1.9.0) (2026-10-24)
 
 ### Features

@@ -756,3 +756,23 @@ fn test_lingering_client_is_closed() {
 	assert reset, 'still lingering after linger_idle_ms'
 	c.close() or {}
 }
+
+// The loop sleeps until the next deferred response, not until the next whole
+// millisecond: epoll_wait's rounding made /delay answers up to 1 ms late.
+fn test_wait_ns_keeps_sub_millisecond_timeouts() {
+	mut stop := new_stop()
+	mut count := &ConnCount{}
+	mut l := &Loop{
+		w:     new_worker(make_router(), Options{}, 0)
+		stop:  stop
+		count: count
+	}
+	assert l.wait_ns() == max_wait_ns
+	l.w.timers.push(time.sys_mono_now() + 300_000, 0, 0)
+	ns := l.wait_ns()
+	assert ns > 0 && ns <= 300_000
+	l.w.timers.push(time.sys_mono_now() + 10 * u64(time.second), 1, 0)
+	assert l.wait_ns() <= 300_000 // the earliest one counts
+	l.w.timers.push(0, 2, 0)
+	assert l.wait_ns() == 0
+}

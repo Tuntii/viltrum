@@ -10,10 +10,11 @@ import viltrum.router
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 #include <errno.h>
+#include "@VMODROOT/engine/wait_linux.h"
 
 fn C.epoll_create1(flags int) int
 fn C.epoll_ctl(epfd int, op int, fd int, event &C.epoll_event) int
-fn C.epoll_wait(epfd int, events &C.epoll_event, maxevents int, timeout_ms int) int
+fn C.viltrum_epoll_wait(epfd int, events &C.epoll_event, maxevents int, timeout_ns i64) int
 fn C.accept4(sockfd int, addr voidptr, addrlen voidptr, flags int) int
 fn C.sendfile(out_fd int, in_fd int, offset &i64, count usize) isize
 
@@ -34,6 +35,7 @@ mut:
 }
 
 const max_events = 512
+const max_wait_ns = i64(1_000_000_000)
 const sendfile_max = i64(1024 * 1024 * 1024) // per call; Linux moves at most ~2 GiB in one
 const linger_idle_ms = 5000 // a lingering client quiet this long is closed
 const linger_max_ms = 30000 // and any lingering client after this long
@@ -105,7 +107,7 @@ fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opt
 fn (mut l Loop) run() {
 	mut events := [max_events]C.epoll_event{}
 	for !l.stop.requested() {
-		n := C.epoll_wait(l.epfd, &events[0], max_events, l.wait_ms())
+		n := C.viltrum_epoll_wait(l.epfd, &events[0], max_events, l.wait_ns())
 		l.now = time.ticks()
 		for i in 0 .. n {
 			fd := unsafe { events[i].data.fd }
@@ -135,19 +137,18 @@ fn (mut l Loop) run() {
 	C.close(l.epfd)
 }
 
-// wait_ms is the epoll timeout: until the next deferred response is due, rounded up
-// so none fires early, and at most a second so stop and sweep are noticed.
-fn (l &Loop) wait_ms() int {
+// wait_ns is the epoll timeout: until the next deferred response is due, and at most
+// a second so stop and sweep are noticed.
+fn (l &Loop) wait_ns() i64 {
 	if l.w.timers.a.len == 0 {
-		return 1000
+		return max_wait_ns
 	}
 	due := l.w.timers.due_at()
 	now := time.sys_mono_now()
 	if due <= now {
 		return 0
 	}
-	ms := (due - now + 999_999) / 1_000_000
-	return if ms > 1000 { 1000 } else { int(ms) }
+	return if due - now > max_wait_ns { max_wait_ns } else { i64(due - now) }
 }
 
 // fire writes every deferred response that is due, then serves what was pipelined

@@ -44,7 +44,8 @@ fn test_gzip_round_trips() {
 
 fn test_accepts_gzip() {
 	yes := ['gzip', 'gzip, br', 'br;q=1, gzip;q=0.8', 'GZIP', '*', 'identity, *;q=0.5', 'gzip;q=1.0']
-	no := ['', 'br', 'gzip;q=0', 'gzip; q=0.000, *', '*;q=0.5, gzip;q=0', '*;q=0', 'gzipx', 'x-gzip']
+	no := ['', 'br', 'gzip;q=0', 'gzip; q=0.000, *', '*;q=0.5, gzip;q=0', '*;q=0', 'gzipx', 'x-gzip',
+		'gzip;q=0\t, br']
 	for v in yes {
 		assert accepts_gzip(v), v
 	}

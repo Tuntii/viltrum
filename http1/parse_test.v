@@ -74,6 +74,27 @@ fn test_too_many_fields_is_431() {
 	assert false, '33 fields accepted'
 }
 
+fn test_exactly_max_fields_is_accepted() {
+	mut raw := 'GET / HTTP/1.1\r\nHost: x\r\n'
+	for i in 1 .. max_fields {
+		raw += 'X-${i}: v\r\n'
+	}
+	h := parse_msg(raw + '\r\n')!
+	assert h.nfields == max_fields
+}
+
+// The positive control for every zero-allocation assert: allocated_bytes does see
+// an allocation.
+fn test_allocated_bytes_sees_an_allocation() {
+	before := allocated_bytes()
+	mut keep := [][]u8{}
+	for _ in 0 .. 100 {
+		keep << []u8{len: 1024}
+	}
+	assert allocated_bytes() - before >= 100 * 1024
+	assert keep.len == 100
+}
+
 fn test_parse_allocates_nothing() {
 	buf :=
 		'GET /baseline11?a=13&b=42 HTTP/1.1\r\nHost: localhost\r\nUser-Agent: wrk\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n'.bytes()

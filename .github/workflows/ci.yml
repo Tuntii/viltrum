@@ -82,6 +82,12 @@ jobs:
           v test engine/
           v test tests/
 
+      # viltrum_debug poisons each request after its handler returns, so a view kept past
+      # the handler reads garbage. http1/ stays out: its tests check the release-build
+      # answers to misuse, which panic under viltrum_debug.
+      - name: Unit tests under viltrum_debug
+        run: v -d viltrum_debug test router/ engine/ tests/
+
       - name: TLS 1.3 AES-GCM records, built with gcc (tcc builds stay on mbedtls)
         run: v -cc gcc test engine/aesgcm_linux_test.v engine/tls13_linux_test.v engine/tls_linux_test.v
 

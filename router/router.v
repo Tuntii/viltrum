@@ -48,63 +48,6 @@ mut:
 	statics [10]map[string]int // per Method: normalized path -> route index
 }
 
-// add registers pattern ('/users/:id', '/files/*rest'). cold: registration only.
-pub fn (mut r Router) add(method http1.Method, pattern string, chain []http1.Handler) ! {
-	mut segs := []Seg{}
-	mut names := []string{}
-	parts := pattern.split('/')
-	for i, p in parts {
-		if p.len == 0 {
-			continue
-		}
-		if p[0] == `:` {
-			if p.len == 1 {
-				return error('router: empty param name in ${pattern}')
-			}
-			segs << Seg{
-				kind: .param
-				text: p[1..]
-			}
-			names << p[1..]
-		} else if p[0] == `*` {
-			if p.len == 1 {
-				return error('router: unnamed wildcard in ${pattern}')
-			}
-			if parts[i + 1..].any(it.len > 0) {
-				return error('router: wildcard must be last in ${pattern}')
-			}
-			segs << Seg{
-				kind: .wild
-				text: p[1..]
-			}
-			names << p[1..]
-		} else {
-			segs << Seg{
-				kind: .lit
-				text: p
-			}
-		}
-	}
-	if names.len > max_params {
-		return error('router: more than ${max_params} params in ${pattern}')
-	}
-	idx := r.routes.len
-	r.routes << Route{
-		method:      method
-		pattern:     pattern
-		chain:       chain
-		param_names: names
-		segs:        segs
-		static:      names.len == 0
-	}
-	if names.len == 0 {
-		key := '/' + segs.map(it.text).join('/')
-		if key !in r.statics[int(method)] {
-			r.statics[int(method)][key] = idx
-		}
-	}
-}
-
 // find returns the route index for method and path, or not_found /
 // method_not_allowed. Param spans in m are offsets into path. HEAD falls back to GET.
 pub fn (r &Router) find(method http1.Method, path string, mut m Match) int {

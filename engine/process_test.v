@@ -97,11 +97,13 @@ fn run(mut w Worker, mut c Conn, req []u8) {
 
 const shapes = {
 	'get':          'GET /baseline11?a=13&b=42 HTTP/1.1\r\nHost: x\r\n\r\n'
+	'get_escaped':  'GET /baseline11?%61=1%33&b=4%32 HTTP/1.1\r\nHost: x\r\n\r\n'
 	'post_cl':      'POST /baseline11?a=13&b=42 HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n20'
 	'post_chunked': 'POST /baseline11?a=13&b=42 HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n20\r\n0\r\n\r\n'
 	'pipelined':    'GET /pipeline HTTP/1.1\r\nHost: x\r\n\r\n'.repeat(16)
 	'json':         'GET /json/10 HTTP/1.1\r\nHost: x\r\n\r\n'
 	'json_gzip':    'GET /gz/10 HTTP/1.1\r\nHost: x\r\nAccept-Encoding: gzip, br\r\n\r\n'
+	'crlf_between': 'POST /baseline11 HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n20\r\nGET /pipeline HTTP/1.1\r\nHost: x\r\n\r\n'
 }
 
 fn test_each_shape_is_answered() {
@@ -109,6 +111,8 @@ fn test_each_shape_is_answered() {
 	mut c := new_conn()
 	run(mut w, mut c, shapes['get'].bytes())
 	assert c.wbuf.bytestr() == 'HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 2\r\n\r\n55'
+	run(mut w, mut c, shapes['get_escaped'].bytes())
+	assert c.wbuf.bytestr().ends_with('\r\n\r\n55')
 	run(mut w, mut c, shapes['post_cl'].bytes())
 	assert c.wbuf.bytestr().ends_with('\r\n\r\n75')
 	run(mut w, mut c, shapes['post_chunked'].bytes())
@@ -188,6 +192,31 @@ fn test_no_continue_for_http10() {
 	c.rbuf << '20'.bytes()
 	w.process(mut c)
 	assert c.wbuf.bytestr().ends_with('\r\n\r\n23') && !c.wbuf.bytestr().contains('100 Continue')
+}
+
+fn test_empty_lines_before_a_request_are_ignored() {
+	mut w := new_worker(make_router(), Options{ send_date: false }, 0)
+	mut c := new_conn()
+	ok := 'GET /pipeline HTTP/1.1\r\nHost: x\r\n\r\n'
+	// a CRLF after a POST body, and two before the next request
+	post := 'POST /baseline11?a=1&b=2 HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n20'
+	run(mut w, mut c, (post + '\r\n\r\n\r\n' + ok).bytes())
+	s := c.wbuf.bytestr()
+	assert s.count('HTTP/1.1 200 OK') == 2 && s.contains('\r\n\r\n23') && s.ends_with('\r\n\r\nok')
+	assert c.rbuf.len == 0 && !c.reading && !c.close_after
+	// only empty lines buffered: nothing to answer, nothing partial
+	run(mut w, mut c, '\r\n\r\n'.bytes())
+	assert c.wbuf.len == 0 && c.rbuf.len == 0 && !c.reading
+	// a CR waits for its LF
+	run(mut w, mut c, '\r'.bytes())
+	assert c.wbuf.len == 0 && c.reading
+	c.rbuf << ('\n' + ok).bytes()
+	w.process(mut c)
+	assert c.wbuf.bytestr().ends_with('\r\n\r\nok') && c.rbuf.len == 0
+	// an HTTP/1.0 request behind an empty line still gets no 100 Continue
+	run(mut w, mut c,
+		'\r\nPOST /baseline11?a=1&b=2 HTTP/1.0\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n'.bytes())
+	assert c.wbuf.len == 0
 }
 
 fn test_misses_and_missing_host() {

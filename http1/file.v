@@ -61,8 +61,8 @@ pub fn (mut c Ctx) file(path string, o FileOptions) {
 		}
 	}
 	append_str(mut c.pbuf, path)
-	mut info := C.viltrum_file_info{}
-	fd := c.open_pbuf(mut info)
+	info := &c.finfo[0]
+	fd := c.open_pbuf(info)
 	if fd < 0 || info.kind != 1 {
 		if fd >= 0 {
 			C.viltrum_file_close(fd)
@@ -81,6 +81,13 @@ pub fn (mut c Ctx) file(path string, o FileOptions) {
 // answers 404 and is never opened, so nothing outside dir is reachable through the
 // URL. Dotfiles answer 404 too unless o.dotfiles is set.
 pub fn (mut c Ctx) static_file(dir string, rel string, o StaticOptions) {
+	c.static_file_at(dir, rel, &o)
+}
+
+// static_file_at is static_file with the options behind a pointer: what
+// App.static_files calls, since V -prod pins an options struct passed by value around
+// every call in the function.
+pub fn (mut c Ctx) static_file_at(dir string, rel string, o &StaticOptions) {
 	if c.responded || c.deferred {
 		return
 	}
@@ -105,8 +112,8 @@ pub fn (mut c Ctx) static_file(dir string, rel string, o StaticOptions) {
 			c.pbuf.len-- // dir itself: Windows' stat refuses a trailing slash
 		}
 	}
-	mut info := C.viltrum_file_info{}
-	mut fd := c.open_pbuf(mut info)
+	info := &c.finfo[0]
+	mut fd := c.open_pbuf(info)
 	if info.kind == 2 {
 		path := c.path()
 		if path.len == 0 || path[path.len - 1] != `/` {
@@ -118,7 +125,7 @@ pub fn (mut c Ctx) static_file(dir string, rel string, o StaticOptions) {
 				c.pbuf << `/`
 			}
 			append_str(mut c.pbuf, o.index)
-			fd = c.open_pbuf(mut info)
+			fd = c.open_pbuf(info)
 		}
 	}
 	if fd < 0 || info.kind != 1 {
@@ -142,8 +149,8 @@ pub fn (mut c Ctx) static_file(dir string, rel string, o StaticOptions) {
 		}
 		mark := c.pbuf.len
 		append_str(mut c.pbuf, if coding == 'br' { '.br' } else { '.gz' })
-		mut vinfo := C.viltrum_file_info{}
-		vfd := c.open_pbuf(mut vinfo)
+		vinfo := &c.finfo[1]
+		vfd := c.open_pbuf(vinfo)
 		unsafe {
 			c.pbuf.len = mark
 		}
@@ -230,9 +237,9 @@ fn (mut c Ctx) redirect_slash() {
 }
 
 // open_pbuf opens the path in pbuf; -1 when it cannot be opened.
-fn (mut c Ctx) open_pbuf(mut info C.viltrum_file_info) int {
+fn (mut c Ctx) open_pbuf(info &C.viltrum_file_info) int {
 	c.pbuf << 0
-	fd := C.viltrum_file_open(c.pbuf.data, &info)
+	fd := C.viltrum_file_open(c.pbuf.data, info)
 	unsafe {
 		c.pbuf.len--
 	}
@@ -241,7 +248,7 @@ fn (mut c Ctx) open_pbuf(mut info C.viltrum_file_info) int {
 
 // send_file answers with the open file fd, which it takes over (closes or hands to
 // the engine); coding names the Content-Encoding its bytes are in, '' for none.
-fn (mut c Ctx) send_file(fd int, info C.viltrum_file_info, content_type string, coding string, max_age int) {
+fn (mut c Ctx) send_file(fd int, info &C.viltrum_file_info, content_type string, coding string, max_age int) {
 	etag := c.make_etag(info)
 	format_imf(info.mtime, &c.lastmod[0])
 	c.set_header('ETag', etag)
@@ -340,7 +347,7 @@ pub fn close_file(fd int) {
 
 // make_etag is "mtime-size" in hex (with the nanoseconds where the platform has them),
 // which changes whenever the file is replaced or rewritten.
-fn (mut c Ctx) make_etag(info C.viltrum_file_info) string {
+fn (mut c Ctx) make_etag(info &C.viltrum_file_info) string {
 	unsafe {
 		mut p := &c.etag[0]
 		p[0] = `"`

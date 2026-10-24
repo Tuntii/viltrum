@@ -144,6 +144,16 @@ pub fn (mut w Worker) process(mut c Conn) {
 	mut off := 0
 	for !c.close_after && !c.waiting && c.file_fd < 0 && off < c.rbuf.len
 		&& c.wbuf.len < w.opts.max_pending {
+		if c.frame.head_end == 0 {
+			// empty lines before a request line are ignored (RFC 9112 2.2): some
+			// clients send a CRLF after a POST body
+			for off + 1 < c.rbuf.len && c.rbuf[off] == `\r` && c.rbuf[off + 1] == `\n` {
+				off += 2
+			}
+			if off == c.rbuf.len {
+				break
+			}
+		}
 		msg := http1.view(c.rbuf, off, c.rbuf.len - off)
 		n := http1.frame(msg, mut c.frame, w.opts.limits) or {
 			w.refuse(mut c, err)

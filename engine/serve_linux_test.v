@@ -776,3 +776,47 @@ fn test_wait_ns_keeps_sub_millisecond_timeouts() {
 	l.w.timers.push(0, 2, 0)
 	assert l.wait_ns() == 0
 }
+
+// Port 0 asks the kernel for a port once: the other workers join that port instead
+// of each getting a port of its own.
+fn test_port_zero_is_one_port_for_every_worker() {
+	mut lns := [Listener{
+		addr: '127.0.0.1:0'
+	}, Listener{
+		addr: free_addr()
+	}]
+	fixed := lns[1].addr
+	lfds := open_listeners(mut lns, 3) or { panic(err) }
+	assert lns[0].addr != '127.0.0.1:0' && lns[0].addr.starts_with('127.0.0.1:')
+	assert lns[1].addr == fixed
+	port := net.addr_from_socket_handle(lfds[0][0]).port() or { panic(err) }
+	assert lns[0].addr == '127.0.0.1:${port}'
+	for row in lfds {
+		assert row.len == 2
+		assert (net.addr_from_socket_handle(row[0]).port() or { panic(err) }) == port
+	}
+	for row in lfds {
+		for fd in row {
+			C.close(fd)
+		}
+	}
+}
+
+// A listener that cannot bind fails the start and leaves no socket open, its own
+// included.
+fn test_failed_listen_leaves_nothing_open() {
+	// held without SO_REUSEPORT, so no worker can join it
+	mut taken := net.listen_tcp(.ip, '127.0.0.1:0') or { panic(err) }
+	busy := (taken.addr() or { panic(err) }).str()
+	before := open_fds()
+	mut lns := [Listener{
+		addr: '127.0.0.1:0'
+	}, Listener{
+		addr: busy
+	}]
+	if _ := open_listeners(mut lns, 2) {
+		assert false, 'bound a port that is taken'
+	}
+	assert open_fds() == before
+	taken.close() or {}
+}

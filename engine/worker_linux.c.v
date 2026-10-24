@@ -270,7 +270,11 @@ fn (mut l Loop) accept_all(li int) {
 				continue
 			}
 		}
-		l.ctl(C.EPOLL_CTL_ADD, fd, u32(C.EPOLLIN) | u32(C.EPOLLRDHUP))
+		if !l.ctl(C.EPOLL_CTL_ADD, fd, u32(C.EPOLLIN) | u32(C.EPOLLRDHUP)) {
+			// ENOMEM or ENOSPC (max_user_watches): never readable, so close it now
+			// rather than hold it, and its max_conns slot, until the idle timeout
+			l.close(mut c) // cold: setup failure
+		}
 	}
 }
 
@@ -620,6 +624,7 @@ fn (mut l Loop) close(mut c Conn) {
 		l.w.ws_end(mut c)
 	}
 	c.end_file()
+	// the result does not matter: closing the fd, never dup'd, drops it from epoll too
 	l.ctl(C.EPOLL_CTL_DEL, c.fd, 0)
 	if !isnil(c.tls) {
 		c.tls.close()

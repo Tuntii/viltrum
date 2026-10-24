@@ -62,24 +62,8 @@ pub fn serve_listeners(listeners []Listener, r &router.Router, opts Options) ! {
 	}
 	n := worker_count(opts.workers)
 	mut stop := if isnil(opts.stop) { new_stop() } else { opts.stop }
-	mut lfds := [][]int{}
-	for _ in 0 .. n {
-		mut row := []int{}
-		for ln in listeners {
-			row << listen_reuseport(ln.addr) or {
-				for fds in lfds {
-					for fd in fds {
-						C.close(fd)
-					}
-				}
-				for fd in row {
-					C.close(fd)
-				}
-				return err
-			}
-		}
-		lfds << row
-	}
+	mut lns := listeners.clone()
+	lfds := open_listeners(mut lns, n)!
 	if opts.handle_signals {
 		os.signal_opt(.int, fn [mut stop] (_ os.Signal) {
 			stop.request()
@@ -88,7 +72,7 @@ pub fn serve_listeners(listeners []Listener, r &router.Router, opts Options) ! {
 			stop.request()
 		}) or {}
 	}
-	for ln in listeners {
+	for ln in lns {
 		scheme := if _ := ln.tls { 'https' } else { 'http' }
 		eprintln('[viltrum] listening on ${scheme}://${ln.addr} (${n} workers)')
 	}
@@ -104,9 +88,9 @@ pub fn serve_listeners(listeners []Listener, r &router.Router, opts Options) ! {
 	mut count := &ConnCount{}
 	mut threads := []thread{}
 	for i in 1 .. n {
-		threads << spawn run_worker(i, lfds[i], listeners, r, opts, hub, mut stop, mut count)
+		threads << spawn run_worker(i, lfds[i], lns, r, opts, hub, mut stop, mut count)
 	}
-	run_worker(0, lfds[0], listeners, r, opts, hub, mut stop, mut count)
+	run_worker(0, lfds[0], lns, r, opts, hub, mut stop, mut count)
 	threads.wait()
 	hub.close()
 	for fds in lfds {
@@ -148,16 +132,67 @@ pub fn worker_count(requested int) int {
 	return runtime.nr_cpus()
 }
 
+// open_listeners opens one SO_REUSEPORT socket per worker and listener: row w holds
+// worker w's sockets, in the order of lns. An address with port 0 is rewritten in
+// lns to the port the kernel picked for the first worker, so every worker joins
+// that port. On error nothing is left open.
+fn open_listeners(mut lns []Listener, n int) ![][]int {
+	mut lfds := [][]int{}
+	for w in 0 .. n {
+		mut row := []int{}
+		for i, ln in lns {
+			fd := listen_reuseport(ln.addr) or {
+				for fds in lfds {
+					for x in fds {
+						C.close(x)
+					}
+				}
+				for x in row {
+					C.close(x)
+				}
+				return err
+			}
+			row << fd
+			if w == 0 {
+				lns[i] = Listener{
+					...ln
+					addr: bound_addr(ln.addr, fd)
+				}
+			}
+		}
+		lfds << row
+	}
+	return lfds
+}
+
+// bound_addr is addr with the port the kernel picked for fd when addr asked for port 0.
+fn bound_addr(addr string, fd int) string {
+	if !addr.ends_with(':0') {
+		return addr
+	}
+	port := net.addr_from_socket_handle(fd).port() or { return addr }
+	return addr[..addr.len - 1] + port.str()
+}
+
 fn listen_reuseport(addr string) !int {
 	mut s := net.new_tcp_socket(.ip)!
+	fd := s.handle
 	one := 1
-	if C.setsockopt(s.handle, C.SOL_SOCKET, C.SO_REUSEPORT, &one, sizeof(int)) != 0 {
+	if C.setsockopt(fd, C.SOL_SOCKET, C.SO_REUSEPORT, &one, sizeof(int)) != 0 {
+		C.close(fd)
 		return error('SO_REUSEPORT setsockopt failed')
 	}
-	s.bind(addr)!
-	if C.listen(s.handle, listen_backlog) != 0 {
+	s.bind(addr) or {
+		C.close(fd)
+		return err
+	}
+	if C.listen(fd, listen_backlog) != 0 {
+		C.close(fd)
 		return error('listen failed on ${addr}')
 	}
-	net.set_blocking(s.handle, false)!
-	return s.handle
+	net.set_blocking(fd, false) or {
+		C.close(fd)
+		return err
+	}
+	return fd
 }

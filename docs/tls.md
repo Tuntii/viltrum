@@ -81,18 +81,32 @@ The handshake runs under `Options.read_timeout`, the same clock as a partly rece
 
 ## How it works
 
-The crypto is mbedtls 3.6, the copy that ships with V (`thirdparty/mbedtls`, behind `net.mbedtls`). Nothing
-to install. viltrum runs it non-blocking inside the epoll loop: each worker has its own config, random generator
-and certificate, and each pooled connection keeps its TLS session and reuses it for the next connection. The
-request path still allocates nothing; a test in CI holds it to that over TLS too.
+TLS runs non-blocking inside the epoll loop: each worker has its own random generator and certificate, and
+each pooled connection keeps its TLS session state and reuses it for the next connection. The request path
+still allocates nothing; a test in CI holds it to that over TLS too.
+
+Three layers, by where the CPU went:
+
+- **The handshake** for TLS 1.3 with an X25519 key share, AES-128-GCM and an RSA certificate (what curl,
+  OpenSSL and Python offer by default) is viltrum's own: X25519 and RSA-PSS signing in C, the key
+  schedule after RFC 8446, checked against RFC 8448's trace. It takes about half the CPU mbedtls did (3.7 ms
+  against 7.4 ms per handshake on a small VM). See [design/1.x-tls-handshake.md](./design/1.x-tls-handshake.md).
+- **Every other handshake** (TLS 1.2, P-256 key shares, ECDSA certificates, ChaCha20 or AES-256 as the only
+  suite) runs on mbedtls 3.6, the copy that ships with V (`thirdparty/mbedtls`, behind `net.mbedtls`). Nothing
+  to install.
+- **Records** of TLS 1.3 AES-GCM sessions are sealed and opened by viltrum's own AES-GCM on AES-NI and PCLMUL;
+  TLS 1.2 and ChaCha20 sessions stay on mbedtls.
+
+A handshake's expensive step runs one per turn of a worker's loop, with the requests that are ready served in
+between, so a burst of new connections does not hold up the open ones.
 
 Design notes and trade-offs: [design/1.x-tls.md](./design/1.x-tls.md).
 
 ## Cost
 
-mbedtls is slower than OpenSSL at bulk AES-GCM. On a small 8-vCPU VM, keep-alive `GET` over TLS ran at about
-half the cleartext rate, and a 10 KB echo at about a quarter. Each TLS connection holds about 50 KB for record
-buffers. If TLS throughput is your bottleneck, terminate at a proxy.
+Each TLS connection holds about 50 KB for record buffers. The gcc build gets the fast paths above; a tcc build
+(V's default for `v run`) has no 128-bit integers and does all of TLS on mbedtls. Build with `-prod` or
+`-cc gcc` for production.
 
 ## Not supported
 
@@ -100,4 +114,3 @@ buffers. If TLS throughput is your bottleneck, terminate at a proxy.
 - Client certificates (mTLS)
 - Encrypted private keys
 - HTTP/2 over ALPN
-- WSS: WebSocket is not on the 1.0 core yet

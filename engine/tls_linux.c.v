@@ -61,14 +61,18 @@ fn tls_init() ! {
 @[heap]
 struct CertPair {
 mut:
-	crt  C.mbedtls_x509_crt
-	key  C.mbedtls_pk_context
-	refs int // handshakes in progress that picked this pair
+	crt      C.mbedtls_x509_crt
+	key      C.mbedtls_pk_context
+	refs     int           // handshakes in progress that picked this pair
+	own      bool          // hs13 can serve handshakes with it (hs13_load)
+	rsa      C.viltrum_rsa // the key in hs13's signing form
+	cert_msg []u8          // the TLS 1.3 Certificate message for the chain
 }
 
 fn (mut p CertPair) free() {
 	C.mbedtls_x509_crt_free(&p.crt)
 	C.mbedtls_pk_free(&p.key)
+	C.viltrum_hs13_wipe(&p.rsa, sizeof(C.viltrum_rsa))
 }
 
 // TlsServer is one worker's state for one TLS listener. Nothing in it is shared
@@ -155,6 +159,7 @@ fn (mut s TlsServer) load_pair() !&CertPair {
 		p.free()
 		return error('viltrum: ${s.key_file} is not the key of ${s.cert_file}') // cold: startup and reload
 	}
+	p.hs13_load(mut s)
 	return p
 }
 
@@ -207,6 +212,11 @@ mut:
 	secrets     C.viltrum_tls_secrets // TLS 1.3 traffic secrets, as the handshake exports them
 	fast        bool                  // records are done by tls13 (TLS 1.3 with AES-GCM), not mbedtls
 	r13         Tls13
+	hs13        int // hs13_hello, hs13_flight, hs13_finished, or hs13_off once mbedtls has it
+	hello       C.viltrum_hs13_hello
+	keys        C.viltrum_hs13_keys
+	hs_out      []u8 // hs13's server flight
+	hs_off      int  // bytes of it sent
 }
 
 // tls_pick_cert is mbedtls' certificate callback, run on every handshake: the
@@ -259,12 +269,39 @@ fn (mut c Conn) tls_start(srv &TlsServer) bool {
 	t.fast = false
 	t.handshaking = true
 	t.wlen = 0
+	t.hs13 = if hs13_supported { hs13_hello } else { hs13_off }
+	t.hs_off = 0
+	unsafe {
+		t.hs_out.len = 0
+	}
 	c.tls = t
 	return true
 }
 
 // handshake advances the handshake: hs_done, hs_want_read, hs_want_write or hs_failed.
+// hs13 tries first; a ClientHello it does not serve goes to mbedtls as it arrived.
 fn (mut t TlsConn) handshake() int {
+	if t.hs13 != hs13_off {
+		r := t.hs13_step()
+		$if viltrum_debug ? {
+			what := if r == hs_done {
+				'done'
+			} else if r == hs13_defer {
+				'to mbedtls'
+			} else if r == hs_failed {
+				'failed'
+			} else {
+				''
+			}
+			if what != '' {
+				eprintln('[viltrum] hs13: ' + what) // cold: debug builds only
+			}
+		}
+		if r != hs13_defer {
+			return r
+		}
+		t.hs13 = hs13_off
+	}
 	ret := C.mbedtls_ssl_handshake(&t.ssl)
 	if ret == 0 {
 		t.handshaking = false
@@ -334,6 +371,9 @@ fn (mut t TlsConn) write(buf &u8, n int) int {
 // is the expensive one: the key exchange and the certificate signature, together
 // milliseconds of CPU with an RSA key.
 fn (t &TlsConn) fresh() bool {
+	if t.hs13 == hs13_flight || t.hs13 == hs13_finished {
+		return false
+	}
 	return C.viltrum_tls_fresh(&t.ssl) != 0
 }
 
@@ -361,4 +401,14 @@ fn (mut t TlsConn) close() {
 	}
 	t.release()
 	t.handshaking = false
+	if t.hs13 != hs13_off {
+		// a handshake hs13 did not finish: its keys are still in the record state
+		C.viltrum_hs13_wipe(&t.keys, sizeof(C.viltrum_hs13_keys))
+		if !isnil(t.r13.rx) {
+			C.viltrum_gcm_wipe(t.r13.rx)
+			C.viltrum_gcm_wipe(t.r13.tx)
+		}
+		C.viltrum_tls_wipe(&t.r13.tx_iv[0], 12)
+		t.hs13 = hs13_off
+	}
 }

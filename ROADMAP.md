@@ -29,7 +29,9 @@ Success looks like:
 
 1. **Small surface** — every public symbol must earn its place.
 2. **Own engine, end to end** — accept loop, HTTP framing, connections, WS frames and the TLS integration stay
-   first-party. Crypto comes from the TLS library V ships (mbedtls); no foreign server runtime underneath.
+   first-party. Crypto comes from the TLS library V ships (mbedtls), except where it was the cost: the TLS 1.3
+   records (AES-GCM) and the common TLS 1.3 handshake (X25519, RSA-PSS signing) are viltrum's own, held to
+   the RFC vectors and to mbedtls in tests. No foreign server runtime underneath.
 3. **Zero allocation on the hot path** — enforced by a test in CI. New features keep the gate green or say why not.
 4. **Performance without DX sacrifice** — the public happy path stays short (`new` → routes → `listen`).
 5. **Honest status** — benches with the method noted; “production” only with evidence.
@@ -50,6 +52,7 @@ Success looks like:
 | Closed connections pooled per worker | done (1.0.3) |
 | Deferred responses (`c.after`) from per-worker timers, nanosecond waits | done (1.1.0, 1.5.1) |
 | TLS on the same workers, certificate reload | done (1.2.0) |
+| Own TLS 1.3 handshake for X25519 + RSA certificates, mbedtls for the rest ([design](docs/design/1.x-tls-handshake.md)) | done (1.7.0) |
 | gzip on viltrum's own DEFLATE encoder | done (1.2.2) |
 | WebSocket (`ws://`, `wss://`) | done (Phase 3) |
 | Static files (`static_files`, `c.file`): validators, ranges, `sendfile` | done (Phase 4) |

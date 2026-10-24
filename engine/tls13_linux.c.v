@@ -79,14 +79,8 @@ fn (mut t TlsConn) go_fast() {
 		return
 	}
 	mut r := &t.r13
-	if isnil(r.rx) {
-		r.rx = C.viltrum_gcm_new() // cold: once per pooled TlsConn
-		r.tx = C.viltrum_gcm_new() // cold: once per pooled TlsConn
-		r.inb = []u8{cap: tls13_in_cap} // cold: once per pooled TlsConn
-		r.out = []u8{cap: tls13_out_cap} // cold: once per pooled TlsConn
-		if isnil(r.rx) || isnil(r.tx) {
-			return
-		}
+	if !r.alloc() {
+		return
 	}
 	r.sha384 = sha384
 	r.sec_len = want
@@ -98,22 +92,8 @@ fn (mut t TlsConn) go_fast() {
 	if !r.derive(true) || !r.derive(false) {
 		return
 	}
-	r.rx_seq = 0
-	r.tx_seq = 0
+	r.start()
 	// whatever the read-ahead holds past the handshake is the first records
-	unsafe {
-		r.inb.len = 0
-	}
-	r.in_off = 0
-	r.pt_off = 0
-	r.pt_end = 0
-	unsafe {
-		r.out.len = 0
-	}
-	r.out_off = 0
-	r.out_pt = 0
-	r.drained = false
-	r.ku_owed = false
 	if t.bio.off < t.bio.len {
 		n := int(t.bio.len - t.bio.off)
 		unsafe {
@@ -123,6 +103,34 @@ fn (mut t TlsConn) go_fast() {
 		t.bio.off = t.bio.len
 	}
 	t.fast = true
+}
+
+// alloc sets up the key states and buffers, once per pooled TlsConn.
+fn (mut r Tls13) alloc() bool {
+	if isnil(r.rx) {
+		r.rx = C.viltrum_gcm_new() // cold: once per pooled TlsConn
+		r.tx = C.viltrum_gcm_new() // cold: once per pooled TlsConn
+		r.inb = []u8{cap: tls13_in_cap} // cold: once per pooled TlsConn
+		r.out = []u8{cap: tls13_out_cap} // cold: once per pooled TlsConn
+	}
+	return !isnil(r.rx) && !isnil(r.tx)
+}
+
+// start resets the record state for a session's first records.
+fn (mut r Tls13) start() {
+	r.rx_seq = 0
+	r.tx_seq = 0
+	unsafe {
+		r.inb.len = 0
+		r.out.len = 0
+	}
+	r.in_off = 0
+	r.pt_off = 0
+	r.pt_end = 0
+	r.out_off = 0
+	r.out_pt = 0
+	r.drained = false
+	r.ku_owed = false
 }
 
 // derive sets the key and IV of one direction from its traffic secret.

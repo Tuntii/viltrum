@@ -113,8 +113,10 @@ Not planned today. Revisit after Phases 1–3: cleartext h2 first, then h2 over 
 
 ## Phase 6 — Community
 
-- [ ] Examples and the [full-stack starter](https://github.com/Tuntii/full-stack-viltrum-template) on 1.x
-- [ ] Write-ups of the engine design and the benchmark method, on [tuntii.com](https://tuntii.com)
+- [x] Examples and the [full-stack starter](https://github.com/Tuntii/full-stack-viltrum-template) on 1.x
+- [x] Write-ups of the engine design and the benchmark method, on tuntii.com:
+      [the 1.x engine](https://tuntii.com/blog/viltrum-1x-motoru-cope-atip-yeniden-yazmak/),
+      [the HttpArena method](https://tuntii.com/blog/viltrum-httparena-benchmark-yontemi/) (Turkish)
 - [ ] Answer issues quickly; credit outside contributions in release notes
 
 ---
@@ -125,16 +127,12 @@ None are smuggling or correctness bugs on valid traffic; pull when touched or as
 
 | Area | Gap |
 |------|-----|
-| Engine | `epoll_ctl(DEL)` result unchecked; listener leak on startup failure; port 0 binds a different port per worker |
-| Engine | `is_http10` misses a request with a leading bare CRLF (may send 100 Continue to HTTP/1.0) |
-| Router | Duplicate static route silently ignored (first wins); 404/405 cost O(routes) |
-| Middleware | Global `cors` answers every OPTIONS; `logger` prints status 0 when nothing responded; gzip `Vary` only on bodies ≥ 256 B and q-value scan stops at space, not tab |
-| gzip | `tdefl_compressor_alloc` nil and `tdefl_init` result unchecked |
-| JSON | `snprintf` result unchecked; struct field names written unescaped |
+| Router | 404/405 cost O(routes) |
+| Middleware | Global `cors` answers every OPTIONS |
 | API | `Ctx` exposes internals as `pub mut` (`buf`, `out`, `chain`, `idx`, …); request counter not on `App` |
 | Buffers | Shrink only on close, not when a grown connection goes idle |
-| Tests | Positive control for `allocated_bytes()`; alloc guard around `DateCache.format`; `%`-escape in the zero-alloc gate; cumulative chunked cap across chunks; trailers split across reads; exact-32-fields accept; EMFILE path; suite under `-d viltrum_debug`; CI `v fmt -verify` |
-| Lint | `router/` not linted; map/array literals not linted (the zero-alloc gate is the real enforcement) |
+| Tests | Alloc guard around `DateCache.format`; cumulative chunked cap across chunks; trailers split across reads; EMFILE path |
+| Lint | Map/array literals not linted (the zero-alloc gate is the real enforcement) |
 
 ---
 

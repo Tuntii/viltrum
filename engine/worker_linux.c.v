@@ -39,8 +39,6 @@ const max_wait_ns = i64(1_000_000_000)
 const sendfile_max = i64(1024 * 1024 * 1024) // per call; Linux moves at most ~2 GiB in one
 const linger_idle_ms = 5000 // a lingering client quiet this long is closed
 const linger_max_ms = 30000 // and any lingering client after this long
-const shrink_rbuf_above = 64 * 1024
-const shrink_wbuf_above = 256 * 1024
 const busy_msg = 'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\nConnection: close\r\n\r\nservice unavailable'
 
 struct Loop {

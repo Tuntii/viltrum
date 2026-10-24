@@ -5,6 +5,12 @@ const gzip_min_bytes = 256 // below this the gzip framing costs more than it sav
 // accepts_gzip reads an Accept-Encoding value: an explicit gzip entry wins over *;
 // either counts only with a q-value above zero.
 pub fn accepts_gzip(v string) bool {
+	return accepts_coding(v, 'gzip')
+}
+
+// accepts_coding is accepts_gzip for any content coding (lowercase): its explicit
+// entry wins over *, and either counts only with a q-value above zero.
+pub fn accepts_coding(v string, coding string) bool {
 	mut star := false
 	mut i := 0
 	for i < v.len {
@@ -35,8 +41,7 @@ pub fn accepts_gzip(v string) bool {
 			}
 			i++
 		}
-		if ce - cs == 4 && lower(v[cs]) == `g` && lower(v[cs + 1]) == `z` && lower(v[cs + 2]) == `i`
-			&& lower(v[cs + 3]) == `p` {
+		if ce - cs == coding.len && coding_is(v, cs, coding) {
 			return !q_zero
 		}
 		if ce - cs == 1 && v[cs] == `*` {
@@ -44,6 +49,16 @@ pub fn accepts_gzip(v string) bool {
 		}
 	}
 	return star
+}
+
+// coding_is is whether v[s..s + coding.len] is coding, ignoring case.
+fn coding_is(v string, s int, coding string) bool {
+	for k in 0 .. coding.len {
+		if lower(v[s + k]) != coding[k] {
+			return false
+		}
+	}
+	return true
 }
 
 // is_q_zero matches "0", "0.", "0.0", "0.00" and "0.000".

@@ -77,6 +77,9 @@ mut:
 	etag    [56]u8
 	lastmod [29]u8
 	crange  [64]u8
+	// what stat said of the file being answered and of a compressed copy of it; kept
+	// here rather than in locals, which V -prod would pin around every call
+	finfo [2]C.viltrum_file_info
 }
 
 pub fn Ctx.new() Ctx {

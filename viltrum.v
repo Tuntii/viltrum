@@ -181,8 +181,11 @@ fn static_pattern(prefix string) string {
 }
 
 fn static_handler(dir string, opts StaticOptions) Handler {
-	return fn [dir, opts] (mut c Ctx) {
-		c.static_file(dir, c.param('filepath') or { '' }, opts)
+	o := &StaticOptions{
+		...opts
+	}
+	return fn [dir, o] (mut c Ctx) {
+		c.static_file_at(dir, c.param('filepath') or { '' }, o)
 	}
 }
 

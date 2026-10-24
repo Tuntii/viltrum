@@ -33,6 +33,11 @@ pub:
 	index    string = 'index.html' // served for a directory; '' answers 404 instead
 	max_age  int    = -1           // seconds for Cache-Control; -1 sends no Cache-Control
 	dotfiles bool // serve names starting with '.' (.env, .git/...); refused by default
+	// precompressed serves name.br or name.gz, the copies compressed ahead of time
+	// beside a file, to a client that accepts that coding (br first), with the file's
+	// own Content-Type; every answer then carries Vary: Accept-Encoding. Like the
+	// files themselves, the copies are read from disk on each request.
+	precompressed bool
 }
 
 // file answers with the file at path. GET and HEAD carry validators (ETag,
@@ -56,8 +61,8 @@ pub fn (mut c Ctx) file(path string, o FileOptions) {
 		}
 	}
 	append_str(mut c.pbuf, path)
-	mut info := C.viltrum_file_info{}
-	fd := c.open_pbuf(mut info)
+	info := &c.finfo[0]
+	fd := c.open_pbuf(info)
 	if fd < 0 || info.kind != 1 {
 		if fd >= 0 {
 			C.viltrum_file_close(fd)
@@ -66,7 +71,7 @@ pub fn (mut c Ctx) file(path string, o FileOptions) {
 		return
 	}
 	ct := if o.content_type.len > 0 { o.content_type } else { content_type_for(path) }
-	c.send_file(fd, info, ct, o.max_age)
+	c.send_file(fd, info, ct, '', o.max_age)
 }
 
 // static_file answers a GET or HEAD for rel, the still percent-encoded rest of the
@@ -76,6 +81,13 @@ pub fn (mut c Ctx) file(path string, o FileOptions) {
 // answers 404 and is never opened, so nothing outside dir is reachable through the
 // URL. Dotfiles answer 404 too unless o.dotfiles is set.
 pub fn (mut c Ctx) static_file(dir string, rel string, o StaticOptions) {
+	c.static_file_at(dir, rel, &o)
+}
+
+// static_file_at is static_file with the options behind a pointer: what
+// App.static_files calls, since V -prod pins an options struct passed by value around
+// every call in the function.
+pub fn (mut c Ctx) static_file_at(dir string, rel string, o &StaticOptions) {
 	if c.responded || c.deferred {
 		return
 	}
@@ -100,8 +112,8 @@ pub fn (mut c Ctx) static_file(dir string, rel string, o StaticOptions) {
 			c.pbuf.len-- // dir itself: Windows' stat refuses a trailing slash
 		}
 	}
-	mut info := C.viltrum_file_info{}
-	mut fd := c.open_pbuf(mut info)
+	info := &c.finfo[0]
+	mut fd := c.open_pbuf(info)
 	if info.kind == 2 {
 		path := c.path()
 		if path.len == 0 || path[path.len - 1] != `/` {
@@ -113,7 +125,7 @@ pub fn (mut c Ctx) static_file(dir string, rel string, o StaticOptions) {
 				c.pbuf << `/`
 			}
 			append_str(mut c.pbuf, o.index)
-			fd = c.open_pbuf(mut info)
+			fd = c.open_pbuf(info)
 		}
 	}
 	if fd < 0 || info.kind != 1 {
@@ -123,7 +135,35 @@ pub fn (mut c Ctx) static_file(dir string, rel string, o StaticOptions) {
 		c.text(404, 'not found')
 		return
 	}
-	c.send_file(fd, info, content_type_for(str_view(c.pbuf, 0, c.pbuf.len)), o.max_age)
+	ct := content_type_for(str_view(c.pbuf, 0, c.pbuf.len))
+	if !o.precompressed {
+		c.send_file(fd, info, ct, '', o.max_age)
+		return
+	}
+	c.set_header('Vary', 'Accept-Encoding')
+	ae := c.header('accept-encoding') or { '' }
+	for k in 0 .. 2 {
+		coding := if k == 0 { 'br' } else { 'gzip' }
+		if !accepts_coding(ae, coding) {
+			continue
+		}
+		mark := c.pbuf.len
+		append_str(mut c.pbuf, if coding == 'br' { '.br' } else { '.gz' })
+		vinfo := &c.finfo[1]
+		vfd := c.open_pbuf(vinfo)
+		unsafe {
+			c.pbuf.len = mark
+		}
+		if vfd >= 0 && vinfo.kind == 1 {
+			C.viltrum_file_close(fd)
+			c.send_file(vfd, vinfo, ct, coding, o.max_age)
+			return
+		}
+		if vfd >= 0 {
+			C.viltrum_file_close(vfd)
+		}
+	}
+	c.send_file(fd, info, ct, '', o.max_age)
 }
 
 // append_rel decodes rel onto pbuf name by name; false for a name that must not be
@@ -197,9 +237,9 @@ fn (mut c Ctx) redirect_slash() {
 }
 
 // open_pbuf opens the path in pbuf; -1 when it cannot be opened.
-fn (mut c Ctx) open_pbuf(mut info C.viltrum_file_info) int {
+fn (mut c Ctx) open_pbuf(info &C.viltrum_file_info) int {
 	c.pbuf << 0
-	fd := C.viltrum_file_open(c.pbuf.data, &info)
+	fd := C.viltrum_file_open(c.pbuf.data, info)
 	unsafe {
 		c.pbuf.len--
 	}
@@ -207,8 +247,8 @@ fn (mut c Ctx) open_pbuf(mut info C.viltrum_file_info) int {
 }
 
 // send_file answers with the open file fd, which it takes over (closes or hands to
-// the engine).
-fn (mut c Ctx) send_file(fd int, info C.viltrum_file_info, content_type string, max_age int) {
+// the engine); coding names the Content-Encoding its bytes are in, '' for none.
+fn (mut c Ctx) send_file(fd int, info &C.viltrum_file_info, content_type string, coding string, max_age int) {
 	etag := c.make_etag(info)
 	format_imf(info.mtime, &c.lastmod[0])
 	c.set_header('ETag', etag)
@@ -219,7 +259,7 @@ fn (mut c Ctx) send_file(fd int, info C.viltrum_file_info, content_type string, 
 	method := c.head.method
 	if (method == .get || method == .head) && c.not_modified(etag, info.mtime) {
 		C.viltrum_file_close(fd)
-		c.answer_head(304, '', -1)
+		c.answer_head(304, '', '', -1)
 		return
 	}
 	c.set_header('Accept-Ranges', 'bytes')
@@ -232,7 +272,7 @@ fn (mut c Ctx) send_file(fd int, info C.viltrum_file_info, content_type string, 
 			if start == range_unsatisfiable {
 				C.viltrum_file_close(fd)
 				c.set_header('Content-Range', c.content_range(-1, -1, info.size))
-				c.answer_head(416, '', 0)
+				c.answer_head(416, '', '', 0)
 				return
 			}
 			if start >= 0 {
@@ -245,18 +285,18 @@ fn (mut c Ctx) send_file(fd int, info C.viltrum_file_info, content_type string, 
 	}
 	if method == .head || n == 0 {
 		C.viltrum_file_close(fd)
-		c.answer_head(status, content_type, n)
+		c.answer_head(status, content_type, coding, n)
 		return
 	}
 	if n > file_inline_max {
-		c.answer_head(status, content_type, n)
+		c.answer_head(status, content_type, coding, n)
 		c.file_fd = fd
 		c.file_off = off
 		c.file_left = n
 		return
 	}
 	mark := c.out.len
-	c.answer_head(status, content_type, n)
+	c.answer_head(status, content_type, coding, n)
 	if c.out.cap - c.out.len < n {
 		unsafe { c.out.grow_cap(int(n)) } // cold: a write buffer smaller than the file
 	}
@@ -280,11 +320,11 @@ fn (mut c Ctx) send_file(fd int, info C.viltrum_file_info, content_type string, 
 }
 
 // answer_head marks the response written and writes its head; length as write_head.
-fn (mut c Ctx) answer_head(status int, content_type string, length i64) {
+fn (mut c Ctx) answer_head(status int, content_type string, coding string, length i64) {
 	c.responded = true
 	c.wrote = true
 	c.status = status
-	c.write_head(status, content_type, '', length)
+	c.write_head(status, content_type, coding, length)
 }
 
 // read_at reads n bytes at off into p, short only at the end of the file or on error.
@@ -307,7 +347,7 @@ pub fn close_file(fd int) {
 
 // make_etag is "mtime-size" in hex (with the nanoseconds where the platform has them),
 // which changes whenever the file is replaced or rewritten.
-fn (mut c Ctx) make_etag(info C.viltrum_file_info) string {
+fn (mut c Ctx) make_etag(info &C.viltrum_file_info) string {
 	unsafe {
 		mut p := &c.etag[0]
 		p[0] = `"`

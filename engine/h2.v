@@ -1,5 +1,6 @@
 module engine
 
+import time
 import viltrum.http1
 import viltrum.http2
 
@@ -35,6 +36,11 @@ mut:
 	file_fd   int = -1 // a file answer, sent after out
 	file_off  i64
 	file_left i64
+	// a deferred response (Ctx.after): its timer is on the worker
+	waiting bool
+	cb      http1.Resume = unsafe { nil }
+	arg     u64
+	method  http1.Method
 }
 
 // H2Conn is the HTTP/2 state of one connection.
@@ -65,6 +71,7 @@ mut:
 	streams    []H2Stream
 	open       int // streams in use
 	sending    int // streams with output held back
+	waiting    int // streams whose response is deferred
 	held       i64 // response bytes held back in slots
 	files      int // file answers held back
 	pump_next  int // the slot h2_pump starts its next pass at
@@ -131,6 +138,7 @@ fn (mut w Worker) h2_open(mut c Conn) {
 	h.hstream = 0
 	h.open = 0
 	h.sending = 0
+	h.waiting = 0
 	h.held = 0
 	h.files = 0
 	h.pump_next = 0
@@ -334,6 +342,7 @@ fn (mut h H2Conn) take(id u32, send_win i64) int {
 	s.id = id
 	s.receiving = false
 	s.sending = false
+	s.waiting = false
 	unsafe {
 		s.head.len = 0
 		s.body.len = 0
@@ -363,6 +372,10 @@ fn (mut h H2Conn) release(i int) {
 	if s.receiving {
 		h.buffered -= s.body.len
 		s.receiving = false
+	}
+	if s.waiting {
+		h.waiting-- // its timer finds the stream gone and is dropped
+		s.waiting = false
 	}
 	if s.file_fd >= 0 {
 		http1.close_file(s.file_fd)
@@ -876,12 +889,19 @@ fn (mut w Worker) h2_serve(mut c Conn, id u32, body []u8, send_win i64) {
 	x.begin(msg)
 	x.set_body(body)
 	idx := w.run_chain(mut x)
+	w.requests++
+	c.h2.flood = 0
+	w.h2_finish(mut c, id, idx, send_win)
+}
+
+// h2_finish sends the Ctx's response on stream id, or parks the stream when the
+// response is deferred. idx is the route lookup result, as for finish.
+fn (mut w Worker) h2_finish(mut c Conn, id u32, idx int, send_win i64) {
+	mut x := &w.ctx
 	w.h2out = x.out
 	if x.deferred {
-		// deferred responses (Ctx.after) wait on the connection, which an HTTP/2
-		// connection shares between streams; not served yet
 		x.deferred = false
-		w.h2_error(mut c, id, 501, 'deferred responses need HTTP/1.1', send_win)
+		w.h2_defer(mut c, id, send_win)
 		return
 	}
 	if !isnil(x.ws) {
@@ -890,14 +910,61 @@ fn (mut w Worker) h2_serve(mut c Conn, id u32, body []u8, send_win i64) {
 	}
 	w.answer_default(idx)
 	w.h2out = x.out
-	w.requests++
-	c.h2.flood = 0
 	file_fd := x.file_fd
 	x.file_fd = -1
 	w.h2_respond(mut c, id, file_fd, x.file_off, x.file_left, send_win)
 	if w.h2out.cap > shrink_wbuf_above {
 		w.h2out = []u8{cap: write_buf_size} // cold: a large response
 	}
+}
+
+// h2_defer parks stream id until its deferred response (Ctx.after) is due. Only the
+// stream waits: its slot keeps the callback and follows the client's window, and the
+// rest of the connection goes on.
+fn (mut w Worker) h2_defer(mut c Conn, id u32, send_win i64) {
+	mut x := &w.ctx
+	mut h := c.h2
+	i := h.take(id, send_win)
+	mut s := &h.streams[i]
+	s.waiting = true
+	s.cb = x.defer_cb
+	s.arg = x.defer_arg
+	s.method = x.head.method
+	h.waiting++
+	w.timers.push(time.sys_mono_now() + u64(x.defer_ms) * 1_000_000, c.fd, c.gen, id)
+}
+
+// h2_resume writes the response deferred on stream id, when its timer is due; false
+// when the stream no longer waits for it (the client reset it, or the connection is
+// closing).
+fn (mut w Worker) h2_resume(mut c Conn, id u32) bool {
+	mut h := c.h2
+	i := h.find(id)
+	if c.close_after || i < 0 || !h.streams[i].waiting {
+		return false
+	}
+	s := &h.streams[i]
+	cb := s.cb
+	arg := s.arg
+	method := s.method
+	send_win := s.send_win
+	h.release(i)
+	mut x := &w.ctx
+	unsafe {
+		w.h2out.len = 0
+	}
+	x.out = w.h2out
+	x.begin_resumed(method, 1, true)
+	cb(mut x, arg)
+	w.h2_finish(mut c, id, 0, send_win)
+	return true
+}
+
+// h2_waits is whether an HTTP/2 connection is quiet but for deferred responses, which
+// their timers answer: nothing arriving in part, nothing held back or blocked going
+// out. The idle timeout waits meanwhile, as it does for an HTTP/1.1 one.
+fn (c &Conn) h2_waits() bool {
+	return !isnil(c.h2) && c.h2.waiting > 0 && c.h2.sending == 0 && !c.reading && !c.out_armed
 }
 
 // h2_error answers stream id with status and a short text, as refuse does.

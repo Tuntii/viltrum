@@ -376,7 +376,7 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 		c.pending.minor = x.head.minor
 		c.pending.close = x.close_after
 		c.pending.due = time.sys_mono_now() + u64(x.defer_ms) * 1_000_000
-		w.timers.push(c.pending.due, c.fd, c.gen)
+		w.timers.push(c.pending.due, c.fd, c.gen, 0)
 		c.wbuf = x.out
 		return
 	}

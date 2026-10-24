@@ -70,8 +70,12 @@ The same `Ctx` as over HTTP/1.1. Specifically:
   dropped (they have no meaning in HTTP/2). `c.close()` does not close an HTTP/2 connection.
 - Files (`c.file`, `app.static_files`) stream from disk as the client's flow-control windows allow.
 
-Not served over HTTP/2 yet, answered **501** instead: deferred responses (`c.after`) and WebSocket upgrades.
-Use HTTP/1.1 for those routes.
+- Deferred responses (`c.after`) hold only their own stream: the connection's other streams are answered
+  meanwhile, and the response goes out on the window the client gave the stream while it waited. A stream
+  the client resets while it waits drops its response.
+
+Not served over HTTP/2, answered **501** instead: WebSocket upgrades (RFC 8441 is not implemented). Use
+HTTP/1.1 for those routes.
 
 ## Limits
 

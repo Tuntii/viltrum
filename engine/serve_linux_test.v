@@ -97,6 +97,12 @@ fn free_addr() string {
 }
 
 fn start(opts Options) (string, &Stop) {
+	return start_on(false, opts)
+}
+
+// start_on is start with HTTP/2 (prior knowledge) allowed on the listener when h2
+// is set.
+fn start_on(h2 bool, opts Options) (string, &Stop) {
 	addr := free_addr()
 	mut stop := new_stop()
 	o := Options{
@@ -107,8 +113,12 @@ fn start(opts Options) (string, &Stop) {
 		send_date:      false
 	}
 	r := make_router()
-	spawn fn [addr, r, o] () {
-		serve(addr, r, o) or { eprintln(err) }
+	ls := [Listener{
+		addr:  addr
+		http2: h2
+	}]
+	spawn fn [ls, r, o] () {
+		serve_listeners(ls, r, o) or { eprintln(err) }
 	}()
 	for _ in 0 .. 100 {
 		mut c := net.dial_tcp(addr) or {
@@ -419,6 +429,40 @@ fn test_deferred_pipeline_and_closed_waiter() {
 	_, second := r.response(mut c) or { panic(err) }
 	assert second == '/p/after'
 	c.close() or {}
+}
+
+// Over HTTP/2 a deferred response holds only its own stream: on one connection the
+// stream after two waiting ones is answered at once, and the two waits overlap.
+fn test_h2c_deferred() {
+	v := os.execute('curl --version')
+	if v.exit_code != 0 || !v.output.contains('HTTP2') {
+		eprintln('skip: curl with HTTP/2 not found')
+		return
+	}
+	addr, mut stop := start_on(true, Options{})
+	defer {
+		stop.request()
+	}
+	urls := 'http://${addr}/delay/300 http://${addr}/delay/300 http://${addr}/p/fast'
+	t0 := time.sys_mono_now()
+	r :=
+		os.execute('curl -s --http2-prior-knowledge --parallel -o /dev/null -o /dev/null -o /dev/null -w "%{url_effective} %{response_code} %{http_version} %{num_connects} %{time_total}\\n" ${urls}')
+	took := time.sys_mono_now() - t0
+	lines := r.output.trim_space().split_into_lines()
+	assert lines.len == 3, r.output
+	mut connects := 0
+	for line in lines {
+		f := line.split(' ')
+		assert f.len == 5 && f[1] == '200' && f[2] == '2', r.output
+		connects += f[3].int()
+		if f[0].ends_with('/p/fast') {
+			assert f[4].f64() < 0.2, r.output
+		} else {
+			assert f[4].f64() >= 0.3, r.output
+		}
+	}
+	assert connects == 1, r.output
+	assert took < 550 * u64(time.millisecond), r.output
 }
 
 fn C.socketpair(domain int, typ int, protocol int, sv &int) int
@@ -768,12 +812,12 @@ fn test_wait_ns_keeps_sub_millisecond_timeouts() {
 		count: count
 	}
 	assert l.wait_ns() == max_wait_ns
-	l.w.timers.push(time.sys_mono_now() + 300_000, 0, 0)
+	l.w.timers.push(time.sys_mono_now() + 300_000, 0, 0, 0)
 	ns := l.wait_ns()
 	assert ns > 0 && ns <= 300_000
-	l.w.timers.push(time.sys_mono_now() + 10 * u64(time.second), 1, 0)
+	l.w.timers.push(time.sys_mono_now() + 10 * u64(time.second), 1, 0, 0)
 	assert l.wait_ns() <= 300_000 // the earliest one counts
-	l.w.timers.push(0, 2, 0)
+	l.w.timers.push(0, 2, 0, 0)
 	assert l.wait_ns() == 0
 }
 

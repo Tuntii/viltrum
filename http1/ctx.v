@@ -332,7 +332,7 @@ pub fn (mut c Ctx) next() {
 // worker to write the response (it may call after again). By then the request is
 // gone: path, params, headers and body read empty, and headers set before after
 // are dropped, so pass what cb needs in arg. Requests pipelined behind this one
-// wait their turn. Middleware that runs after next() sees no response yet, so a
+// wait their turn; over HTTP/2 only this request's stream waits. Middleware that runs after next() sees no response yet, so a
 // deferred response is not gzipped. ms <= 0 calls cb right away.
 pub fn (mut c Ctx) after(ms int, cb Resume, arg u64) {
 	if c.responded || c.deferred {

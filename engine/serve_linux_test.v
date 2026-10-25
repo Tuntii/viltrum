@@ -76,8 +76,68 @@ fn h_chat(mut c http1.Ctx) {
 	c.ws_upgrade(chat_h)
 }
 
+// an SSE stream: an event at once, then one every 20 ms, three in all, then the end
+fn ev_tick(mut s http1.Stream, arg u64) {
+	if arg == 3 {
+		s.end()
+		return
+	}
+	s.event('tick', 'n')
+	s.after(20, ev_tick, arg + 1)
+}
+
+fn ev_open(mut s http1.Stream, mut c http1.Ctx) {
+	s.event('', 'hello')
+	s.after(20, ev_tick, 0)
+}
+
+const ev_h = &http1.StreamHandler{
+	on_open: ev_open
+}
+
+fn h_events(mut c http1.Ctx) {
+	c.sse(ev_h)
+}
+
+// a 5 MiB body generated 64 KiB at a time as the client takes it
+const gen_piece = []u8{len: 64 * 1024, init: u8(`a` + index % 26)}
+
+fn gen_more(mut s http1.Stream) {
+	n := u64(s.data)
+	if n == 80 {
+		s.end()
+		return
+	}
+	s.write(gen_piece)
+	s.data = voidptr(n + 1)
+}
+
+const gen_h = &http1.StreamHandler{
+	on_drain: gen_more
+}
+
+fn h_gen(mut c http1.Ctx) {
+	c.stream(200, 'application/octet-stream', gen_h)
+}
+
+fn sub_ready(mut s http1.Stream, mut c http1.Ctx) {
+	s.subscribe('news')
+	s.event('ready', '')
+}
+
+const sub_h = &http1.StreamHandler{
+	on_open: sub_ready
+}
+
+fn h_sub(mut c http1.Ctx) {
+	c.sse(sub_h)
+}
+
 fn make_router() &router.Router {
 	mut r := &router.Router{}
+	r.add(.get, '/events', [http1.Handler(h_events)]) or { panic(err) }
+	r.add(.get, '/gen', [http1.Handler(h_gen)]) or { panic(err) }
+	r.add(.get, '/sub', [http1.Handler(h_sub)]) or { panic(err) }
 	r.add(.get, '/p/*rest', [http1.Handler(h_path)]) or { panic(err) }
 	r.add(.get, '/ws', [http1.Handler(h_ws)]) or { panic(err) }
 	r.add(.get, '/chat', [http1.Handler(h_chat)]) or { panic(err) }
@@ -463,6 +523,76 @@ fn test_h2c_deferred() {
 	}
 	assert connects == 1, r.output
 	assert took < 550 * u64(time.millisecond), r.output
+}
+
+// read_until reads from conn until what it got ends with end.
+fn read_until(mut conn net.TcpConn, end string) string {
+	mut got := []u8{}
+	mut tmp := []u8{len: 4096}
+	for !got.bytestr().ends_with(end) {
+		n := conn.read(mut tmp) or { panic('${err}: got ${got.bytestr()}') }
+		if n <= 0 {
+			panic('closed: got ${got.bytestr()}')
+		}
+		got << tmp[..n]
+	}
+	return got.bytestr()
+}
+
+// Streams over a socket: an SSE stream as curl sees it, a body generated as the
+// client takes it, and a publish from another thread reaching a subscribed stream.
+fn test_streams() {
+	v := os.execute('curl --version')
+	if v.exit_code != 0 {
+		eprintln('skip: curl not found')
+		return
+	}
+	mut hub := new_hub()
+	addr, mut stop := start(Options{
+		hub: hub
+	})
+	defer {
+		stop.request()
+	}
+	t0 := time.sys_mono_now()
+	ev := os.execute('curl -sN http://${addr}/events')
+	assert ev.output == 'data: hello\n\n' + 'event: tick\ndata: n\n\n'.repeat(3), ev.output
+	assert time.sys_mono_now() - t0 >= 80 * u64(time.millisecond)
+	head := os.execute('curl -sI http://${addr}/events')
+	assert head.output.contains('Content-Type: text/event-stream'), head.output
+	gen := os.execute('curl -s -o /dev/null -w "%{http_code} %{size_download}" http://${addr}/gen')
+	assert gen.output == '200 ${80 * 64 * 1024}', gen.output
+	// HTTP/1.0 gets the bytes unchunked, ended by the close
+	gen10 := os.execute('curl -s --http1.0 -o /dev/null -w "%{size_download}" http://${addr}/gen')
+	assert gen10.output == '${80 * 64 * 1024}', gen10.output
+	// the same bytes as were generated, in order, over one keep-alive connection twice
+	sum := os.execute('curl -s http://${addr}/gen http://${addr}/gen | md5sum')
+	mut want := []u8{}
+	for _ in 0 .. 160 {
+		want << gen_piece
+	}
+	os.write_file_array(file_path + '.gen', want) or { panic(err) }
+	defer {
+		os.rm(file_path + '.gen') or {}
+	}
+	want_sum := os.execute('md5sum < ${file_path}.gen')
+	assert sum.output == want_sum.output
+	// a publish from this thread reaches the subscribed stream on its worker
+	mut c := dial(addr)
+	c.write_string('GET /sub HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
+	read_until(mut c, 'event: ready\ndata: \n\n\r\n')
+	// an open stream does not hold its worker
+	mut q := dial(addr)
+	q.write_string('GET /p/meanwhile HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
+	mut rq := Reader{}
+	_, body := rq.response(mut q) or { panic(err) }
+	assert body == '/p/meanwhile'
+	q.close() or {}
+	hub.post(http1.sse_post('news', http1.StreamId{}, http1.StreamId{}, '', 'news', 'hi') or {
+		panic(err)
+	})
+	assert read_until(mut c, '\r\n').ends_with('event: news\ndata: hi\n\n\r\n')
+	c.close() or {}
 }
 
 fn C.socketpair(domain int, typ int, protocol int, sv &int) int

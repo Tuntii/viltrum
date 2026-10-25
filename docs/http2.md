@@ -74,7 +74,8 @@ The same `Ctx` as over HTTP/1.1. Specifically:
   meanwhile, and the response goes out on the window the client gave the stream while it waited. A stream
   the client resets while it waits drops its response.
 
-Not served over HTTP/2, answered **501** instead: WebSocket upgrades (RFC 8441 is not implemented). Use
+Not served over HTTP/2, answered **501** instead: WebSocket upgrades (RFC 8441 is not implemented) and,
+until Phase 7b, streaming responses (`c.stream`, `c.sse`, [docs/streaming.md](streaming.md)). Use
 HTTP/1.1 for those routes.
 
 ## Limits

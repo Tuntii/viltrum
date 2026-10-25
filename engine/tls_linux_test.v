@@ -48,8 +48,30 @@ fn h_file(mut c http1.Ctx) {
 	c.file(file_path)
 }
 
+// a 5 MiB body generated 64 KiB at a time as the client takes it
+const gen_piece = []u8{len: 64 * 1024, init: u8(`a` + index % 26)}
+
+fn gen_more(mut s http1.Stream) {
+	n := u64(s.data)
+	if n == 80 {
+		s.end()
+		return
+	}
+	s.write(gen_piece)
+	s.data = voidptr(n + 1)
+}
+
+const gen_h = &http1.StreamHandler{
+	on_drain: gen_more
+}
+
+fn h_gen(mut c http1.Ctx) {
+	c.stream(200, 'application/octet-stream', gen_h)
+}
+
 fn make_router() &router.Router {
 	mut r := &router.Router{}
+	r.add(.get, '/gen', [http1.Handler(h_gen)]) or { panic(err) }
 	r.add(.get, '/file', [http1.Handler(h_file)]) or { panic(err) }
 	r.add(.get, '/p/*rest', [http1.Handler(h_path)]) or { panic(err) }
 	r.add(.get, '/ws', [http1.Handler(h_ws)]) or { panic(err) }
@@ -481,6 +503,34 @@ fn test_alpn_h2() {
 	}
 	plain := os.execute('curl -sk --http2 -w " %{http_version}" https://${addrs[0]}/p/x')
 	assert plain.output == '/p/x 1.1', plain.output
+}
+
+// A streamed body over TLS: generated as the socket takes it, whole and in order,
+// then the connection goes on to its next request.
+fn test_stream_over_tls() {
+	if os.execute('curl --version').exit_code != 0 {
+		eprintln('skip: curl not found')
+		return
+	}
+	addrs, mut stop := start_tls([tls_opts(tls_testdata, 'a')], Options{})
+	defer {
+		stop.request()
+	}
+	a := addrs[0]
+	sum := os.execute('curl -sk https://${a}/gen https://${a}/gen | md5sum')
+	mut want := []u8{}
+	for _ in 0 .. 160 {
+		want << gen_piece
+	}
+	path := os.join_path(os.temp_dir(), 'viltrum-tls-gen-${os.getpid()}')
+	os.write_file_array(path, want) or { panic(err) }
+	defer {
+		os.rm(path) or {}
+	}
+	assert sum.output == os.execute('md5sum < ${path}').output
+	n :=
+		os.execute('curl -sk -o /dev/null -o /dev/null -w "%{num_connects}" https://${a}/gen https://${a}/p/x')
+	assert n.output == '10', n.output // one connection for both
 }
 
 // A pair rename-swapped on disk is served on new handshakes within a couple of

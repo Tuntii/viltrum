@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-10-24 · current release: **v1.7.0**
+Last updated: 2026-10-25 · current release: **v1.11.0**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** HTTP/1.1 engine: one `SO_REUSEPORT`
 epoll worker per CPU, pipelining, and no allocation per request inside the framework. Not a thin wrapper.
@@ -57,6 +57,7 @@ Success looks like:
 | WebSocket (`ws://`, `wss://`) | done (Phase 3) |
 | Static files (`static_files`, `c.file`): validators, ranges, `sendfile` | done (Phase 4) |
 | Forms and uploads (`form_value`, `form_file`, `form_parts`) | done (Phase 4) |
+| Streaming responses and Server-Sent Events (`c.stream`, `c.sse`), HTTP/1.1 | done (Phase 7a) |
 | Generic upgrade, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
 
 Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
@@ -131,6 +132,27 @@ Decided on 2026-10-24: cleartext h2 first, then h2 over TLS via ALPN. Design:
       [the 1.x engine](https://tuntii.com/blog/viltrum-1x-motoru-cope-atip-yeniden-yazmak/),
       [the HttpArena method](https://tuntii.com/blog/viltrum-httparena-benchmark-yontemi/) (Turkish)
 - [ ] Answer issues quickly; credit outside contributions in release notes
+
+## Phase 7 — Streaming responses and Server-Sent Events
+
+Decided on 2026-10-25: streaming first; the other candidates wait in the feature backlog below. Design:
+[docs/design/1.x-streaming.md](docs/design/1.x-streaming.md).
+
+- [x] 7a, HTTP/1.1: `c.stream` / `c.sse` with a `StreamHandler`. Covers writes, `end`, timers on the stream,
+      `on_drain` for bodies generated at the client's pace, SSE framing and heartbeat, and sends and topic
+      publishes from any thread through the hub. Zero-allocation gate on the stream path
+      ([docs/streaming.md](docs/streaming.md))
+- [ ] 7b, HTTP/2: the same API per HTTP/2 stream, many streams on one connection, within flow control
+
+## Feature backlog
+
+Candidates for the phases after 7, in no order; each needs its own decision before it starts.
+
+| Feature | What it takes, and why |
+|---------|------------------------|
+| Async HTTP client | Non-blocking requests from handlers, on the same epoll workers, with keep-alive pooling and TLS. Unblocks Sharkbench, reverse proxying and upstream calls; existed on 0.x |
+| WebSocket over HTTP/2 | RFC 8441 (extended CONNECT) and permessage-deflate. Today an upgrade over HTTP/2 answers 501 |
+| Observability | `/metrics` in the Prometheus format (requests, latency histogram, connections), request IDs, structured access logs |
 
 ---
 

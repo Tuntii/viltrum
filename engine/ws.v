@@ -197,7 +197,7 @@ pub fn (mut w Worker) ws_end(mut c Conn) {
 		w.ws_take(mut c)
 	}
 	for c.subs.len > 0 {
-		w.ws_leave(mut c, c.subs.len - 1)
+		w.leave_topic(mut c, c.subs.len - 1)
 	}
 	c.ws = unsafe { nil }
 	c.ws_data = unsafe { nil }
@@ -229,11 +229,12 @@ fn (mut w Worker) ws_take(mut c Conn) {
 		c.ws_code = 1000
 	}
 	if w.ws.subs.len > 0 || w.ws.posts.len > 0 {
-		w.ws_apply(mut c)
+		w.apply_topics(mut c, mut w.ws.subs, mut w.ws.posts, c.ws_closing)
 	}
 }
 
-// Topic is one topic's subscribers on this worker.
+// Topic is one topic's subscribers on this worker: WebSocket connections and streams
+// alike, each getting only the messages of its kind.
 @[heap]
 struct Topic {
 	name string
@@ -241,36 +242,36 @@ mut:
 	conns []&Conn
 }
 
-// ws_apply carries out what a callback asked for besides sends: subscriptions,
-// then publishes, which go through the hub to every worker (this one included).
-fn (mut w Worker) ws_apply(mut c Conn) {
-	for i in 0 .. w.ws.subs.len {
-		sub := &w.ws.subs[i]
+// apply_topics carries out what a WebSocket or stream callback asked for besides
+// sends: subscriptions (none once closing), then publishes, which go through the hub
+// to every worker (this one included).
+fn (mut w Worker) apply_topics(mut c Conn, mut subs []http1.WsSub, mut posts []&http1.WsPost, closing bool) {
+	for i in 0 .. subs.len {
+		sub := unsafe { &subs[i] } // not a copy, which V -prod would pin around each call
 		if sub.on {
-			w.ws_subscribe(mut c, sub.topic)
+			if !closing {
+				w.join_topic(mut c, sub.topic)
+			}
 		} else {
 			for k in 0 .. c.subs.len {
 				if c.subs[k].name == sub.topic {
-					w.ws_leave(mut c, k)
+					w.leave_topic(mut c, k)
 					break
 				}
 			}
 		}
 	}
-	w.ws.subs.clear()
-	for i in 0 .. w.ws.posts.len {
+	subs.clear()
+	for i in 0 .. posts.len {
 		if !isnil(w.hub) {
-			w.hub.post(w.ws.posts[i])
+			w.hub.post(posts[i])
 		}
-		w.ws.posts[i] = unsafe { nil }
+		posts[i] = unsafe { nil }
 	}
-	w.ws.posts.clear()
+	posts.clear()
 }
 
-fn (mut w Worker) ws_subscribe(mut c Conn, name string) {
-	if c.ws_closing {
-		return
-	}
+fn (mut w Worker) join_topic(mut c Conn, name string) {
 	for k in 0 .. c.subs.len {
 		if c.subs[k].name == name {
 			return
@@ -287,8 +288,8 @@ fn (mut w Worker) ws_subscribe(mut c Conn, name string) {
 	c.subs << t
 }
 
-// ws_leave takes c out of its k-th topic, and drops the topic once nobody is left.
-fn (mut w Worker) ws_leave(mut c Conn, k int) {
+// leave_topic takes c out of its k-th topic, and drops the topic once nobody is left.
+fn (mut w Worker) leave_topic(mut c Conn, k int) {
 	mut t := c.subs[k]
 	for i in 0 .. t.conns.len {
 		if voidptr(t.conns[i]) == voidptr(c) {
@@ -312,7 +313,14 @@ pub fn (mut w Worker) deliver(p &http1.WsPost, mut conns []&Conn, mut touched []
 			return
 		}
 		mut c := conns[p.to.fd]
-		if c.fd == p.to.fd && c.gen == p.to.gen && !isnil(c.ws) {
+		if c.fd != p.to.fd || c.gen != p.to.gen {
+			return
+		}
+		if p.op == http1.stream_data {
+			if !isnil(c.st) && c.st_serial == p.stream {
+				w.st_push(mut c, p, mut touched)
+			}
+		} else if !isnil(c.ws) {
 			w.ws_push(mut c, p, mut touched)
 		}
 		return
@@ -323,7 +331,13 @@ pub fn (mut w Worker) deliver(p &http1.WsPost, mut conns []&Conn, mut touched []
 		if c.gen == p.skip.gen && c.fd == p.skip.fd && w.ws.worker == p.skip.worker {
 			continue
 		}
-		w.ws_push(mut c, p, mut touched)
+		if p.op == http1.stream_data {
+			if !isnil(c.st) {
+				w.st_push(mut c, p, mut touched)
+			}
+		} else if !isnil(c.ws) {
+			w.ws_push(mut c, p, mut touched)
+		}
 	}
 }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.13.0](https://github.com/Tuntii/viltrum/compare/v1.12.0...v1.13.0) (2026-10-25)
+
+### Features
+
+* streaming responses and Server-Sent Events over HTTP/2 ([d9d1ef6](https://github.com/Tuntii/viltrum/commit/d9d1ef6ad000433c6efb6f8facffe608f01e47d0))
+
 ## [1.12.0](https://github.com/Tuntii/viltrum/compare/v1.11.0...v1.12.0) (2026-10-25)
 
 ### Features

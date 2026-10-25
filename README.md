@@ -85,27 +85,29 @@ Not on the 1.x core yet (they return later): the HTTP client, serving off Linux.
 ### HttpArena: first on HTTP/1.1 and on WebSocket
 
 [HttpArena](https://http-arena.com) runs every entry on the same 64-thread machine with the same load generator.
-In the 2026-10-23 results Viltrum is **first of 14 on HTTP/1.1** (composite 7686) and **first of 11 on
-WebSocket** (composite 3000) in its category, with seven gold medals, two silver and one bronze. The medals
-with their results:
+In the 2026-10-25 results (v1.7.0) Viltrum is **first of 19 on HTTP/1.1** (composite 7914, ahead of ktron at
+7628) and **first of 14 on WebSocket** in its category, with **nine gold medals** and one bronze:
 
-| | Profile | Connections | Result | Place |
-|:-:|---------|------------:|-------:|------:|
-| 🥈 | Baseline | 4,096 | 4.06M req/s | 2 / 14 |
-| 🥈 | Short-lived connections | 4,096 | 2.70M req/s | 2 / 14 |
-| 🥇 | JSON, gzip | 4,096 | 899K req/s | 1 / 13 |
-| 🥇 | JSON over TLS | 4,096 | 1.61M req/s | 1 / 13 |
-| 🥉 | Async (`/delay`) | 32,000 | 2.49M req/s | 3 / 12 |
-| 🥇 | WebSocket echo | 512 | 4.27M msg/s | 1 / 11 |
-| 🥇 | WebSocket echo, pipelined | 512 | 62.5M msg/s | 1 / 11 |
-| 🥇 | WebSocket echo, short-lived | 512 | 2.22M msg/s | 1 / 11 |
+| | Medal | Connections | Result | Place |
+|:-:|-------|------------:|-------:|------:|
+| 🥇 | HTTP/1.1 composite | | 7914 | 1 / 19 |
+| 🥇 | WebSocket composite | | | 1 / 14 |
+| 🥇 | Async (`/delay`) | 32,000 | 2.84M req/s | 1 / 17 |
+| 🥇 | Latency at 1M req/s | 1,024 | p99 166 µs, 20.4 µs CPU per request | 1 / 17 |
+| 🥇 | JSON, gzip | 4,096 | 901K req/s | 1 / 18 |
+| 🥇 | JSON over TLS | 4,096 | 1.80M req/s | 1 / 18 |
+| 🥇 | WebSocket echo | 512 | 4.28M msg/s | 1 / 14 |
+| 🥇 | WebSocket echo, pipelined | 512 | 63.0M msg/s | 1 / 14 |
+| 🥇 | WebSocket echo, short-lived | 512 | 2.22M msg/s | 1 / 14 |
+| 🥉 | Short-lived connections | 4,096 | 2.69M req/s | 3 / 19 |
 
-The other medals, every profile and every connection count are on
-[http-arena.com/frameworks/viltrum](https://http-arena.com/frameworks/viltrum/).
+Every profile and every connection count are on
+[http-arena.com/frameworks/viltrum](https://http-arena.com/frameworks/viltrum/). The latency profiles
+are scored on CPU per request and latency at a fixed rate, and JSON, gzip on throughput and bytes per response
+together, so their places are not the req/s order.
 
 The category is **Experimental**: HttpArena's label for young frameworks without much production use yet. Its
-default leaderboard shows flagship and emerging entries; tick Experimental to see Viltrum there. All three are
-scored the same way, and the default view's leader has a composite of 7306.
+default leaderboard shows flagship and emerging entries; tick Experimental to see Viltrum there.
 
 Two weeks earlier (2026-10-14, v0.13.0) the same benchmark had Viltrum mid-pack: baseline 595K req/s, 99th of
 151, and gzip JSON 14K req/s, 123rd of 125. What changed since is in the [release notes](https://github.com/Tuntii/viltrum/releases)

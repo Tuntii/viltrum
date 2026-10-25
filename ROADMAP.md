@@ -60,12 +60,13 @@ Success looks like:
 | Generic upgrade, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
 
 Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
-[benches/httparena](benches/httparena) and runs v1.3.2. In the 2026-10-23 results viltrum is first of 14 on
-HTTP/1.1 (composite 7686) and first of 11 on WebSocket in the Experimental category: gold on json-comp,
-json-tls and the three echo-ws profiles, silver on baseline and short-lived, bronze on async. 8gbit is
-the weakest cell. The [the-benchmarker](https://github.com/the-benchmarker/web-frameworks) entry (v1.3.2) is
-merged and waits for their next run. The HttpArena entry moves to v1.5.1 (timers on time, aimed at async) in
-[HttpArena#1628](https://github.com/MDA2AV/HttpArena/pull/1628), waiting for a benchmark run.
+[benches/httparena](benches/httparena) and runs v1.7.0. In the 2026-10-25 results viltrum is first of 19 on
+HTTP/1.1 (composite 7914) and first of 14 on WebSocket in the Experimental category, with nine gold medals:
+both composites, async, latency at 1M req/s, json-comp, json-tls and the three echo-ws profiles; bronze on
+short-lived connections. The HTTP/2 profiles (baseline-h2, static-h2, baseline-h2c, json-h2c) are in
+[HttpArena#1641](https://github.com/MDA2AV/HttpArena/pull/1641), waiting for a benchmark run. The
+[the-benchmarker](https://github.com/the-benchmarker/web-frameworks) entry (v1.3.2) is merged and waits for
+their next run.
 
 ---
 

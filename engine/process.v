@@ -37,6 +37,14 @@ pub mut:
 	h2      &H2Conn = unsafe { nil }
 	h2_keep &H2Conn = unsafe { nil } // kept across connections, tables and buffers included
 	h2_ok   bool // HTTP/2 is allowed and the first bytes may be its preface
+	// a streaming response (Ctx.stream), from its head until it ends (stream.v)
+	st         &http1.StreamHandler = unsafe { nil }
+	st_data    voidptr
+	st_chunked bool
+	st_sse     bool
+	st_close   bool // the connection closes when the stream ends
+	st_serial  u32  // counts the connection's streams, so a timer cannot reach a later one
+	st_last    i64  // when the stream last wrote, in time.ticks() ms, for the heartbeat
 	// WebSocket, once the connection is upgraded
 	ws         &http1.WsHandler = unsafe { nil }
 	ws_data    voidptr
@@ -94,6 +102,8 @@ pub fn (mut c Conn) reset(fd int) {
 	c.hs_queued = false
 	c.h2 = unsafe { nil }
 	c.h2_ok = false
+	c.st = unsafe { nil }
+	c.st_data = unsafe { nil }
 	c.ws = unsafe { nil }
 	c.ws_data = unsafe { nil }
 	unsafe {
@@ -119,6 +129,7 @@ pub mut:
 	timers   Timers // deferred responses, earliest first
 	gen      u32    // last Conn.gen handed out
 	ws       http1.Ws
+	st       http1.Stream
 	hub      &Hub = unsafe { nil } // where publish and send go; nil drops them (handle_raw)
 	topics   map[string]&Topic // this worker's subscribers per topic
 	// HTTP/2 scratch (h2.v), sized on the first HTTP/2 connection: decoded fields, the
@@ -143,6 +154,7 @@ pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
 	w.ctx.deflater = http1.new_deflater()
 	w.ctx.worker = index
 	w.ws.worker = index
+	w.st.worker = index
 	return w
 }
 
@@ -191,7 +203,8 @@ pub fn (mut w Worker) process(mut c Conn) {
 		}
 	}
 	mut off := 0
-	for !c.close_after && !c.waiting && c.file_fd < 0 && off < c.rbuf.len
+	// requests behind a deferred response, a file being sent or a stream wait their turn
+	for !c.close_after && !c.waiting && c.file_fd < 0 && isnil(c.st) && off < c.rbuf.len
 		&& c.wbuf.len < w.opts.max_pending {
 		if c.frame.head_end == 0 {
 			// empty lines before a request line are ignored (RFC 9112 2.2): some
@@ -227,7 +240,7 @@ pub fn (mut w Worker) process(mut c Conn) {
 		c.linger = c.linger || off < c.rbuf.len
 		off = c.rbuf.len
 	}
-	c.reading = off < c.rbuf.len && isnil(c.ws)
+	c.reading = off < c.rbuf.len && isnil(c.ws) && isnil(c.st)
 	if off > 0 {
 		rest := c.rbuf.len - off
 		if rest > 0 {
@@ -311,9 +324,11 @@ pub fn (mut w Worker) process_waiting(mut c Conn) {
 	for {
 		before := c.rbuf.len
 		w.process(mut c)
-		for c.waiting || c.file_fd >= 0 {
+		for c.waiting || c.file_fd >= 0 || !isnil(c.st) {
 			if c.file_fd >= 0 {
 				w.inline_file(mut c)
+			} else if !isnil(c.st) {
+				w.st_run_inline(mut c)
 			} else {
 				// a sleep can end early (Windows rounds it down to whole milliseconds)
 				for {
@@ -392,6 +407,8 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 	}
 	if !isnil(x.ws) && x.status == 101 && !c.close_after {
 		w.ws_open(mut c)
+	} else if !isnil(x.st) {
+		w.st_open(mut c)
 	}
 }
 

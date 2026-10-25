@@ -178,7 +178,11 @@ fn (mut l Loop) fire() {
 		if c.fd != t.fd || c.gen != t.gen {
 			continue
 		}
-		if t.stream != 0 {
+		if t.tick != 0 {
+			if !l.w.st_tick(mut c, t.stream, t.cb(), t.arg) {
+				continue
+			}
+		} else if t.stream != 0 {
 			if isnil(c.h2) || !l.w.h2_resume(mut c, t.stream) {
 				continue
 			}
@@ -458,9 +462,10 @@ fn (mut l Loop) on_readable(mut c Conn) {
 		}
 		if c.rbuf.len == c.rbuf.cap {
 			if c.rbuf.cap >= max_total {
-				if !isnil(c.ws) || c.waiting || !isnil(c.h2) {
-					// input piling up behind a WebSocket message, a deferred response, or
-					// HTTP/2 frames not taken (they are at most 16 KiB, so never one request)
+				if !isnil(c.ws) || c.waiting || !isnil(c.st) || !isnil(c.h2) {
+					// input piling up behind a WebSocket message, a deferred response, a
+					// stream, or HTTP/2 frames not taken (they are at most 16 KiB, so never
+					// one request)
 					l.close(mut c)
 					return
 				}
@@ -526,6 +531,8 @@ fn (mut l Loop) drain(mut c Conn) {
 }
 
 fn (mut l Loop) flush(mut c Conn) {
+	mut drained := 0 // what on_drain wrote in this flush
+	mut ended := false // and whether it ended its stream
 	for {
 		for c.woff < c.wbuf.len {
 			n := l.write(mut c, unsafe { &u8(c.wbuf.data) + c.woff }, c.wbuf.len - c.woff)
@@ -550,9 +557,24 @@ fn (mut l Loop) flush(mut c Conn) {
 			continue
 		}
 		// HTTP/2 output that flow control held back goes out as the socket takes it
-		if isnil(c.h2) || !l.w.h2_pump(mut c) {
+		if !isnil(c.h2) && l.w.h2_pump(mut c) {
+			continue
+		}
+		// a stream whose output is all out writes more, if it generates its body
+		if isnil(c.st) {
 			break
 		}
+		if drained >= stream_drain_max {
+			// a client that takes everything at once does not hold the worker: the rest
+			// waits for the next turn of the loop, which EPOLLOUT gives at once
+			l.arm_out(mut c)
+			return
+		}
+		if !l.w.st_drain(mut c) {
+			break
+		}
+		drained += c.wbuf.len
+		ended = isnil(c.st)
 	}
 	if c.close_after {
 		if c.linger {
@@ -574,6 +596,9 @@ fn (mut l Loop) flush(mut c Conn) {
 				l.now + l.opts.idle_timeout.milliseconds()
 			}
 		}
+	}
+	if ended && c.rbuf.len > 0 {
+		l.drain(mut c) // the stream ended: requests the client pipelined behind it are next
 	}
 }
 
@@ -707,6 +732,9 @@ fn (mut l Loop) close(mut c Conn) {
 	if !isnil(c.ws) {
 		l.w.ws_end(mut c)
 	}
+	if !isnil(c.st) {
+		l.w.st_end(mut c)
+	}
 	if !isnil(c.h2) {
 		c.h2.close_streams()
 		c.h2 = unsafe { nil }
@@ -754,12 +782,22 @@ fn (mut l Loop) sweep() {
 		}
 	}
 	for i in 0 .. l.conns.len {
-		// a waiting connection is answered by its timer, not timed out
-		if isnil(l.conns[i]) || l.conns[i].fd < 0 || l.conns[i].waiting || l.conns[i].h2_waits()
-			|| l.now <= l.conns[i].deadline_ms {
+		if isnil(l.conns[i]) || l.conns[i].fd < 0 {
 			continue
 		}
 		mut c := l.conns[i]
+		if !isnil(c.st) && !c.out_armed {
+			// a stream runs as long as its handler likes: the client is expected to stay
+			// quiet. Only output that does not move times it out.
+			if l.w.st_heartbeat(mut c, l.now) {
+				l.flush(mut c)
+			}
+			continue
+		}
+		// a waiting connection is answered by its timer, not timed out
+		if c.waiting || c.h2_waits() || l.now <= c.deadline_ms {
+			continue
+		}
 		l.close(mut c)
 	}
 }

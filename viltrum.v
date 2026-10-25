@@ -63,6 +63,24 @@ pub:
 	check_origin fn (origin string) bool = unsafe { nil }
 }
 
+// Stream is one streaming response inside its callbacks: write, write_string, end,
+// after, the Server-Sent Events helpers (event, event_id, comment, retry), subscribe,
+// publish, publish_event, id, worker_id, and `data` for the stream's own state.
+pub type Stream = http1.Stream
+
+// StreamId names one stream (Stream.id) for App.stream_send and App.send_event.
+pub type StreamId = http1.StreamId
+
+// StreamHandler is what a streaming response does (Ctx.stream, Ctx.sse). Every
+// callback runs on the worker that owns the connection, one at a time, so
+// per-stream state needs no lock; like handlers, callbacks must not block.
+//   on_open runs once the head is out; c is the request (params, headers).
+//   on_drain runs once everything written so far is out: write the next piece of a
+//     body generated as the client takes it, and end() after the last.
+//   on_close runs once however the stream ends; writes are dropped by then.
+//   heartbeat (SSE) sends a comment when nothing else went out for that long.
+pub type StreamHandler = http1.StreamHandler
+
 struct PendingRoute {
 	method   Method
 	pattern  string
@@ -107,6 +125,38 @@ pub fn (app &App) ws_send(id WsId, text string) {
 
 pub fn (app &App) ws_send_binary(id WsId, data []u8) {
 	app.hub.post(http1.ws_post('', id, http1.WsId{}, http1.ws_binary, data.data, data.len))
+}
+
+// stream_send writes data to one stream (Stream.id), from any thread. It is dropped
+// when that stream has ended.
+pub fn (app &App) stream_send(id StreamId, data []u8) {
+	app.hub.post(http1.stream_post('', id, http1.StreamId{}, data.data, data.len))
+}
+
+// send_event sends one Server-Sent Event (see Stream.event) to one stream, from any
+// thread.
+pub fn (app &App) send_event(id StreamId, name string, data string) {
+	if p := http1.sse_post('', id, http1.StreamId{}, '', name, data) {
+		app.hub.post(p)
+	}
+}
+
+// stream_publish writes data to every stream subscribed to topic (Stream.subscribe),
+// on every worker, from any thread; WebSocket subscribers of the topic do not get it.
+pub fn (app &App) stream_publish(topic string, data []u8) {
+	if topic.len > 0 {
+		app.hub.post(http1.stream_post(topic, http1.StreamId{}, http1.StreamId{}, data.data,
+			data.len))
+	}
+}
+
+// publish_event is stream_publish of one Server-Sent Event.
+pub fn (app &App) publish_event(topic string, name string, data string) {
+	if topic.len > 0 {
+		if p := http1.sse_post(topic, http1.StreamId{}, http1.StreamId{}, '', name, data) {
+			app.hub.post(p)
+		}
+	}
 }
 
 // server_options replaces the engine options (workers, limits, timeouts, Date, Server).

@@ -908,6 +908,11 @@ fn (mut w Worker) h2_finish(mut c Conn, id u32, idx int, send_win i64) {
 		w.h2_error(mut c, id, 501, 'WebSocket needs HTTP/1.1', send_win) // no RFC 8441 here
 		return
 	}
+	if !isnil(x.st) {
+		x.st = unsafe { nil }
+		w.h2_error(mut c, id, 501, 'streaming needs HTTP/1.1', send_win) // not yet
+		return
+	}
 	w.answer_default(idx)
 	w.h2out = x.out
 	file_fd := x.file_fd

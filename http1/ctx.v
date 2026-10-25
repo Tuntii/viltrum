@@ -48,6 +48,9 @@ pub mut:
 	// WebSocket upgrade (ws_upgrade): the engine takes the connection over after a 101
 	ws       &WsHandler = unsafe { nil }
 	ws_proto int
+	// streaming response (stream, sse): the engine runs the handler once the head is out
+	st     &StreamHandler = unsafe { nil }
+	st_sse bool
 	// methods with a route for this path, one bit per Method; the engine sets it only
 	// before a 405 chain runs (see set_allow)
 	allow u16
@@ -100,6 +103,7 @@ pub fn (mut c Ctx) begin(msg []u8) {
 	c.responded = false
 	c.deferred = false
 	c.ws = unsafe { nil }
+	c.st = unsafe { nil }
 	c.capture = false
 	c.wrote = false
 	c.file_fd = -1

@@ -59,14 +59,17 @@ pub:
 }
 
 // WsPost is a message on its way to other connections: to a topic's subscribers
-// (topic set) or to one connection (to). The engine carries it to the workers.
+// (topic set) or to one connection (to). The engine carries it to the workers. It
+// also carries bytes for streams (op stream_data), to a stream of to's connection.
 pub struct WsPost {
 pub:
-	topic string
-	to    WsId
-	skip  WsId // the publisher, which does not get its own message
-	op    u8
-	data  []u8
+	topic       string
+	to          WsId
+	stream      u32  // with stream_data: the stream of to
+	skip        WsId // the publisher, which does not get its own message
+	skip_stream u32
+	op          u8
+	data        []u8
 }
 
 // WsSub is a subscribe (on) or unsubscribe a callback asked for.

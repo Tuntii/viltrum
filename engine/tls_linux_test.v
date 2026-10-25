@@ -496,6 +496,22 @@ fn test_alpn_h2() {
 	post :=
 		os.execute('curl -sk --http2 --data-binary @${body} -o /dev/null -w "%{size_download} %{http_version}" https://${a}/echo')
 	assert post.output == '200000 2', post.output
+	// a stream over h2: the generated body whole and in order, then a request on the
+	// same connection
+	gen := os.execute('curl -sk --http2 https://${a}/gen | md5sum')
+	mut want := []u8{}
+	for _ in 0 .. 80 {
+		want << gen_piece
+	}
+	path := os.join_path(os.temp_dir(), 'viltrum-h2-gen-${os.getpid()}')
+	os.write_file_array(path, want) or { panic(err) }
+	defer {
+		os.rm(path) or {}
+	}
+	assert gen.output == os.execute('md5sum < ${path}').output
+	two :=
+		os.execute('curl -sk --http2 -o /dev/null -o /dev/null -w "%{num_connects}/%{http_version} " https://${a}/gen https://${a}/p/x')
+	assert two.output == '1/2 0/2 ', two.output
 	// a TLS listener without http2 keeps ALPN to http/1.1
 	addrs, mut stop2 := start_tls([tls_opts(tls_testdata, 'a')], Options{})
 	defer {

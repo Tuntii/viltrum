@@ -50,6 +50,90 @@ fn h2_status(mut c http1.Ctx) {
 	c.text(int(c.param_int('n') or { 200 }), 'x')
 }
 
+struct H2Counts {
+mut:
+	closed int
+}
+
+const h2_counts = &H2Counts{}
+
+fn h2_st_closed(mut s http1.Stream) {
+	mut k := unsafe { h2_counts }
+	k.closed++
+}
+
+// h2_tick sends an event, arg more times, then ends the stream
+fn h2_tick(mut s http1.Stream, arg u64) {
+	if arg == 0 {
+		s.end()
+		return
+	}
+	s.event('tick', 'x')
+	s.after(1, h2_tick, arg - 1)
+}
+
+fn h2_sse_open(mut s http1.Stream, mut c http1.Ctx) {
+	s.event_id('1', 'hello', c.path())
+	s.after(5, h2_tick, u64(c.query_int('n') or { 2 }))
+}
+
+const h2_sse_h = &http1.StreamHandler{
+	on_open:  h2_sse_open
+	on_close: h2_st_closed
+}
+
+// h2_gen_drain writes a piece each time the last one is out, five in all
+fn h2_gen_drain(mut s http1.Stream) {
+	n := u64(s.data)
+	if n == 5 {
+		s.end()
+		return
+	}
+	s.write_string('chunk')
+	s.data = voidptr(n + 1)
+}
+
+const h2_gen_h = &http1.StreamHandler{
+	on_drain: h2_gen_drain
+	on_close: h2_st_closed
+}
+
+fn h2_sub_open(mut s http1.Stream, mut c http1.Ctx) {
+	s.subscribe('news')
+}
+
+const h2_sub_h = &http1.StreamHandler{
+	on_open:   h2_sub_open
+	on_close:  h2_st_closed
+	heartbeat: 15 * time.second
+}
+
+fn h2_now_open(mut s http1.Stream, mut c http1.Ctx) {
+	s.write_string('all')
+	s.end()
+}
+
+const h2_now_h = &http1.StreamHandler{
+	on_open:  h2_now_open
+	on_close: h2_st_closed
+}
+
+fn h2_sse(mut c http1.Ctx) {
+	c.sse(h2_sse_h)
+}
+
+fn h2_gen(mut c http1.Ctx) {
+	c.stream(200, 'text/plain', h2_gen_h)
+}
+
+fn h2_sub(mut c http1.Ctx) {
+	c.sse(h2_sub_h)
+}
+
+fn h2_now(mut c http1.Ctx) {
+	c.stream(200, 'text/plain', h2_now_h)
+}
+
 const big_body = []u8{len: 100000, init: u8(index * 7)}
 const h2_file_path = os.join_path(os.temp_dir(), 'viltrum_h2_file_test.bin')
 
@@ -62,6 +146,10 @@ fn h2_router() &router.Router {
 	r.add(.get, '/file', [http1.Handler(h2_file)]) or { panic(err) }
 	r.add(.get, '/defer', [http1.Handler(h2_defer)]) or { panic(err) }
 	r.add(.get, '/status/:n', [http1.Handler(h2_status)]) or { panic(err) }
+	r.add(.get, '/sse', [http1.Handler(h2_sse)]) or { panic(err) }
+	r.add(.get, '/gen', [http1.Handler(h2_gen)]) or { panic(err) }
+	r.add(.get, '/sub', [http1.Handler(h2_sub)]) or { panic(err) }
+	r.add(.get, '/now', [http1.Handler(h2_now)]) or { panic(err) }
 	return r
 }
 
@@ -942,6 +1030,9 @@ fn test_h2_fuzz() {
 	seeds << frame(http2.frame_ping, 0, 0, []u8{len: 8})
 	seeds << settings([[u32(http2.settings_initial_window_size), 10]])
 	seeds << frame(http2.frame_rst_stream, 0, 1, []u8{len: 4})
+	seeds << cl.get(5, '/sse')
+	seeds << cl.get(7, '/gen')
+	seeds << cl.get(9, '/sub')
 	n := os.getenv('VILTRUM_FUZZ_ITERS').int()
 	iters := if n > 0 { n / 10 } else { 3000 }
 	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
@@ -958,9 +1049,296 @@ fn test_h2_fuzz() {
 			b << f
 		}
 		feed(mut w, mut c, b)
-		parse(take(mut w, mut c))
-		if !c.close_after {
+		parse(flow(mut w, mut c))
+		parse(ticks(mut w, mut c))
+		if !isnil(c.h2) {
+			w.h2_end_streams(mut c)
 			c.h2.close_streams()
 		}
+		assert w.topics.len == 0
 	}
+}
+
+// --- streams (Ctx.stream) over HTTP/2 ---
+
+// flow is the output so far as Loop.flush writes it to a socket that takes everything:
+// held output as the windows allow, then what streams with nothing left to send
+// generate, until neither moves.
+fn flow(mut w Worker, mut c Conn) []u8 {
+	mut out := take(mut w, mut c)
+	for !isnil(c.h2) && (w.h2_drain(mut c) > 0 || c.wbuf.len > 0) {
+		out << take(mut w, mut c)
+	}
+	return out
+}
+
+// ticks runs every stream timer as the event loop does once each is due, without
+// waiting, and flows the output after each; timers set on the way run too.
+fn ticks(mut w Worker, mut c Conn) []u8 {
+	mut out := []u8{}
+	for w.timers.a.len > 0 {
+		t := w.timers.pop()
+		if t.tick != 0 && w.st_tick(mut c, t.stream, t.cb(), t.arg) {
+			out << flow(mut w, mut c)
+		}
+	}
+	return out
+}
+
+fn rst(id u32) []u8 {
+	return frame(http2.frame_rst_stream, 0, id, [u8(0), 0, 0, 8]) // CANCEL
+}
+
+// An SSE stream over HTTP/2: the head without END_STREAM, each event as its own DATA
+// as on_open and the timers write it, END_STREAM once it ends, and on_close.
+fn test_h2_sse_stream() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	closed := h2_counts.closed
+	feed(mut w, mut c, cl.get(1, '/sse?n=2'))
+	r := cl.responses(parse(flow(mut w, mut c)))
+	assert r[1].status == '200' && !r[1].ended
+	assert r[1].headers['content-type'] == 'text/event-stream'
+	assert r[1].headers['cache-control'] == 'no-cache'
+	assert 'transfer-encoding' !in r[1].headers && 'content-length' !in r[1].headers
+	assert r[1].body == 'id: 1\nevent: hello\ndata: /sse\n\n'.bytes()
+	assert c.h2.streaming == 1 && c.h2.open == 1 && c.h2_waits()
+	fs := parse(ticks(mut w, mut c))
+	assert fs.len == 3 && fs.all(it.typ == http2.frame_data && it.stream == 1)
+	assert fs[0].payload == 'event: tick\ndata: x\n\n'.bytes() && fs[0].flags == 0
+	assert fs[2].payload.len == 0 && fs[2].flags == http2.flag_end_stream
+	assert c.h2.open == 0 && c.h2.streaming == 0 && !c.h2_waits()
+	assert h2_counts.closed == closed + 1 && !c.close_after
+}
+
+// Many streams on one connection, each on its own HTTP/2 stream, and requests beside
+// them answered at once.
+fn test_h2_streams_share_the_connection() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	mut b := cl.get(1, '/sse?n=1')
+	b << cl.get(3, '/sub')
+	b << cl.get(5, '/baseline2?a=1&b=2')
+	b << cl.get(7, '/sse?n=2')
+	feed(mut w, mut c, b)
+	r := cl.responses(parse(flow(mut w, mut c)))
+	assert r[5].body == '3'.bytes() && r[5].ended
+	assert !r[1].ended && !r[3].ended && !r[7].ended && r[3].body.len == 0
+	assert c.h2.streaming == 3 && c.h2.open == 3
+	// a request after them is not held up either
+	feed(mut w, mut c, cl.get(9, '/baseline2?a=2&b=2'))
+	assert cl.responses(parse(flow(mut w, mut c)))[9].body == '4'.bytes()
+	r2 := cl.responses(parse(ticks(mut w, mut c)))
+	assert r2[1].ended && r2[1].body == 'event: tick\ndata: x\n\n'.bytes()
+	assert r2[7].ended && r2[7].body == 'event: tick\ndata: x\n\n'.repeat(2).bytes()
+	assert 3 !in r2 && c.h2.streaming == 1 && c.h2.open == 1
+	// the one left ends with its connection, and leaves its topic
+	closed := h2_counts.closed
+	w.h2_end_streams(mut c)
+	c.h2.close_streams()
+	assert c.h2.streaming == 0 && w.topics.len == 0 && h2_counts.closed == closed + 1
+}
+
+// A body generated as the client takes it: on_drain runs when the stream has nothing
+// left to send, so it follows the stream's window.
+fn test_h2_generated_stream_follows_the_window() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [[u32(http2.settings_initial_window_size), 7]])
+	mut cl := Client{}
+	closed := h2_counts.closed
+	feed(mut w, mut c, cl.get(1, '/gen'))
+	r := cl.responses(parse(flow(mut w, mut c)))
+	// a piece, then two bytes of the next; the next waits for the rest to go
+	assert r[1].status == '200' && r[1].body == 'chunkch'.bytes() && !r[1].ended
+	assert c.h2.held == 3 && c.h2.sending == 1 && !c.h2_waits()
+	assert flow(mut w, mut c).len == 0
+	feed(mut w, mut c, window_update(1, 100))
+	fs := parse(flow(mut w, mut c))
+	mut body := r[1].body.clone()
+	for f in fs {
+		assert f.typ == http2.frame_data && f.stream == 1
+		body << f.payload
+	}
+	assert body == 'chunk'.repeat(5).bytes() && fs.last().flags == http2.flag_end_stream
+	assert c.h2.open == 0 && c.h2.held == 0 && c.h2.sending == 0
+	assert h2_counts.closed == closed + 1
+}
+
+// A stream that writes and ends in on_open: its body and END_STREAM go at once. A HEAD
+// request gets the head alone, with END_STREAM.
+fn test_h2_stream_ended_at_once_and_head() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	closed := h2_counts.closed
+	feed(mut w, mut c, cl.get(1, '/now'))
+	feed(mut w, mut c, frame(http2.frame_headers, http2.flag_end_headers | http2.flag_end_stream,
+		3, cl.block([':method: HEAD', ':scheme: http', ':path: /sse', ':authority: x'])))
+	r := cl.responses(parse(flow(mut w, mut c)))
+	assert r[1].body == 'all'.bytes() && r[1].ended
+	assert r[3].status == '200' && r[3].ended && r[3].body.len == 0
+	assert r[3].headers['content-type'] == 'text/event-stream'
+	assert c.h2.open == 0 && c.h2.streaming == 0 && h2_counts.closed == closed + 1
+	assert w.timers.a.len == 0 // the HEAD request never opened its stream
+}
+
+// A RST_STREAM from the client ends the stream as a closed connection does: on_close
+// runs, it leaves its topics, and its timers find nothing.
+fn test_h2_stream_reset_by_the_client() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	closed := h2_counts.closed
+	mut b := cl.get(1, '/sub')
+	b << cl.get(3, '/sse')
+	feed(mut w, mut c, b)
+	flow(mut w, mut c)
+	assert c.h2.streaming == 2 && 'news' in w.topics
+	mut rb := rst(1)
+	rb << rst(3)
+	feed(mut w, mut c, rb)
+	assert c.h2.streaming == 0 && c.h2.open == 0 && 'news' !in w.topics
+	assert h2_counts.closed == closed + 2
+	assert ticks(mut w, mut c).len == 0
+	assert flow(mut w, mut c).len == 0 && !c.close_after
+}
+
+// Bytes sent to one stream and published to a topic reach the HTTP/2 streams they are
+// for; a publish skips only the stream it came from, not the others on its connection.
+fn test_h2_send_and_publish_reach_streams() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	c.fd = 3
+	mut cl := Client{}
+	mut b := cl.get(1, '/sub')
+	b << cl.get(3, '/sub')
+	b << cl.get(5, '/gen')
+	feed(mut w, mut c, b)
+	flow(mut w, mut c)
+	mut conns := [unsafe { &Conn(nil) }, unsafe { nil }, unsafe { nil }, c]
+	one := http1.StreamId{
+		worker: 0
+		fd:     3
+		gen:    c.gen
+		stream: 1
+	}
+	mut touched := []&Conn{}
+	posts := [
+		http1.stream_post('', one, http1.StreamId{}, c'one', 3),
+		http1.stream_post('news', http1.StreamId{}, one, c'two', 3),
+		http1.sse_post('news', http1.StreamId{}, http1.StreamId{}, '', 'e', 'three') or {
+			panic(err)
+		},
+		// stream 5 has ended, 9 was never opened
+		http1.stream_post('', http1.StreamId{ ...one, stream: 5 }, http1.StreamId{}, c'no', 2),
+		http1.stream_post('', http1.StreamId{ ...one, stream: 9 }, http1.StreamId{}, c'no', 2),
+		http1.ws_post('news', http1.WsId{}, http1.WsId{}, http1.ws_text, c'ws', 2),
+	]
+	for p in posts {
+		w.deliver(p, mut conns, mut touched)
+	}
+	assert touched.len == 1 && c.touched
+	r := cl.responses(parse(flow(mut w, mut c)))
+	assert r[1].body == 'oneevent: e\ndata: three\n\n'.bytes()
+	assert r[3].body == 'twoevent: e\ndata: three\n\n'.bytes()
+	assert 5 !in r && !r[1].ended && !r[3].ended
+}
+
+// A stream whose client lets four times max_pending pile up behind its window is
+// reset (CANCEL); the other streams on the connection, and in the topic, go on.
+fn test_h2_slow_stream_is_reset() {
+	mut w := new_worker(h2_router(), Options{
+		send_date:   false
+		max_pending: 1000
+	}, 0)
+	mut c := open(mut w, [[u32(http2.settings_initial_window_size), 0]])
+	mut cl := Client{}
+	closed := h2_counts.closed
+	mut b := cl.get(1, '/sub')
+	b << cl.get(3, '/sub')
+	b << cl.get(5, '/sub')
+	b << window_update(1, 1 << 20)
+	b << window_update(5, 1 << 20)
+	feed(mut w, mut c, b)
+	flow(mut w, mut c)
+	mut conns := [c]
+	big := []u8{len: 1500}
+	mut touched := []&Conn{}
+	mut out := []u8{}
+	for _ in 0 .. 3 {
+		w.deliver(http1.stream_post('news', http1.StreamId{}, http1.StreamId{}, big.data, big.len), mut
+			conns, mut touched)
+		out << flow(mut w, mut c)
+	}
+	r := cl.responses(parse(out))
+	assert r[3].reset == http2.err_cancel && r[3].body.len == 0
+	assert r[1].body.len == 4500 && r[5].body.len == 4500 && r[1].reset == 0xffffffff
+	assert c.h2.streaming == 2 && h2_counts.closed == closed + 1 && !c.close_after
+	assert (w.topics['news'] or { panic('no topic') }).conns.len == 2
+}
+
+// A quiet SSE stream gets a comment once its handler's heartbeat passes.
+fn test_h2_heartbeat() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	feed(mut w, mut c, cl.get(1, '/sub'))
+	flow(mut w, mut c)
+	last := c.h2.streams[c.h2.find(1)].st_last
+	assert !w.h2_heartbeats(mut c, last + 14000)
+	assert w.h2_heartbeats(mut c, last + 15000)
+	fs := parse(flow(mut w, mut c))
+	assert fs.len == 1 && fs[0].stream == 1 && fs[0].payload == ': \n\n'.bytes()
+	assert !w.h2_heartbeats(mut c, last + 16000) // the comment counts as output
+}
+
+fn h2_alloc_tick(mut s http1.Stream, arg u64) {
+	s.event('tick', 'x')
+	s.after(1, h2_alloc_tick, arg)
+}
+
+// The zero-allocation gate, for streams over HTTP/2: once warm, a timer's event and a
+// send to the stream allocate nothing.
+fn test_h2_stream_allocates_nothing() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	c.fd = 0
+	mut cl := Client{}
+	mut b := cl.get(1, '/sub')
+	b << window_update(0, 0x7fff0000)
+	b << window_update(1, 0x7fff0000)
+	feed(mut w, mut c, b)
+	flow(mut w, mut c)
+	mut conns := [c]
+	me := http1.StreamId{
+		fd:     0
+		gen:    c.gen
+		stream: 1
+	}
+	post := http1.stream_post('', me, http1.StreamId{}, c'data: x\n\n', 9)
+	mut touched := []&Conn{}
+	w.timers.push_tick(0, 0, c.gen, 1, h2_alloc_tick, 0)
+	mut before := u64(0)
+	for k in 0 .. 6000 {
+		if k == 1000 {
+			before = http1.allocated_bytes()
+		}
+		t := w.timers.pop()
+		assert w.st_tick(mut c, t.stream, t.cb(), t.arg)
+		w.deliver(post, mut conns, mut touched)
+		touched.clear()
+		c.touched = false
+		for {
+			unsafe {
+				c.wbuf.len = 0
+			}
+			if !w.h2_pump(mut c) {
+				break
+			}
+		}
+	}
+	assert http1.allocated_bytes() - before == 0
+	assert c.h2.held == 0 && c.h2.streaming == 1
 }

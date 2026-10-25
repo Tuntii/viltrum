@@ -595,6 +595,60 @@ fn test_streams() {
 	c.close() or {}
 }
 
+// The same streams over HTTP/2 (h2c), as curl sees them: an SSE stream, a generated
+// body following the windows, and both at once beside a plain request on one
+// connection, which the streams do not hold up.
+fn test_h2c_streams() {
+	v := os.execute('curl --version')
+	if v.exit_code != 0 || !v.output.contains('HTTP2') {
+		eprintln('skip: curl with HTTP/2 not found')
+		return
+	}
+	addr, mut stop := start_on(true, Options{})
+	defer {
+		stop.request()
+	}
+	h2 := 'curl -s --http2-prior-knowledge'
+	ev := os.execute('${h2} -N http://${addr}/events')
+	assert ev.output == 'data: hello\n\n' + 'event: tick\ndata: n\n\n'.repeat(3), ev.output
+	gen :=
+		os.execute('${h2} -o /dev/null -w "%{http_version} %{http_code} %{size_download}" http://${addr}/gen')
+	assert gen.output == '2 200 ${80 * 64 * 1024}', gen.output
+	sum := os.execute('${h2} http://${addr}/gen | md5sum')
+	mut want := []u8{}
+	for _ in 0 .. 80 {
+		want << gen_piece
+	}
+	os.write_file_array(file_path + '.h2gen', want) or { panic(err) }
+	defer {
+		os.rm(file_path + '.h2gen') or {}
+	}
+	assert sum.output == os.execute('md5sum < ${file_path}.h2gen').output
+	urls := 'http://${addr}/events http://${addr}/gen http://${addr}/events http://${addr}/p/fast'
+	r :=
+		os.execute('${h2} --parallel -o /dev/null -o /dev/null -o /dev/null -o /dev/null -w "%{url_effective} %{response_code} %{size_download} %{num_connects} %{time_total}\\n" ${urls}')
+	lines := r.output.trim_space().split_into_lines()
+	assert lines.len == 4, r.output
+	mut connects := 0
+	mut fast := 0.0
+	mut events := []f64{}
+	for line in lines {
+		f := line.split(' ')
+		assert f.len == 5 && f[1] == '200', r.output
+		connects += f[3].int()
+		if f[0].ends_with('/p/fast') {
+			fast = f[4].f64()
+		} else if f[0].ends_with('/gen') {
+			assert f[2] == '${80 * 64 * 1024}', r.output
+		} else {
+			assert f[2] == '${ev.output.len}' && f[4].f64() >= 0.06, r.output // three ticks 20 ms apart
+			events << f[4].f64()
+		}
+	}
+	assert connects == 1, r.output
+	assert events.len == 2 && fast < events[0] && fast < events[1], r.output
+}
+
 fn C.socketpair(domain int, typ int, protocol int, sv &int) int
 
 // fd numbers are process-wide, so with SO_REUSEPORT any worker sees any of them.

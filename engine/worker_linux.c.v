@@ -556,8 +556,24 @@ fn (mut l Loop) flush(mut c Conn) {
 			}
 			continue
 		}
-		// HTTP/2 output that flow control held back goes out as the socket takes it
-		if !isnil(c.h2) && l.w.h2_pump(mut c) {
+		// HTTP/2 output that flow control held back goes out as the socket takes it,
+		// then its streams with nothing left to send write more, if they generate
+		if !isnil(c.h2) {
+			if l.w.h2_pump(mut c) {
+				continue
+			}
+			if c.h2.streaming == 0 {
+				break
+			}
+			if drained >= stream_drain_max {
+				l.arm_out(mut c) // as below
+				return
+			}
+			n := l.w.h2_drain(mut c)
+			if n == 0 && c.wbuf.len == 0 {
+				break
+			}
+			drained += n
 			continue
 		}
 		// a stream whose output is all out writes more, if it generates its body
@@ -736,6 +752,7 @@ fn (mut l Loop) close(mut c Conn) {
 		l.w.st_end(mut c)
 	}
 	if !isnil(c.h2) {
+		l.w.h2_end_streams(mut c)
 		c.h2.close_streams()
 		c.h2 = unsafe { nil }
 	}
@@ -793,6 +810,12 @@ fn (mut l Loop) sweep() {
 				l.flush(mut c)
 			}
 			continue
+		}
+		if !isnil(c.h2) && c.h2.streaming > 0 && !c.out_armed && l.w.h2_heartbeats(mut c, l.now) {
+			l.flush(mut c)
+			if c.fd < 0 {
+				continue
+			}
 		}
 		// a waiting connection is answered by its timer, not timed out
 		if c.waiting || c.h2_waits() || l.now <= c.deadline_ms {

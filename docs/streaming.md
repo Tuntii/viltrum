@@ -6,8 +6,11 @@ tokens as a model produces them, or a large body generated as the client takes i
 callbacks. They run on the worker that owns the connection, one at a time, so per-stream state needs no lock.
 Like handlers, they must not block.
 
-Streams run on HTTP/1.1 only for now. Over HTTP/2 a route that streams answers **501**, until streams come to
-HTTP/2 ([ROADMAP.md](../ROADMAP.md), Phase 7).
+The same handler serves HTTP/1.1 and HTTP/2 ([docs/http2.md](http2.md)). Over HTTP/2 each stream is one
+HTTP/2 stream, so one connection carries many of them beside its other requests. That matters for SSE in
+browsers, which open at most six HTTP/1.1 connections per origin, and so at most six `EventSource`s; over
+HTTP/2 the limit is the 128 concurrent streams the server announces. See
+[The connection while it streams](#the-connection-while-it-streams) for what differs.
 
 ## Server-Sent Events
 
@@ -84,8 +87,9 @@ The `StreamHandler` callbacks:
 
 ### A body generated as the client takes it
 
-`on_drain` is the pull side. It runs when the socket has taken everything written so far, so a slow client
-slows the generator instead of filling memory:
+`on_drain` is the pull side. It runs when the socket has taken everything written so far (over HTTP/2: when
+the stream has nothing left that its flow-control window holds back), so a slow client slows the generator
+instead of filling memory:
 
 ```v
 const export_csv = &viltrum.StreamHandler{
@@ -141,18 +145,24 @@ spawn fn [app, id] () {
 - **Framing.** HTTP/1.1 clients get the body chunked (`Transfer-Encoding: chunked`). Each write is one chunk.
   After `end()`, the connection serves the client's next request. HTTP/1.0 clients get the bytes as they are,
   and the connection closes after `end()`. `Connection: close` from the client also waits for the end.
-- **Pipelined requests.** Requests pipelined behind a stream wait until it ends, as they do behind a deferred
-  response (`c.after`).
+  HTTP/2 clients get the head as HEADERS and the writes as DATA, as the stream's and the connection's windows
+  allow; `end()` sets END_STREAM.
+- **Pipelined requests.** On HTTP/1.1, requests pipelined behind a stream wait until it ends, as they do behind
+  a deferred response (`c.after`). On HTTP/2 nothing waits: the connection's other streams are served
+  meanwhile.
+- **Cancel.** An HTTP/2 client that resets the stream (RST_STREAM) ends it as a client that goes away does:
+  `on_close` runs, its timers are dropped, it leaves its topics.
 - **HEAD and bodiless statuses.** A `HEAD` request, or a status without a body (`204`, `304`), gets the head
   alone; the callbacks do not run.
 - **Middleware.** Middleware that rewrites bodies leaves a stream alone. `gzip` does not compress it.
 - **Timeouts.** A stream runs as long as its handler likes; the idle and read timeouts do not apply, since the
   client is expected to stay quiet. The write timeout does apply: output that stops moving for that long closes
-  the connection.
+  the connection (over HTTP/2, output its windows hold back as well as a full socket).
 - **Slow clients.** Writes that are not pulled by `on_drain` (timers, sends, publishes) can outrun a client. One
-  that lets more than four times `max_pending` pile up unread is closed, as for WebSocket.
+  that lets more than four times `max_pending` pile up unread is closed, as for WebSocket. Over HTTP/2 the
+  count is per stream, and only that stream ends: it is reset with CANCEL, the connection goes on.
 - **Input.** Input the client sends during a stream waits, up to the read buffer's limit; past it the connection
   closes.
 
 Nothing on this path allocates once the buffers are warm: a timer's event and a send to the stream are held to
-the zero-allocation gate in CI.
+the zero-allocation gate in CI, over HTTP/1.1 and HTTP/2.

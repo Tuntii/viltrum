@@ -72,7 +72,7 @@ buffer and are valid until the handler returns; `.clone()` what you keep.
 | Static files | `app.static_files('/assets', './public')`, `c.file(path)`: ETag, Last-Modified, 304, byte ranges, large files sent with `sendfile` ([docs/files.md](docs/files.md)) |
 | Forms | `c.form_value`, `c.form_file`, `c.form_parts`: urlencoded and multipart bodies parsed in place, no allocation ([docs/forms.md](docs/forms.md)) |
 | WebSocket | `app.ws(pattern, handler)`: RFC 6455 on the same workers, `ws://` and `wss://`, callbacks per message with no allocation, topics (`subscribe` / `publish`) across workers ([docs/ws.md](docs/ws.md)) |
-| Streaming and SSE | `c.stream(status, type, handler)`, `c.sse(handler)`: bodies written over time, from timers on the stream, from any thread (`app.send_event`, `app.publish_event`), or generated as the client takes it (`on_drain`); Server-Sent Events framing and heartbeat ([docs/streaming.md](docs/streaming.md)) |
+| Streaming and SSE | `c.stream(status, type, handler)`, `c.sse(handler)`: bodies written over time, from timers on the stream, from any thread (`app.send_event`, `app.publish_event`), or generated as the client takes it (`on_drain`); Server-Sent Events framing and heartbeat; over HTTP/2, many streams on one connection ([docs/streaming.md](docs/streaming.md)) |
 | Tests | `app.handle_raw(raw)` serves a raw request in-process |
 
 > **`recover` and panics.** V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).
@@ -173,7 +173,9 @@ Inspired by [full-stack-fastapi-template](https://github.com/fastapi/full-stack-
 
 **1.8–1.9:** HTTP/2 beside HTTP/1.1, cleartext and over TLS ([docs/http2.md](docs/http2.md)).
 
-**Next:** streaming responses and Server-Sent Events, on HTTP/1.1 and then HTTP/2 ([docs/streaming.md](docs/streaming.md)); then the feature backlog: the HTTP client, WebSocket over HTTP/2, metrics ([ROADMAP.md](ROADMAP.md)).
+**1.12–1.13:** streaming responses and Server-Sent Events, on HTTP/1.1 and HTTP/2 ([docs/streaming.md](docs/streaming.md)).
+
+**Next:** the feature backlog: the HTTP client, WebSocket over HTTP/2, metrics ([ROADMAP.md](ROADMAP.md)).
 
 ---
 

@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-10-25 · current release: **v1.11.0**
+Last updated: 2026-10-25 · current release: **v1.12.0**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** HTTP/1.1 engine: one `SO_REUSEPORT`
 epoll worker per CPU, pipelining, and no allocation per request inside the framework. Not a thin wrapper.
@@ -57,7 +57,7 @@ Success looks like:
 | WebSocket (`ws://`, `wss://`) | done (Phase 3) |
 | Static files (`static_files`, `c.file`): validators, ranges, `sendfile` | done (Phase 4) |
 | Forms and uploads (`form_value`, `form_file`, `form_parts`) | done (Phase 4) |
-| Streaming responses and Server-Sent Events (`c.stream`, `c.sse`), HTTP/1.1 | done (Phase 7a) |
+| Streaming responses and Server-Sent Events (`c.stream`, `c.sse`), HTTP/1.1 and HTTP/2 | done (Phase 7) |
 | Generic upgrade, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
 
 Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
@@ -142,7 +142,8 @@ Decided on 2026-10-25: streaming first; the other candidates wait in the feature
       `on_drain` for bodies generated at the client's pace, SSE framing and heartbeat, and sends and topic
       publishes from any thread through the hub. Zero-allocation gate on the stream path
       ([docs/streaming.md](docs/streaming.md))
-- [ ] 7b, HTTP/2: the same API per HTTP/2 stream, many streams on one connection, within flow control
+- [x] 7b, HTTP/2: the same API per HTTP/2 stream, many streams on one connection, within flow control;
+      RST_STREAM ends a stream, a slow stream is reset alone. Zero-allocation gate on the HTTP/2 stream path
 
 ## Feature backlog
 

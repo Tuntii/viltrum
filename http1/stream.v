@@ -5,7 +5,7 @@ import time
 // Streaming responses: a body written over time, after the handler has returned. The
 // handler answers with c.stream (or c.sse), and the engine keeps the connection on
 // the route's StreamHandler: what its callbacks write goes out as it is written,
-// chunked on HTTP/1.1. What writes come from: on_open, timers the stream sets
+// chunked on HTTP/1.1, as DATA on its own stream on HTTP/2. What writes come from: on_open, timers the stream sets
 // (Stream.after), on_drain once everything written so far is out (a body generated
 // as the client takes it), and sends and publishes from any thread through the hub.
 // Server-Sent Events are a stream with the text/event-stream framing helpers below.
@@ -59,7 +59,7 @@ pub mut:
 	data voidptr // this stream's own state: set it in on_open, every later callback sees it
 	// engine-owned
 	out     []u8 // where writes go, lent for one callback
-	chunked bool // HTTP/1.1 chunk framing; otherwise the bytes go as they are
+	chunked bool // HTTP/1.1 chunk framing; otherwise the bytes go as they are (HTTP/1.0, HTTP/2)
 	sse     bool
 	ended   bool // end() was called, or the client went away: later writes are dropped
 	worker  int
@@ -93,7 +93,8 @@ fn (mut s Stream) put(p &u8, n int) {
 }
 
 // end finishes the body. On HTTP/1.1 the connection then serves the client's next
-// request; over HTTP/1.0 it closes. on_close runs once the stream is done.
+// request; over HTTP/1.0 it closes; over HTTP/2 the stream ends (END_STREAM). on_close
+// runs once the stream is done.
 pub fn (mut s Stream) end() {
 	if s.ended {
 		return
@@ -358,8 +359,8 @@ fn chunk_head(mut out []u8, n int) {
 
 // stream answers with status and a body written over time by h's callbacks, which
 // run once the handler returns; on_open first, with this request. The body is sent
-// chunked to HTTP/1.1 clients and closes the connection when it ends for HTTP/1.0
-// ones. A HEAD request, or a status without a body, gets the head alone. Middleware
+// chunked to HTTP/1.1 clients, closes the connection when it ends for HTTP/1.0 ones,
+// and is its own stream's DATA for HTTP/2 ones. A HEAD request, or a status without a body, gets the head alone. Middleware
 // that rewrites bodies (gzip) leaves a stream alone.
 pub fn (mut c Ctx) stream(status int, content_type string, h &StreamHandler) {
 	c.open_stream(status, content_type, h, false)

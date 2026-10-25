@@ -63,7 +63,7 @@ fn (mut w Worker) st_take(mut c Conn) {
 	c.wbuf = s.out
 	c.st_data = s.data
 	if s.subs.len > 0 || s.posts.len > 0 {
-		w.apply_topics(mut c, mut s.subs, mut s.posts, s.ended)
+		w.apply_topics(mut c, 0, mut c.subs, mut s.subs, mut s.posts, s.ended)
 	}
 	if s.timers.len > 0 {
 		now := time.sys_mono_now()
@@ -96,18 +96,22 @@ pub fn (mut w Worker) st_end(mut c Conn) {
 		s.timers.clear()
 		s.subs.clear()
 		if s.posts.len > 0 {
-			w.apply_topics(mut c, mut s.subs, mut s.posts, true)
+			w.apply_topics(mut c, 0, mut c.subs, mut s.subs, mut s.posts, true)
 		}
 	}
 	c.st = unsafe { nil }
 	c.st_data = unsafe { nil }
 	for c.subs.len > 0 {
-		w.leave_topic(mut c, c.subs.len - 1)
+		w.leave_topic(mut c, 0, mut c.subs, c.subs.len - 1)
 	}
 }
 
-// st_tick runs a stream timer, if it is for c's current stream; false when not.
+// st_tick runs a stream timer, if it is for c's current stream (on HTTP/2, the stream
+// with that id); false when not.
 fn (mut w Worker) st_tick(mut c Conn, stream u32, cb http1.StreamTick, arg u64) bool {
+	if !isnil(c.h2) {
+		return w.h2_st_tick(mut c, stream, cb, arg)
+	}
 	if isnil(c.st) || c.st_serial != stream || c.close_after {
 		return false
 	}

@@ -73,9 +73,11 @@ The same `Ctx` as over HTTP/1.1. Specifically:
 - Deferred responses (`c.after`) hold only their own stream: the connection's other streams are answered
   meanwhile, and the response goes out on the window the client gave the stream while it waited. A stream
   the client resets while it waits drops its response.
+- Streaming responses (`c.stream`, `c.sse`, [docs/streaming.md](streaming.md)) run one per HTTP/2 stream:
+  writes go out as DATA within the windows, `end()` sets END_STREAM, `on_drain` follows the stream's window,
+  and a RST_STREAM from the client ends the stream. Many SSE streams share one connection.
 
-Not served over HTTP/2, answered **501** instead: WebSocket upgrades (RFC 8441 is not implemented) and,
-until Phase 7b, streaming responses (`c.stream`, `c.sse`, [docs/streaming.md](streaming.md)). Use
+Not served over HTTP/2, answered **501** instead: WebSocket upgrades (RFC 8441 is not implemented). Use
 HTTP/1.1 for those routes.
 
 ## Limits
@@ -91,6 +93,7 @@ noted.
 | Request body | `Limits.max_body_bytes` (1 MiB) | **413**, and the stream is reset |
 | Bodies held at once | each stream's window starts at 64 KiB and reopens as its body is read; while the bodies held pass `max_body_bytes`, only the oldest stream's window reopens | the other streams wait, never fail |
 | Responses waiting on the client's windows | `Options.max_pending` (1 MiB) of bodies, 32 files | new streams are refused (REFUSED_STREAM, which clients retry) |
+| One streaming response's output waiting on the client's windows | four times `Options.max_pending` | that stream is reset (CANCEL) |
 | A client that never opens its windows | `Options.write_timeout`, counted from when the waiting output last moved | the connection is closed |
 | Frame size | 16 KiB (the default; we never raise it) | the connection ends (FRAME_SIZE_ERROR) |
 | Control frames between answered requests (PING, SETTINGS, PRIORITY, RST_STREAM, empty DATA, unknown types) | 1000 | the connection ends (ENHANCE_YOUR_CALM) |

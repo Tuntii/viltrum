@@ -41,6 +41,13 @@ mut:
 	cb      http1.Resume = unsafe { nil }
 	arg     u64
 	method  http1.Method
+	// a streaming response (Ctx.stream), from its head until it ends (h2_stream.v);
+	// what it writes waits in out like a held response
+	st      &http1.StreamHandler = unsafe { nil }
+	st_data voidptr
+	st_sse  bool
+	st_last i64      // when it last wrote, in time.ticks() ms, for the heartbeat
+	subs    []&Topic // topics it is subscribed to
 }
 
 // H2Conn is the HTTP/2 state of one connection.
@@ -72,6 +79,7 @@ mut:
 	open       int // streams in use
 	sending    int // streams with output held back
 	waiting    int // streams whose response is deferred
+	streaming  int // streams whose body is still being written (Ctx.stream)
 	held       i64 // response bytes held back in slots
 	files      int // file answers held back
 	pump_next  int // the slot h2_pump starts its next pass at
@@ -139,6 +147,7 @@ fn (mut w Worker) h2_open(mut c Conn) {
 	h.open = 0
 	h.sending = 0
 	h.waiting = 0
+	h.streaming = 0
 	h.held = 0
 	h.files = 0
 	h.pump_next = 0
@@ -184,6 +193,7 @@ fn (mut w Worker) h2_reset(mut c Conn, id u32, code u32) {
 	mut h := c.h2
 	i := h.find(id)
 	if i >= 0 {
+		w.h2_st_end(mut c, i)
 		h.release(i)
 		w.h2_credit_all(mut c)
 	}
@@ -343,6 +353,7 @@ fn (mut h H2Conn) take(id u32, send_win i64) int {
 	s.receiving = false
 	s.sending = false
 	s.waiting = false
+	s.st = unsafe { nil }
 	unsafe {
 		s.head.len = 0
 		s.body.len = 0
@@ -376,6 +387,12 @@ fn (mut h H2Conn) release(i int) {
 	if s.waiting {
 		h.waiting-- // its timer finds the stream gone and is dropped
 		s.waiting = false
+	}
+	if !isnil(s.st) {
+		// h2_st_end ran first wherever a stream can end; this is the backstop
+		h.streaming--
+		s.st = unsafe { nil }
+		s.st_data = unsafe { nil }
 	}
 	if s.file_fd >= 0 {
 		http1.close_file(s.file_fd)
@@ -909,15 +926,14 @@ fn (mut w Worker) h2_finish(mut c Conn, id u32, idx int, send_win i64) {
 		return
 	}
 	if !isnil(x.st) {
-		x.st = unsafe { nil }
-		w.h2_error(mut c, id, 501, 'streaming needs HTTP/1.1', send_win) // not yet
+		w.h2_st_open(mut c, id, send_win)
 		return
 	}
 	w.answer_default(idx)
 	w.h2out = x.out
 	file_fd := x.file_fd
 	x.file_fd = -1
-	w.h2_respond(mut c, id, file_fd, x.file_off, x.file_left, send_win)
+	w.h2_respond(mut c, id, file_fd, x.file_off, x.file_left, send_win, false)
 	if w.h2out.cap > shrink_wbuf_above {
 		w.h2out = []u8{cap: write_buf_size} // cold: a large response
 	}
@@ -966,10 +982,12 @@ fn (mut w Worker) h2_resume(mut c Conn, id u32) bool {
 }
 
 // h2_waits is whether an HTTP/2 connection is quiet but for deferred responses, which
-// their timers answer: nothing arriving in part, nothing held back or blocked going
-// out. The idle timeout waits meanwhile, as it does for an HTTP/1.1 one.
+// their timers answer, and streams, which write when their handlers like: nothing
+// arriving in part, nothing held back or blocked going out. The idle timeout waits
+// meanwhile, as it does for an HTTP/1.1 connection in either state.
 fn (c &Conn) h2_waits() bool {
-	return !isnil(c.h2) && c.h2.waiting > 0 && c.h2.sending == 0 && !c.reading && !c.out_armed
+	return !isnil(c.h2) && (c.h2.waiting > 0 || c.h2.streaming > 0) && c.h2.sending == 0
+		&& !c.reading && !c.out_armed
 }
 
 // h2_error answers stream id with status and a short text, as refuse does.
@@ -986,14 +1004,15 @@ fn (mut w Worker) h2_error(mut c Conn, id u32, status int, reason string, send_w
 	x.begin(http1.view(w.h2req, 0, 0))
 	x.text(status, reason)
 	w.h2out = x.out
-	w.h2_respond(mut c, id, -1, 0, 0, send_win)
+	w.h2_respond(mut c, id, -1, 0, 0, send_win, false)
 }
 
 // h2_respond turns the HTTP/1.1 response in w.h2out into frames on stream id: the
 // head into a HEADERS block, the body (and the file after it, when file_fd >= 0)
 // into DATA as the windows allow, the stream's starting at send_win. What they hold
-// back waits on the stream.
-fn (mut w Worker) h2_respond(mut c Conn, id u32, file_fd int, file_off i64, file_left i64, send_win i64) {
+// back waits on the stream. With open set the head alone goes, a stream's: its body
+// follows. False when the stream was reset instead.
+fn (mut w Worker) h2_respond(mut c Conn, id u32, file_fd int, file_off i64, file_left i64, send_win i64, open bool) bool {
 	mut h := c.h2
 	out := w.h2out
 	has_file := file_fd >= 0 && file_left > 0
@@ -1011,7 +1030,7 @@ fn (mut w Worker) h2_respond(mut c Conn, id u32, file_fd int, file_off i64, file
 			http1.close_file(file_fd)
 		}
 		w.h2_reset(mut c, id, http2.err_internal)
-		return
+		return false
 	}
 	for p + 1 < out.len && !(out[p] == `\r` && out[p + 1] == `\n`) {
 		p++
@@ -1042,15 +1061,15 @@ fn (mut w Worker) h2_respond(mut c Conn, id u32, file_fd int, file_off i64, file
 	}
 	p += 2
 	body_len := out.len - p
-	h2_headers_frames(mut c.wbuf, id, w.h2blk, body_len == 0 && !has_file)
+	h2_headers_frames(mut c.wbuf, id, w.h2blk, body_len == 0 && !has_file && !open)
 	if body_len == 0 && !has_file {
-		return
+		return true
 	}
 	k := h.sendable(body_len, send_win)
 	h2_data_frames(mut c.wbuf, id, unsafe { &u8(out.data) + p }, k, k == body_len && !has_file)
 	h.send_win -= k
 	if k == body_len && !has_file {
-		return
+		return true
 	}
 	// held back: the rest waits on a stream, sent by h2_pump
 	i := h.take(id, send_win - k)
@@ -1066,6 +1085,7 @@ fn (mut w Worker) h2_respond(mut c Conn, id u32, file_fd int, file_off i64, file
 	s.sending = true
 	h.sending++
 	h.sent++ // the stall timeout starts now (see Loop.h2_deadline)
+	return true
 }
 
 // h2_index is how a response field enters the compression tables. Values that
@@ -1232,7 +1252,8 @@ fn (mut w Worker) h2_pump_frame(mut c Conn, i int) bool {
 		if k == 0 {
 			return false
 		}
-		end := k == n && s.file_left == 0
+		// a stream still being written keeps its slot once what it wrote is out
+		end := k == n && s.file_left == 0 && isnil(s.st)
 		h2_data_frames(mut c.wbuf, s.id, unsafe { &u8(s.out.data) + s.out_off }, k, end)
 		s.out_off += k
 		s.send_win -= k
@@ -1241,6 +1262,13 @@ fn (mut w Worker) h2_pump_frame(mut c Conn, i int) bool {
 		h.sent += u64(k)
 		if end {
 			h.release(i)
+		} else if k == n && !isnil(s.st) {
+			s.sending = false
+			h.sending--
+			unsafe {
+				s.out.len = 0
+			}
+			s.out_off = 0
 		}
 		return true
 	}
@@ -1423,6 +1451,7 @@ fn (mut w Worker) h2_on_rst(mut c Conn, fh http2.FrameHeader) {
 	h.flood++
 	i := h.find(fh.stream)
 	if i >= 0 {
+		w.h2_st_end(mut c, i) // a stream the client cancels ends like one whose client went away
 		h.release(i)
 		w.h2_credit_all(mut c)
 	}

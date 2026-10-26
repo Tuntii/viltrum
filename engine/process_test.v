@@ -353,3 +353,94 @@ fn test_file_answers_allocate_nothing() {
 	assert c.file_fd >= 0 && c.file_left == http1.file_inline_max + 1
 	c.end_file()
 }
+
+// serve_lent is one event as the event loop handles it: buffers lent, the request
+// read and served, its response written out, the empty buffers taken back.
+fn serve_lent(mut w Worker, mut c Conn, req []u8) string {
+	w.lend(mut c)
+	unsafe { c.rbuf.push_many(req.data, req.len) }
+	w.process(mut c)
+	out := c.wbuf.bytestr()
+	unsafe {
+		c.wbuf.len = 0
+	}
+	w.settle(mut c)
+	return out
+}
+
+// A connection holds buffers only while something is in them: once its request is
+// answered and out it holds none, and the next event borrows them back.
+fn test_quiet_connection_holds_no_buffers() {
+	mut w := new_worker(make_router(), Options{ send_date: false }, 0)
+	mut c := &Conn{}
+	assert c.rbuf.cap == 0 && c.wbuf.cap == 0
+	out := serve_lent(mut w, mut c, shapes['get'].bytes())
+	assert out.ends_with('\r\n\r\n55')
+	assert c.rbuf.cap == 0 && c.wbuf.cap == 0 && w.rpool.len == 1 && w.wpool.len == 1
+	// a request cut short keeps its read buffer until the rest comes; the write buffer,
+	// empty, goes back
+	req := shapes['get'].bytes()
+	assert serve_lent(mut w, mut c, req[..10]) == ''
+	assert c.rbuf.len == 10 && c.rbuf.cap > 0 && c.wbuf.cap == 0 && w.rpool.len == 0
+	assert serve_lent(mut w, mut c, req[10..]).ends_with('\r\n\r\n55')
+	assert c.rbuf.cap == 0 && w.rpool.len == 1
+	// output the socket has not taken keeps the write buffer
+	w.lend(mut c)
+	unsafe { c.rbuf.push_many(req.data, req.len) }
+	w.process(mut c)
+	c.out_armed = true
+	w.settle(mut c)
+	assert c.wbuf.len > 0 && c.wbuf.cap > 0 && c.rbuf.cap == 0
+	// a buffer one response grew past what is worth keeping is not pooled
+	c.out_armed = false
+	unsafe { c.wbuf.grow_cap(shrink_wbuf_above) }
+	unsafe {
+		c.wbuf.len = 0
+	}
+	pooled := w.wpool.len
+	w.settle(mut c)
+	assert c.wbuf.cap == 0 && w.wpool.len == pooled
+}
+
+// Many quiet connections share a few buffers: served one after another, they never
+// hold more than one pair between them.
+fn test_quiet_connections_share_the_pool() {
+	mut w := new_worker(make_router(), Options{ send_date: false }, 0)
+	mut conns := []&Conn{}
+	for _ in 0 .. 100 {
+		conns << &Conn{}
+	}
+	for _ in 0 .. 3 {
+		for mut c in conns {
+			assert serve_lent(mut w, mut c, shapes['pipelined'].bytes()).count('\r\n\r\nok') == 16
+		}
+	}
+	assert w.rpool.len == 1 && w.wpool.len == 1
+	assert conns.all(it.rbuf.cap == 0 && it.wbuf.cap == 0)
+}
+
+// Lending and taking back allocate nothing once the pools hold a buffer of each.
+fn test_lent_buffers_allocate_nothing() {
+	mut w := new_worker(make_router(), Options{}, 0)
+	mut a := &Conn{}
+	mut pair := [a, &Conn{}]
+	for name, raw in shapes {
+		req := raw.bytes()
+		for _ in 0 .. 200 {
+			serve_lent(mut w, mut a, req)
+		}
+		before := http1.allocated_bytes()
+		for _ in 0 .. 5000 {
+			for mut c in pair {
+				w.lend(mut c)
+				unsafe { c.rbuf.push_many(req.data, req.len) }
+				w.process(mut c)
+				unsafe {
+					c.wbuf.len = 0
+				}
+				w.settle(mut c)
+			}
+		}
+		assert http1.allocated_bytes() - before == 0, '${name} allocates'
+	}
+}

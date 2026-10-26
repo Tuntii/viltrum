@@ -364,6 +364,7 @@ fn (mut w Worker) ws_push(mut c Conn, p &http1.WsPost, mut touched []&Conn) {
 	if c.ws_closing || c.close_after {
 		return
 	}
+	w.lend(mut c)
 	if c.wbuf.len - c.woff > 4 * w.opts.max_pending {
 		w.ws_fail(mut c, 1008, 'too slow')
 	} else {

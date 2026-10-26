@@ -103,17 +103,86 @@ fn (mut t TlsConn) go_fast() {
 		t.bio.off = t.bio.len
 	}
 	t.fast = true
+	t.mbed_end() // the records are tls13's from here
 }
 
-// alloc sets up the key states and buffers, once per pooled TlsConn.
+// alloc sets up the key states, once per pooled TlsConn. The buffers are the worker's,
+// lent while the connection uses them (Worker.tls_lend).
 fn (mut r Tls13) alloc() bool {
 	if isnil(r.rx) {
 		r.rx = C.viltrum_gcm_new() // cold: once per pooled TlsConn
 		r.tx = C.viltrum_gcm_new() // cold: once per pooled TlsConn
-		r.inb = []u8{cap: tls13_in_cap} // cold: once per pooled TlsConn
-		r.out = []u8{cap: tls13_out_cap} // cold: once per pooled TlsConn
 	}
-	return !isnil(r.rx) && !isnil(r.tx)
+	return !isnil(r.rx) && !isnil(r.tx) && r.inb.cap > 0 && r.out.cap > 0
+}
+
+// tls_lend lends t's record buffers, as Worker.lend does rbuf and wbuf: one for the
+// ciphertext read ahead, one for a sealed record on its way out.
+fn (mut w Worker) tls_lend(mut t TlsConn) {
+	mut r := &t.r13
+	if r.inb.cap == 0 {
+		r.inb = if w.tin_pool.len > 0 {
+			w.tin_pool.pop()
+		} else {
+			[]u8{cap: tls13_in_cap} // cold: past the most TLS connections ever busy at once
+		}
+	}
+	if r.out.cap == 0 {
+		r.out = if w.tout_pool.len > 0 {
+			w.tout_pool.pop()
+		} else {
+			[]u8{cap: tls13_out_cap} // cold: as above
+		}
+	}
+}
+
+// tls_settle takes back t's record buffers that are empty: everything read ahead
+// opened and handed out, no record half sent. With all set the connection is
+// closing, and they go back whatever they hold.
+fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
+	mut r := &t.r13
+	if r.inb.cap > 0 && (all || (r.in_off == r.inb.len && r.pt_off >= r.pt_end)) {
+		unsafe {
+			r.inb.len = 0
+		}
+		r.in_off = 0
+		r.pt_off = 0
+		r.pt_end = 0
+		w.tin_pool << r.inb // cold: grows to the most TLS connections ever busy at once
+		r.inb = []u8{}
+	}
+	if r.out.cap > 0 && (all || r.out.len == 0) {
+		unsafe {
+			r.out.len = 0
+		}
+		r.out_off = 0
+		r.out_pt = 0
+		w.tout_pool << r.out // cold: as above
+		r.out = []u8{}
+	}
+	// the handshake's read-ahead, once a session no longer needs it: tls13 reads its
+	// own records, and a closing one needs nothing
+	if t.inbuf.cap > 0 && (all || (t.fast && !t.handshaking)) {
+		unsafe {
+			t.inbuf.len = 0
+		}
+		w.wpool << t.inbuf // cold: as above
+		t.inbuf = []u8{}
+	}
+}
+
+// tls_inbuf is a read-ahead for a handshake, from the write pool: its buffers are at
+// least as large.
+fn (mut w Worker) tls_inbuf() []u8 {
+	mut b := if w.wpool.len > 0 {
+		w.wpool.pop()
+	} else {
+		[]u8{cap: write_buf_size} // cold: past the most connections ever busy at once
+	}
+	unsafe {
+		b.len = tls_read_ahead
+	}
+	return b
 }
 
 // start resets the record state for a session's first records.

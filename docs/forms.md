@@ -83,8 +83,8 @@ app.server_options(viltrum.Options{
 })
 ```
 
-Each connection's read buffer grows to hold its largest request and shrinks back when the connection closes,
-so the limit is also how much memory one client can make a worker hold. A body over the limit is refused with
+A connection's read buffer grows to hold its request while it arrives, so the limit is also how much memory one
+client can make a worker hold. A body over the limit is refused with
 413 before it is read; the engine then reads and drops what the client still sends for a while (a lingering
 close, see [connection.md](./connection.md)), so a client that writes its whole upload before reading gets
 the 413 rather than a reset connection. Streaming uploads to disk as they arrive is not supported.

@@ -2,8 +2,14 @@
 
 - One worker per CPU in the process affinity mask (`Options.workers` or `VILTRUM_WORKERS` override), each with
   its own `SO_REUSEPORT` listener and epoll loop.
-- Each connection keeps an 8 KiB read and 16 KiB write buffer for its life; they grow only for larger messages
-  and shrink back when the connection closes.
+- A connection holds buffers only while something is in them. The worker lends it an 8 KiB read and a 16 KiB
+  write buffer when there is something to read or write, and takes each back once it is empty: once the
+  request is answered and the response is out. A connection waiting on its client (keep-alive), on a timer
+  (`c.after`), or on a topic costs its `Conn` alone, a few hundred bytes, and the kernel's socket. Under load
+  the pools stay at a few buffers per worker. A buffer one request or response grew stays in the pool up to
+  64 KiB (read) or 256 KiB (write); a larger one goes back to the GC. TLS sessions borrow their record
+  buffers the same way, and mbedtls' context exists only while mbedtls has the session (TLS 1.2, or a
+  handshake viltrum's own TLS 1.3 code passes on).
 - Every complete request in a read is served, and the responses go out in one `send`. Processing pauses once
   `Options.max_pending` (1 MiB) of output waits; reading pauses while output is pending.
 - Limits live under `Options.limits`: `max_header_bytes` 64 KiB (431), `max_body_bytes` 1 MiB (413),

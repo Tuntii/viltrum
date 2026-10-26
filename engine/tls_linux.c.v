@@ -10,9 +10,9 @@ fn C.mbedtls_ssl_check_pending(ssl &C.mbedtls_ssl_context) i32
 fn C.mbedtls_ssl_set_user_data_p(ssl &C.mbedtls_ssl_context, p voidptr)
 fn C.mbedtls_ssl_get_user_data_p(ssl &C.mbedtls_ssl_context) voidptr
 fn C.viltrum_tls_conf(conf &C.mbedtls_ssl_config, cert_cb fn (&C.mbedtls_ssl_context) int, drbg &C.mbedtls_ctr_drbg_context, h2 int) i32
-fn C.viltrum_tls_reset(ssl &C.mbedtls_ssl_context) i32
 fn C.viltrum_tls_fresh(ssl &C.mbedtls_ssl_context) int
-fn C.viltrum_tls_set_bio(ssl &C.mbedtls_ssl_context, b &C.viltrum_bio, fd &int, buf &u8, cap usize)
+fn C.viltrum_tls_bio_init(b &C.viltrum_bio, fd &int, buf &u8, cap usize)
+fn C.viltrum_tls_bind_bio(ssl &C.mbedtls_ssl_context, b &C.viltrum_bio)
 fn C.viltrum_tls_check_pair(crt &C.mbedtls_x509_crt, key &C.mbedtls_pk_context, drbg &C.mbedtls_ctr_drbg_context) i32
 fn C.viltrum_tls_load_key(key &C.mbedtls_pk_context, path &char, drbg &C.mbedtls_ctr_drbg_context) i32
 fn C.viltrum_tls_seed(drbg &C.mbedtls_ctr_drbg_context, entropy &C.mbedtls_entropy_context) i32
@@ -198,14 +198,16 @@ fn (mut s TlsServer) reload() {
 }
 
 // TlsConn is the TLS session of one Conn. It is created the first time a pooled
-// Conn serves TLS and kept with it; later connections reset it, which reuses the
-// buffers mbedtls allocated.
+// Conn serves TLS and kept with it. Its buffers are the worker's, lent while it uses
+// them, and mbedtls' context is set up only for a session mbedtls has (mbed_start):
+// hs13 serves most handshakes and tls13 their records, without it.
 @[heap]
 struct TlsConn {
 mut:
 	ssl         C.mbedtls_ssl_context
+	mbed        bool // ssl is set up, with the buffers that takes
 	bio         C.viltrum_bio
-	inbuf       []u8 // bio read-ahead, allocated with the TlsConn
+	inbuf       []u8 // bio read-ahead, lent for the handshake (and an mbedtls session)
 	srv         &TlsServer = unsafe { nil }
 	pair        &CertPair  = unsafe { nil } // picked for the handshake in progress
 	handshaking bool
@@ -240,34 +242,20 @@ fn (mut t TlsConn) release() {
 	}
 }
 
-// tls_start attaches a TLS session for srv to c and begins the handshake.
-fn (mut c Conn) tls_start(srv &TlsServer) bool {
-	if isnil(c.tls_keep) || voidptr(c.tls_keep.srv) != voidptr(srv) {
-		if !isnil(c.tls_keep) {
-			C.mbedtls_ssl_free(&c.tls_keep.ssl) // cold: the Conn moves to another TLS listener
-		}
-		mut t := &TlsConn{
-			srv:   srv
-			inbuf: []u8{len: tls_read_ahead}
-		} // cold: once per pooled Conn
-		C.mbedtls_ssl_init(&t.ssl)
-		ret := C.mbedtls_ssl_setup(&t.ssl, &srv.conf)
-		if ret != 0 {
-			$if viltrum_debug ? {
-				eprintln('[viltrum] TLS setup failed: -0x${-ret:04x}') // cold: debug builds only
-			}
-			C.mbedtls_ssl_free(&t.ssl)
-			c.tls_keep = unsafe { nil }
-			return false
-		}
-		c.tls_keep = t
-	} else if C.viltrum_tls_reset(&c.tls_keep.ssl) != 0 {
-		return false
+// tls_start attaches a TLS session for srv to c and begins the handshake, with a
+// read-ahead from w (Worker.tls_settle takes it back).
+fn (mut c Conn) tls_start(srv &TlsServer, mut w Worker) bool {
+	if isnil(c.tls_keep) {
+		mut nt := &TlsConn{} // cold: once per pooled Conn
+		C.mbedtls_ssl_init(&nt.ssl)
+		c.tls_keep = nt
 	}
 	mut t := c.tls_keep
-	C.mbedtls_ssl_set_user_data_p(&t.ssl, t)
-	C.viltrum_tls_set_bio(&t.ssl, &t.bio, &c.fd, t.inbuf.data, usize(t.inbuf.len))
-	C.viltrum_tls_set_export(&t.ssl, &t.secrets)
+	t.srv = srv
+	if t.inbuf.cap == 0 {
+		t.inbuf = w.tls_inbuf()
+	}
+	C.viltrum_tls_bio_init(&t.bio, &c.fd, t.inbuf.data, usize(t.inbuf.len))
 	t.fd = &c.fd
 	t.fast = false
 	t.h2 = false
@@ -279,8 +267,41 @@ fn (mut c Conn) tls_start(srv &TlsServer) bool {
 	unsafe {
 		t.hs_out.len = 0
 	}
+	// without hs13, mbedtls has the session from the start
+	if t.hs13 == hs13_off && !t.mbed_start() {
+		return false
+	}
 	c.tls = t
 	return true
+}
+
+// mbed_start hands the session to mbedtls: its context is set up now, with the record
+// buffers and handshake state that takes, and freed once the session no longer needs
+// it (mbed_end). The bio keeps what it has read ahead.
+fn (mut t TlsConn) mbed_start() bool {
+	ret := C.mbedtls_ssl_setup(&t.ssl, &t.srv.conf)
+	if ret != 0 {
+		$if viltrum_debug ? {
+			eprintln('[viltrum] TLS setup failed: -0x${-ret:04x}') // cold: debug builds only
+		}
+		C.mbedtls_ssl_free(&t.ssl)
+		C.mbedtls_ssl_init(&t.ssl)
+		return false
+	}
+	t.mbed = true
+	C.mbedtls_ssl_set_user_data_p(&t.ssl, t)
+	C.viltrum_tls_bind_bio(&t.ssl, &t.bio)
+	C.viltrum_tls_set_export(&t.ssl, &t.secrets)
+	return true
+}
+
+// mbed_end frees mbedtls' context, if it has one.
+fn (mut t TlsConn) mbed_end() {
+	if t.mbed {
+		C.mbedtls_ssl_free(&t.ssl)
+		C.mbedtls_ssl_init(&t.ssl)
+		t.mbed = false
+	}
 }
 
 // handshake advances the handshake: hs_done, hs_want_read, hs_want_write or hs_failed.
@@ -306,6 +327,9 @@ fn (mut t TlsConn) handshake() int {
 			return r
 		}
 		t.hs13 = hs13_off
+		if !t.mbed_start() {
+			return hs_failed
+		}
 	}
 	ret := C.mbedtls_ssl_handshake(&t.ssl)
 	if ret == 0 {
@@ -381,6 +405,9 @@ fn (t &TlsConn) fresh() bool {
 	if t.hs13 == hs13_flight || t.hs13 == hs13_finished {
 		return false
 	}
+	if !t.mbed {
+		return true // hs13 has not read the hello yet
+	}
 	return C.viltrum_tls_fresh(&t.ssl) != 0
 }
 
@@ -389,7 +416,7 @@ fn (t &TlsConn) pending() bool {
 	if t.fast {
 		return t.pending13()
 	}
-	return t.bio.off < t.bio.len || C.mbedtls_ssl_check_pending(&t.ssl) != 0
+	return t.bio.off < t.bio.len || (t.mbed && C.mbedtls_ssl_check_pending(&t.ssl) != 0)
 }
 
 // readable notes that epoll reported the socket readable, so the read-ahead may
@@ -403,9 +430,10 @@ fn (mut t TlsConn) readable() {
 fn (mut t TlsConn) close() {
 	if t.fast {
 		t.close13(*t.fd)
-	} else if !t.handshaking {
+	} else if !t.handshaking && t.mbed {
 		C.mbedtls_ssl_close_notify(&t.ssl)
 	}
+	t.mbed_end()
 	t.release()
 	t.handshaking = false
 	if t.hs13 != hs13_off {

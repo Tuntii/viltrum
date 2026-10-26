@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-10-25 · current release: **v1.12.0**
+Last updated: 2026-10-25 · current release: **v1.13.0**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** HTTP/1.1 engine: one `SO_REUSEPORT`
 epoll worker per CPU, pipelining, and no allocation per request inside the framework. Not a thin wrapper.
@@ -50,6 +50,7 @@ Success looks like:
 | Router (`:param`, `*rest`, groups), middleware chain, `recover` / `gzip` / `cors` / `logger` | done (1.0) |
 | Compile-time JSON encoder | done (1.0) |
 | Closed connections pooled per worker | done (1.0.3) |
+| Buffers lent per event from worker pools: a quiet connection holds none, TLS included | done (Phase 8) |
 | Deferred responses (`c.after`) from per-worker timers, nanosecond waits | done (1.1.0, 1.5.1) |
 | TLS on the same workers, certificate reload | done (1.2.0) |
 | Own TLS 1.3 handshake for X25519 + RSA certificates, mbedtls for the rest ([design](docs/design/1.x-tls-handshake.md)) | done (1.7.0) |
@@ -144,6 +145,17 @@ Decided on 2026-10-25: streaming first; the other candidates wait in the feature
       ([docs/streaming.md](docs/streaming.md))
 - [x] 7b, HTTP/2: the same API per HTTP/2 stream, many streams on one connection, within flow control;
       RST_STREAM ends a stream, a slow stream is reset alone. Zero-allocation gate on the HTTP/2 stream path
+
+## Phase 8 — Memory per connection
+
+Decided on 2026-10-26, after HttpArena's memory-efficiency view put viltrum second: every connection held an
+8 KiB read and a 16 KiB write buffer for its life (about 33 KiB with the GC's share), and a TLS one about 100 KiB.
+
+- [x] Buffers lent from per-worker pools while there is something in them, taken back when an event leaves
+      them empty; zero-allocation gate on the lend/settle cycle
+- [x] TLS: tls13's record buffers and the handshake's read-ahead lent the same way; mbedtls' context set up
+      only for sessions mbedtls has
+- [ ] HTTP/2: the per-connection tables and stream slots (not scored yet)
 
 ## Feature backlog
 

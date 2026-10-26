@@ -129,6 +129,7 @@ fn (mut l Loop) run() {
 				l.accept_all(li)
 			} else {
 				l.on_event(fd, events[i].events)
+				l.settle(fd)
 			}
 		}
 		l.fire()
@@ -178,17 +179,21 @@ fn (mut l Loop) fire() {
 		if c.fd != t.fd || c.gen != t.gen {
 			continue
 		}
+		l.w.lend(mut c)
 		if t.tick != 0 {
 			if !l.w.st_tick(mut c, t.stream, t.cb(), t.arg) {
+				l.w.settle(mut c)
 				continue
 			}
 		} else if t.stream != 0 {
 			if isnil(c.h2) || !l.w.h2_resume(mut c, t.stream) {
+				l.w.settle(mut c)
 				continue
 			}
 		} else if c.waiting {
 			l.w.resume(mut c)
 		} else {
+			l.w.settle(mut c)
 			continue
 		}
 		l.drain(mut c)
@@ -200,6 +205,16 @@ fn (mut l Loop) fire() {
 				l.opts.idle_timeout.milliseconds()
 			}
 		}
+		l.settle(t.fd)
+	}
+}
+
+// settle hands the buffers the connection on fd left empty back to the worker's
+// pools, once an event on it is handled (Worker.settle).
+fn (mut l Loop) settle(fd int) {
+	if fd < l.conns.len && !isnil(l.conns[fd]) && l.conns[fd].fd == fd {
+		mut c := l.conns[fd]
+		l.w.settle(mut c)
 	}
 }
 
@@ -220,6 +235,9 @@ fn (mut l Loop) drain_inbox() {
 		c.touched = false
 		if c.fd >= 0 && !c.out_armed {
 			l.flush(mut c)
+		}
+		if c.fd >= 0 {
+			l.w.settle(mut c)
 		}
 	}
 	l.touched.clear()
@@ -283,7 +301,7 @@ fn (mut l Loop) accept_all(li int) {
 		if !isnil(srv) {
 			// the handshake runs under the read timeout, like a partial request
 			c.deadline_ms = l.now + l.opts.read_timeout.milliseconds()
-			if !c.tls_start(srv) {
+			if !c.tls_start(srv, mut l.w) {
 				l.conns[fd] = unsafe { nil }
 				c.fd = -1
 				if counted {
@@ -308,7 +326,8 @@ fn (mut l Loop) conn_for(fd int) &Conn {
 	}
 	// fd numbers are shared by all workers, so a Conn is pooled per worker rather than
 	// kept per fd: a worker holds as many as it ever had open at once.
-	mut c := if l.free.len > 0 { l.free.pop() } else { new_conn() } // cold: new_conn only past the worker's peak
+	// without buffers: lend gives them when there is something to read or write
+	mut c := if l.free.len > 0 { l.free.pop() } else { &Conn{} } // cold: a new Conn only past the worker's peak
 	l.conns[fd] = c
 	return c
 }
@@ -375,6 +394,7 @@ fn (mut l Loop) next_handshake() {
 			mut c := l.conns[fd]
 			c.hs_queued = false
 			l.handshake(mut c)
+			l.settle(fd)
 			break
 		}
 	}
@@ -387,6 +407,7 @@ fn (mut l Loop) next_handshake() {
 // handshake advances a TLS handshake. Once it is done the connection reads like
 // any other; the client's first request may already be buffered.
 fn (mut l Loop) handshake(mut c Conn) {
+	l.w.lend(mut c)
 	r := c.tls.handshake()
 	if r == hs_failed {
 		l.close(mut c)
@@ -403,6 +424,7 @@ fn (mut l Loop) handshake(mut c Conn) {
 		c.deadline_ms = l.now + l.opts.idle_timeout.milliseconds()
 		if c.tls.h2 {
 			// ALPN chose h2: our SETTINGS go out now, the client's preface comes next
+			l.w.lend(mut c)
 			l.w.h2_open(mut c)
 		}
 		l.on_readable(mut c)
@@ -454,6 +476,7 @@ fn (mut l Loop) write(mut c Conn, buf &u8, n int) int {
 }
 
 fn (mut l Loop) on_readable(mut c Conn) {
+	l.w.lend(mut c)
 	for {
 		max_total := if isnil(c.ws) {
 			l.opts.limits.max_header_bytes + l.opts.limits.max_body_bytes + 64 * 1024
@@ -531,6 +554,7 @@ fn (mut l Loop) drain(mut c Conn) {
 }
 
 fn (mut l Loop) flush(mut c Conn) {
+	l.w.lend(mut c) // HTTP/2 output held in slots, and streams, write into wbuf here
 	mut drained := 0 // what on_drain wrote in this flush
 	mut ended := false // and whether it ended its stream
 	for {
@@ -694,6 +718,7 @@ fn (mut l Loop) send_file(mut c Conn) bool {
 // linger_idle_ms, or linger_max_ms pass, as nginx's lingering close does.
 fn (mut l Loop) linger(mut c Conn) {
 	if !isnil(c.tls) {
+		l.w.lend(mut c) // close_notify is sealed in the record buffer
 		c.tls.close() // close_notify; what the client sends next is not decrypted
 		c.tls = unsafe { nil }
 	}
@@ -713,6 +738,7 @@ fn (mut l Loop) linger(mut c Conn) {
 // once the client has closed its side. A few reads per event, so a client that keeps
 // sending cannot hold the worker.
 fn (mut l Loop) discard(mut c Conn) {
+	l.w.lend(mut c) // what is read is dropped: rbuf is scratch, and stays empty
 	for _ in 0 .. 16 {
 		n := int(C.recv(c.fd, c.rbuf.data, c.rbuf.cap, 0))
 		if n > 0 {
@@ -761,8 +787,13 @@ fn (mut l Loop) close(mut c Conn) {
 	// the result does not matter: closing the fd, never dup'd, drops it from epoll too
 	l.ctl(C.EPOLL_CTL_DEL, c.fd, 0)
 	if !isnil(c.tls) {
+		l.w.lend(mut c) // close_notify is sealed in the record buffer
 		c.tls.close()
 		c.tls = unsafe { nil }
+	}
+	if !isnil(c.tls_keep) {
+		mut t := c.tls_keep
+		l.w.tls_settle(mut t, true)
 	}
 	C.close(c.fd)
 	if c.counted {
@@ -771,11 +802,12 @@ fn (mut l Loop) close(mut c Conn) {
 	}
 	l.conns[c.fd] = unsafe { nil }
 	c.fd = -1
-	if c.rbuf.cap > shrink_rbuf_above {
-		c.rbuf = []u8{cap: read_buf_size} // cold: give back what one large request grew
+	// the buffers go back to the pools; ones grown past what is worth keeping, to the GC
+	if c.rbuf.cap > 0 {
+		l.w.give_back(mut c, true)
 	}
-	if c.wbuf.cap > shrink_wbuf_above {
-		c.wbuf = []u8{cap: write_buf_size} // cold
+	if c.wbuf.cap > 0 {
+		l.w.give_back(mut c, false)
 	}
 	if c.ws_msg.cap > shrink_rbuf_above {
 		c.ws_msg = []u8{} // cold: a large fragmented message
@@ -806,13 +838,16 @@ fn (mut l Loop) sweep() {
 		if !isnil(c.st) && !c.out_armed {
 			// a stream runs as long as its handler likes: the client is expected to stay
 			// quiet. Only output that does not move times it out.
+			l.w.lend(mut c)
 			if l.w.st_heartbeat(mut c, l.now) {
 				l.flush(mut c)
 			}
+			l.settle(i)
 			continue
 		}
 		if !isnil(c.h2) && c.h2.streaming > 0 && !c.out_armed && l.w.h2_heartbeats(mut c, l.now) {
 			l.flush(mut c)
+			l.settle(i)
 			if c.fd < 0 {
 				continue
 			}

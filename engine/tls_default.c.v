@@ -5,3 +5,7 @@ module engine
 struct TlsConn {}
 
 struct TlsServer {}
+
+fn (mut w Worker) tls_lend(mut t TlsConn) {}
+
+fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {}

@@ -138,18 +138,18 @@ static int viltrum_tls_recv(void *ctx, unsigned char *buf, size_t len) {
 }
 
 // net.mbedtls declares session_reset without its result; this keeps it.
-static int viltrum_tls_reset(mbedtls_ssl_context *ssl) {
-	return mbedtls_ssl_session_reset(ssl);
-}
-
-static void viltrum_tls_set_bio(mbedtls_ssl_context *ssl, viltrum_bio *b, int *fd,
-		unsigned char *buf, size_t cap) {
+static void viltrum_tls_bio_init(viltrum_bio *b, int *fd, unsigned char *buf, size_t cap) {
 	b->fd = fd;
 	b->buf = buf;
 	b->cap = cap;
 	b->off = 0;
 	b->len = 0;
 	b->drained = 0;
+}
+
+// viltrum_tls_bind_bio puts ssl on b, whatever b has read ahead already: hs13 may have
+// read the ClientHello it hands to mbedtls.
+static void viltrum_tls_bind_bio(mbedtls_ssl_context *ssl, viltrum_bio *b) {
 	mbedtls_ssl_set_bio(ssl, b, viltrum_tls_send, viltrum_tls_recv, NULL);
 }
 

@@ -132,6 +132,12 @@ pub mut:
 	st       http1.Stream
 	hub      &Hub = unsafe { nil } // where publish and send go; nil drops them (handle_raw)
 	topics   map[string]&Topic // this worker's subscribers per topic
+	// read and write buffers no connection holds (lend, settle)
+	rpool [][]u8
+	wpool [][]u8
+	// TLS 1.3 record buffers no connection holds (tls13_linux.c.v)
+	tin_pool  [][]u8
+	tout_pool [][]u8
 	// HTTP/2 scratch (h2.v), sized on the first HTTP/2 connection: decoded fields, the
 	// request as an HTTP/1.1 head and its body, the response the handler wrote, and
 	// its header block
@@ -156,6 +162,74 @@ pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
 	w.ws.worker = index
 	w.st.worker = index
 	return w
+}
+
+// A connection holds its buffers only while there is something in them. The event
+// loop lends a connection rbuf and wbuf from the worker's pools before it reads from
+// or writes to it, and takes back each one left empty once the event is handled. A
+// connection waiting on its client, a timer or a topic then costs its Conn alone, and
+// under keep-alive load the pools stay at a few buffers per worker. Requests are
+// parsed and answered within one event, so nothing points into a buffer across
+// events but what is still in it.
+
+// lend gives c a read and a write buffer, if it has none.
+pub fn (mut w Worker) lend(mut c Conn) {
+	if c.rbuf.cap == 0 {
+		c.rbuf = if w.rpool.len > 0 {
+			w.rpool.pop()
+		} else {
+			[]u8{cap: read_buf_size} // cold: past the most connections ever busy at once
+		}
+	}
+	if c.wbuf.cap == 0 {
+		c.wbuf = if w.wpool.len > 0 {
+			w.wpool.pop()
+		} else {
+			[]u8{cap: write_buf_size} // cold: as above
+		}
+	}
+	if !isnil(c.tls) {
+		mut t := c.tls
+		w.tls_lend(mut t)
+	}
+}
+
+// settle takes back c's buffers that are empty: rbuf with no request in part, wbuf
+// with all output out.
+pub fn (mut w Worker) settle(mut c Conn) {
+	if c.rbuf.len == 0 && c.rbuf.cap > 0 {
+		w.give_back(mut c, true)
+	}
+	if c.wbuf.len == 0 && c.wbuf.cap > 0 && !c.out_armed {
+		w.give_back(mut c, false)
+	}
+	if !isnil(c.tls) {
+		mut t := c.tls
+		w.tls_settle(mut t, false)
+	}
+}
+
+// give_back returns c's read (or write) buffer to the pool, emptied. One that a large
+// request or response grew past what is worth keeping goes to the GC instead.
+fn (mut w Worker) give_back(mut c Conn, read bool) {
+	if read {
+		if c.rbuf.cap <= shrink_rbuf_above {
+			unsafe {
+				c.rbuf.len = 0
+			}
+			w.rpool << c.rbuf // cold: grows to the most connections ever busy at once
+		}
+		c.rbuf = []u8{}
+	} else {
+		if c.wbuf.cap <= shrink_wbuf_above {
+			unsafe {
+				c.wbuf.len = 0
+			}
+			w.wpool << c.wbuf // cold: as above
+		}
+		c.wbuf = []u8{}
+		c.woff = 0
+	}
 }
 
 // is_http10 reports whether the request line at buf[off..] ends in HTTP/1.0; HTTP/1.0

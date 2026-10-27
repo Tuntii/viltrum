@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-10-25 · current release: **v1.13.0**
+Last updated: 2026-10-27 · current release: **v1.13.1**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** HTTP/1.1 engine: one `SO_REUSEPORT`
 epoll worker per CPU, pipelining, and no allocation per request inside the framework. Not a thin wrapper.
@@ -62,11 +62,13 @@ Success looks like:
 | Generic upgrade, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
 
 Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
-[benches/httparena](benches/httparena) and runs v1.7.0. In the 2026-10-25 results viltrum is first of 19 on
-HTTP/1.1 (composite 7914) and first of 14 on WebSocket in the Experimental category, with nine gold medals:
-both composites, async, latency at 1M req/s, json-comp, json-tls and the three echo-ws profiles; bronze on
-short-lived connections. The HTTP/2 profiles (baseline-h2, static-h2, baseline-h2c, json-h2c) are in
-[HttpArena#1641](https://github.com/MDA2AV/HttpArena/pull/1641), waiting for a benchmark run. The
+[benches/httparena](benches/httparena). In the 2026-10-26 results (v1.10.0) viltrum is first of 19 on HTTP/1.1
+(composite 7936), first of 14 on WebSocket and second of 10 on HTTP/2 in the Experimental category, with eleven
+gold medals: the HTTP/1.1 and WebSocket composites, async, short-lived connections, json-comp, json-tls,
+baseline-h2, baseline-h2c and the three echo-ws profiles. Silver on the HTTP/2 composite and json-h2c, bronze on
+baseline and latency at 1M req/s.
+[HttpArena#1660](https://github.com/MDA2AV/HttpArena/pull/1660) moves the entry to v1.13.1 (buffers lent per
+event, Phase 8) and waits for a benchmark run. The
 [the-benchmarker](https://github.com/the-benchmarker/web-frameworks) entry (v1.3.2) is merged and waits for
 their next run.
 
@@ -124,7 +126,8 @@ Decided on 2026-10-24: cleartext h2 first, then h2 over TLS via ALPN. Design:
       h2spec 144/146 ([docs/http2.md](docs/http2.md))
 - [x] `c.after` (deferred responses) over HTTP/2: a timer per stream, only that stream waits
 - [x] h2 over TLS, chosen by ALPN, on both handshake paths (mbedtls and our own); h2spec 145/146
-- [ ] HttpArena's HTTP/2 profiles: baseline-h2, static-h2, baseline-h2c, json-h2c
+- [x] HttpArena's HTTP/2 profiles: baseline-h2, static-h2, baseline-h2c, json-h2c (2026-10-26: gold on
+      baseline-h2 and baseline-h2c, second on the HTTP/2 composite)
 
 ## Phase 6 — Community
 
@@ -155,7 +158,7 @@ Decided on 2026-10-26, after HttpArena's memory-efficiency view put viltrum seco
       them empty; zero-allocation gate on the lend/settle cycle
 - [x] TLS: tls13's record buffers and the handshake's read-ahead lent the same way; mbedtls' context set up
       only for sessions mbedtls has
-- [ ] HTTP/2: the per-connection tables and stream slots (not scored yet)
+- [ ] HTTP/2: the per-connection tables and stream slots (static-h2 used 875 MiB at 1024 connections on v1.10.0)
 
 ## Feature backlog
 

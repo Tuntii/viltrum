@@ -10,6 +10,7 @@
 [![ci](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml/badge.svg)](https://github.com/Tuntii/viltrum/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/Tuntii/viltrum)](https://github.com/Tuntii/viltrum/releases)
 [![HTTP Arena H/1.1](https://img.shields.io/endpoint?url=https://http-arena.com/badge/viltrum/h1.json)](https://http-arena.com/frameworks/viltrum/)
+[![HTTP Arena H/2](https://img.shields.io/endpoint?url=https://http-arena.com/badge/viltrum/h2.json)](https://http-arena.com/frameworks/viltrum/)
 [![HTTP Arena WebSocket](https://img.shields.io/endpoint?url=https://http-arena.com/badge/viltrum/ws.json)](https://http-arena.com/frameworks/viltrum/)
 
 You write routes. Viltrum owns the wire: its own HTTP/1.1 engine, one epoll worker per CPU, pipelining, and no
@@ -83,29 +84,36 @@ Not on the 1.x core yet (they return later): the HTTP client, serving off Linux.
 
 ## Numbers
 
-### HttpArena: first on HTTP/1.1 and on WebSocket
+### HttpArena: first on HTTP/1.1 and on WebSocket, second on HTTP/2
 
 [HttpArena](https://http-arena.com) runs every entry on the same 64-thread machine with the same load generator.
-In the 2026-10-25 results (v1.7.0) Viltrum is **first of 19 on HTTP/1.1** (composite 7914, ahead of ktron at
-7628) and **first of 14 on WebSocket** in its category, with **nine gold medals** and one bronze:
+In the 2026-10-26 results (v1.10.0) Viltrum is **first of 19 on HTTP/1.1** (composite 7936, ahead of ktron at
+7557), **first of 14 on WebSocket** and **second of 10 on HTTP/2** in its category, with **eleven gold medals**,
+two silver and two bronze:
 
 | | Medal | Connections | Result | Place |
 |:-:|-------|------------:|-------:|------:|
-| 🥇 | HTTP/1.1 composite | | 7914 | 1 / 19 |
+| 🥇 | HTTP/1.1 composite | | 7936 | 1 / 19 |
 | 🥇 | WebSocket composite | | | 1 / 14 |
-| 🥇 | Async (`/delay`) | 32,000 | 2.84M req/s | 1 / 17 |
-| 🥇 | Latency at 1M req/s | 1,024 | p99 166 µs, 20.4 µs CPU per request | 1 / 17 |
-| 🥇 | JSON, gzip | 4,096 | 901K req/s | 1 / 18 |
-| 🥇 | JSON over TLS | 4,096 | 1.80M req/s | 1 / 18 |
-| 🥇 | WebSocket echo | 512 | 4.28M msg/s | 1 / 14 |
-| 🥇 | WebSocket echo, pipelined | 512 | 63.0M msg/s | 1 / 14 |
-| 🥇 | WebSocket echo, short-lived | 512 | 2.22M msg/s | 1 / 14 |
-| 🥉 | Short-lived connections | 4,096 | 2.69M req/s | 3 / 19 |
+| 🥇 | Async (`/delay`) | 32,000 | 2.83M req/s | 1 / 17 |
+| 🥇 | Short-lived connections | 4,096 | 2.74M req/s | 1 / 19 |
+| 🥇 | JSON, gzip | 4,096 | 959K req/s | 1 / 18 |
+| 🥇 | JSON over TLS | 4,096 | 1.82M req/s | 1 / 18 |
+| 🥇 | HTTP/2 baseline, over TLS | 256 | 14.6M req/s | 1 / 9 |
+| 🥇 | HTTP/2 baseline, cleartext (h2c) | 256 | 14.5M req/s | 1 / 10 |
+| 🥇 | WebSocket echo | 512 | 4.27M msg/s | 1 / 14 |
+| 🥇 | WebSocket echo, pipelined | 512 | 63.1M msg/s | 1 / 14 |
+| 🥇 | WebSocket echo, short-lived | 512 | 2.24M msg/s | 1 / 14 |
+| 🥈 | HTTP/2 composite | | | 2 / 10 |
+| 🥈 | JSON over h2c | 1,024 | 4.74M req/s | 2 / 10 |
+| 🥉 | Baseline | 4,096 | 4.08M req/s | 3 / 19 |
+| 🥉 | Latency at 1M req/s | 1,024 | p99 164 µs, 20.5 µs CPU per request | 3 / 17 |
 
 Every profile and every connection count are on
-[http-arena.com/frameworks/viltrum](https://http-arena.com/frameworks/viltrum/). The latency profiles
-are scored on CPU per request and latency at a fixed rate, and JSON, gzip on throughput and bytes per response
-together, so their places are not the req/s order.
+[http-arena.com/frameworks/viltrum](https://http-arena.com/frameworks/viltrum/). Places average every
+connection count a profile runs, not only the one shown. The latency profiles are scored on CPU per request and
+latency at a fixed rate, and JSON, gzip on throughput and bytes per response together, so their places are not
+the req/s order.
 
 The category is **Experimental**: HttpArena's label for young frameworks without much production use yet. Its
 default leaderboard shows flagship and emerging entries; tick Experimental to see Viltrum there.

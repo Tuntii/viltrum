@@ -11,7 +11,7 @@ fn C.mbedtls_ssl_set_user_data_p(ssl &C.mbedtls_ssl_context, p voidptr)
 fn C.mbedtls_ssl_get_user_data_p(ssl &C.mbedtls_ssl_context) voidptr
 fn C.viltrum_tls_conf(conf &C.mbedtls_ssl_config, cert_cb fn (&C.mbedtls_ssl_context) int, drbg &C.mbedtls_ctr_drbg_context, h2 int) i32
 fn C.viltrum_tls_fresh(ssl &C.mbedtls_ssl_context) int
-fn C.viltrum_tls_bio_init(b &C.viltrum_bio, fd &int, buf &u8, cap usize)
+fn C.viltrum_tls_bio_init(b &C.viltrum_bio, fd voidptr, fd_size int, buf &u8, cap u64)
 fn C.viltrum_tls_bind_bio(ssl &C.mbedtls_ssl_context, b &C.viltrum_bio)
 fn C.viltrum_tls_check_pair(crt &C.mbedtls_x509_crt, key &C.mbedtls_pk_context, drbg &C.mbedtls_ctr_drbg_context) i32
 fn C.viltrum_tls_load_key(key &C.mbedtls_pk_context, path &char, drbg &C.mbedtls_ctr_drbg_context) i32
@@ -21,8 +21,8 @@ fn C.viltrum_tls_file_id(path &char, out &C.viltrum_file_id) i32
 @[typedef]
 struct C.viltrum_bio {
 mut:
-	off     usize
-	len     usize
+	off     u64
+	len     u64
 	drained int
 }
 
@@ -255,7 +255,9 @@ fn (mut c Conn) tls_start(srv &TlsServer, mut w Worker) bool {
 	if t.inbuf.cap == 0 {
 		t.inbuf = w.tls_inbuf()
 	}
-	C.viltrum_tls_bio_init(&t.bio, &c.fd, t.inbuf.data, usize(t.inbuf.len))
+	// voidptr, not &int: V master hands C a temporary copy for an &int argument
+	C.viltrum_tls_bio_init(&t.bio, voidptr(&c.fd), int(sizeof(c.fd)), t.inbuf.data,
+		u64(t.inbuf.len))
 	t.fd = &c.fd
 	t.fast = false
 	t.h2 = false
@@ -359,7 +361,7 @@ fn (mut t TlsConn) read(buf &u8, n int) int {
 	if t.fast {
 		return t.read13(*t.fd, buf, n)
 	}
-	ret := int(C.mbedtls_ssl_read(&t.ssl, buf, usize(n)))
+	ret := int(C.mbedtls_ssl_read(&t.ssl, buf, u64(n)))
 	if ret > 0 {
 		return ret
 	}
@@ -386,7 +388,7 @@ fn (mut t TlsConn) write(buf &u8, n int) int {
 	} else {
 		n
 	}
-	ret := int(C.mbedtls_ssl_write(&t.ssl, buf, usize(len)))
+	ret := int(C.mbedtls_ssl_write(&t.ssl, buf, u64(len)))
 	if ret > 0 {
 		t.wlen = 0
 		return ret

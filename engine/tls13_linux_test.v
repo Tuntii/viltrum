@@ -95,7 +95,7 @@ fn seal_raw(mut a Tls13, outer u8, inner []u8) {
 	mut iv := [12]u8{}
 	nonce(&a.tx_iv[0], a.tx_seq, mut iv)
 	p := unsafe { &u8(a.out.data) }
-	C.viltrum_gcm_seal(a.tx, &iv[0], p, 5, unsafe { p + 5 }, unsafe { p + 5 }, usize(inner.len), unsafe {
+	C.viltrum_gcm_seal(a.tx, &iv[0], p, 5, unsafe { p + 5 }, unsafe { p + 5 }, u64(inner.len), unsafe {
 		p + 5 + inner.len
 	})
 	a.tx_seq++

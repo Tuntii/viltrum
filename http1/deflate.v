@@ -776,7 +776,7 @@ fn canonical(lens &u8, n int, codes &u16) bool {
 #include "@VMODROOT/http1/crc32_clmul.h"
 
 fn C.viltrum_have_clmul() int
-fn C.viltrum_crc32_clmul(crc u32, p &u8, n usize) u32
+fn C.viltrum_crc32_clmul(crc u32, p &u8, n u64) u32
 
 // have_clmul is whether this CPU (and compiler) can run crc32_clmul.h.
 const have_clmul = C.viltrum_have_clmul() != 0
@@ -790,10 +790,11 @@ fn crc32(p &u8, n int) u32 {
 	mut i := 0
 	if have_clmul && n >= 64 {
 		i = n & ~15
-		c = C.viltrum_crc32_clmul(c, p, usize(i))
+		c = C.viltrum_crc32_clmul(c, p, u64(i))
 	}
 	for i + 8 <= n {
-		lo := unsafe { u32(p[i]) | u32(p[i + 1]) << 8 | u32(p[i + 2]) << 16 | u32(p[i + 3]) << 24 } ^ c
+		// the xor inside the block: V master drops the parentheses around `unsafe { a | b } ^ c`
+		lo := unsafe { (u32(p[i]) | u32(p[i + 1]) << 8 | u32(p[i + 2]) << 16 | u32(p[i + 3]) << 24) ^ c }
 		hi := unsafe { u32(p[i + 4]) | u32(p[i + 5]) << 8 | u32(p[i + 6]) << 16 | u32(p[i + 7]) << 24 }
 		c = crc_table[7 * 256 + (lo & 0xff)] ^ crc_table[6 * 256 + ((lo >> 8) & 0xff)] ^ crc_table[
 			5 * 256 + ((lo >> 16) & 0xff)] ^ crc_table[4 * 256 + (lo >> 24)] ^ crc_table[3 * 256 +

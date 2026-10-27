@@ -240,18 +240,18 @@ fn (mut r PlainReader) response(mut c net.TcpConn) !(int, string) {
 }
 
 fn have_openssl() bool {
-	return os.execute('openssl version').exit_code == 0
+	return sh('openssl version').exit_code == 0
 }
 
 // served_fingerprint is the SHA-256 fingerprint of the certificate addr presents.
 fn served_fingerprint(addr string) string {
 	r :=
-		os.execute('echo | openssl s_client -connect ${addr} 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null')
+		sh('echo | openssl s_client -connect ${addr} 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null')
 	return r.output.trim_space()
 }
 
 fn file_fingerprint(path string) string {
-	return os.execute('openssl x509 -in ${path} -noout -fingerprint -sha256').output.trim_space()
+	return sh('openssl x509 -in ${path} -noout -fingerprint -sha256').output.trim_space()
 }
 
 fn test_tls_request_and_alpn() {
@@ -439,20 +439,20 @@ fn test_tls_versions_and_close_notify() {
 		stop.request()
 	}
 	a := addrs[0]
-	v13 := os.execute('echo | openssl s_client -connect ${a} -tls1_3 2>&1')
+	v13 := sh('echo | openssl s_client -connect ${a} -tls1_3 2>&1')
 	assert v13.output.contains('TLSv1.3'), v13.output
-	v12 := os.execute('echo | openssl s_client -connect ${a} -tls1_2 2>&1')
+	v12 := sh('echo | openssl s_client -connect ${a} -tls1_2 2>&1')
 	assert v12.output.contains('TLSv1.2'), v12.output
 	assert v12.output.contains('GCM') || v12.output.contains('CHACHA20'), v12.output
-	v11 := os.execute('echo | openssl s_client -connect ${a} -tls1_1 2>&1')
+	v11 := sh('echo | openssl s_client -connect ${a} -tls1_1 2>&1')
 	assert !v11.output.contains('Protocol  : TLSv1.1'), v11.output
-	alpn := os.execute('echo | openssl s_client -connect ${a} -alpn h2,http/1.1 2>&1')
+	alpn := sh('echo | openssl s_client -connect ${a} -alpn h2,http/1.1 2>&1')
 	assert alpn.output.contains('ALPN protocol: http/1.1'), alpn.output
-	no_sni := os.execute('echo | openssl s_client -connect ${a} -noservername 2>&1')
+	no_sni := sh('echo | openssl s_client -connect ${a} -noservername 2>&1')
 	assert no_sni.output.contains('TLSv1.3'), no_sni.output
 	// close_notify before EOF: openssl reports "unexpected eof" without it
 	closing :=
-		os.execute('printf "GET /p/bye HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n" | openssl s_client -connect ${a} -quiet -ign_eof 2>&1')
+		sh('printf "GET /p/bye HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n" | openssl s_client -connect ${a} -quiet -ign_eof 2>&1')
 	assert closing.output.contains('/p/bye'), closing.output
 	assert !closing.output.contains('unexpected eof'), closing.output
 }
@@ -461,7 +461,7 @@ fn test_tls_versions_and_close_notify() {
 // handshake paths (TLS 1.3 is hs13's in gcc builds, TLS 1.2 is always mbedtls'), and
 // the connection then speaks HTTP/2; a client offering only http/1.1 keeps it.
 fn test_alpn_h2() {
-	if !have_openssl() || os.execute('curl --version').exit_code != 0 {
+	if !have_openssl() || sh('curl --version').exit_code != 0 {
 		eprintln('skip: openssl or curl not found')
 		return
 	}
@@ -477,15 +477,15 @@ fn test_alpn_h2() {
 		stop.request()
 	}
 	for v in ['-tls1_3', '-tls1_2'] {
-		h2 := os.execute('echo | openssl s_client -connect ${a} ${v} -alpn h2,http/1.1 2>&1')
+		h2 := sh('echo | openssl s_client -connect ${a} ${v} -alpn h2,http/1.1 2>&1')
 		assert h2.output.contains('ALPN protocol: h2'), h2.output
-		h11 := os.execute('echo | openssl s_client -connect ${a} ${v} -alpn http/1.1 2>&1')
+		h11 := sh('echo | openssl s_client -connect ${a} ${v} -alpn http/1.1 2>&1')
 		assert h11.output.contains('ALPN protocol: http/1.1'), h11.output
 	}
 	for v in ['--tlsv1.3', '--tlsv1.2 --tls-max 1.2'] {
-		r := os.execute('curl -sk ${v} --http2 -w " %{http_version}" https://${a}/p/over-h2')
+		r := sh('curl -sk ${v} --http2 -w " %{http_version}" https://${a}/p/over-h2')
 		assert r.output == '/p/over-h2 2', r.output
-		r11 := os.execute('curl -sk ${v} --http1.1 -w " %{http_version}" https://${a}/p/over-h1')
+		r11 := sh('curl -sk ${v} --http1.1 -w " %{http_version}" https://${a}/p/over-h1')
 		assert r11.output == '/p/over-h1 1.1', r11.output
 	}
 	body := os.join_path(os.temp_dir(), 'viltrum-h2-body-${os.getpid()}')
@@ -494,11 +494,11 @@ fn test_alpn_h2() {
 		os.rm(body) or {}
 	}
 	post :=
-		os.execute('curl -sk --http2 --data-binary @${body} -o /dev/null -w "%{size_download} %{http_version}" https://${a}/echo')
+		sh('curl -sk --http2 --data-binary @${body} -o /dev/null -w "%{size_download} %{http_version}" https://${a}/echo')
 	assert post.output == '200000 2', post.output
 	// a stream over h2: the generated body whole and in order, then a request on the
 	// same connection
-	gen := os.execute('curl -sk --http2 https://${a}/gen | md5sum')
+	gen := sh('curl -sk --http2 https://${a}/gen | md5sum')
 	mut want := []u8{}
 	for _ in 0 .. 80 {
 		want << gen_piece
@@ -508,23 +508,23 @@ fn test_alpn_h2() {
 	defer {
 		os.rm(path) or {}
 	}
-	assert gen.output == os.execute('md5sum < ${path}').output
+	assert gen.output == sh('md5sum < ${path}').output
 	two :=
-		os.execute('curl -sk --http2 -o /dev/null -o /dev/null -w "%{num_connects}/%{http_version} " https://${a}/gen https://${a}/p/x')
+		sh('curl -sk --http2 -o /dev/null -o /dev/null -w "%{num_connects}/%{http_version} " https://${a}/gen https://${a}/p/x')
 	assert two.output == '1/2 0/2 ', two.output
 	// a TLS listener without http2 keeps ALPN to http/1.1
 	addrs, mut stop2 := start_tls([tls_opts(tls_testdata, 'a')], Options{})
 	defer {
 		stop2.request()
 	}
-	plain := os.execute('curl -sk --http2 -w " %{http_version}" https://${addrs[0]}/p/x')
+	plain := sh('curl -sk --http2 -w " %{http_version}" https://${addrs[0]}/p/x')
 	assert plain.output == '/p/x 1.1', plain.output
 }
 
 // A streamed body over TLS: generated as the socket takes it, whole and in order,
 // then the connection goes on to its next request.
 fn test_stream_over_tls() {
-	if os.execute('curl --version').exit_code != 0 {
+	if sh('curl --version').exit_code != 0 {
 		eprintln('skip: curl not found')
 		return
 	}
@@ -533,7 +533,7 @@ fn test_stream_over_tls() {
 		stop.request()
 	}
 	a := addrs[0]
-	sum := os.execute('curl -sk https://${a}/gen https://${a}/gen | md5sum')
+	sum := sh('curl -sk https://${a}/gen https://${a}/gen | md5sum')
 	mut want := []u8{}
 	for _ in 0 .. 160 {
 		want << gen_piece
@@ -543,9 +543,9 @@ fn test_stream_over_tls() {
 	defer {
 		os.rm(path) or {}
 	}
-	assert sum.output == os.execute('md5sum < ${path}').output
+	assert sum.output == sh('md5sum < ${path}').output
 	n :=
-		os.execute('curl -sk -o /dev/null -o /dev/null -w "%{num_connects}" https://${a}/gen https://${a}/p/x')
+		sh('curl -sk -o /dev/null -o /dev/null -w "%{num_connects}" https://${a}/gen https://${a}/p/x')
 	assert n.output == '10', n.output // one connection for both
 }
 
@@ -644,7 +644,7 @@ fn test_websocket_over_tls() {
 // openssl_session pipes script into `openssl s_client` against addr and returns what
 // it printed. The script is shell: printf requests, sleep, and s_client's K / k lines.
 fn openssl_session(addr string, args string, script string) string {
-	r := os.execute('(${script}) | timeout 10 openssl s_client -connect ${addr} ${args} 2>&1')
+	r := sh('(${script}) | timeout 10 openssl s_client -connect ${addr} ${args} 2>&1')
 	return r.output.replace('\r', '')
 }
 
@@ -703,4 +703,9 @@ fn test_tls_file_is_streamed_in_order() {
 	st3, b3 := r.response(mut s) or { panic(err) }
 	assert st3 == 200 && b3 == '/p/3'
 	s.close() or {}
+}
+
+// sh runs cmd through /bin/sh like os.execute, which V master deprecates.
+fn sh(cmd string) os.Result {
+	return os.exec(['/bin/sh', '-c', cmd])
 }

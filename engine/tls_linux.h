@@ -5,6 +5,7 @@
 #define VILTRUM_TLS_LINUX_H
 
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -85,9 +86,11 @@ static int viltrum_tls_conf(mbedtls_ssl_config *conf, int (*cert_cb)(mbedtls_ssl
 // 5-byte header and then the body, two recv calls; reading ahead into buf turns that
 // into one per batch of records. drained means the last recv came back short, so the
 // socket is empty until epoll says otherwise (level-triggered, so it will): no
-// EAGAIN syscall to find that out.
+// EAGAIN syscall to find that out. fd points at the Conn's V int, fd_size bytes wide
+// (4 on V 0.5.2, 8 on V master's 64-bit int).
 typedef struct {
-	int *fd;
+	const void *fd;
+	int fd_size;
 	unsigned char *buf;
 	size_t cap;
 	size_t off;
@@ -95,9 +98,13 @@ typedef struct {
 	int drained;
 } viltrum_bio;
 
+static int viltrum_bio_fd(const viltrum_bio *b) {
+	return b->fd_size == 8 ? (int)*(const int64_t *)b->fd : *(const int *)b->fd;
+}
+
 // BIO callbacks. MSG_NOSIGNAL: a peer that has gone must not raise SIGPIPE.
 static int viltrum_tls_send(void *ctx, const unsigned char *buf, size_t len) {
-	ssize_t n = send(*((viltrum_bio *)ctx)->fd, buf, len, MSG_NOSIGNAL);
+	ssize_t n = send(viltrum_bio_fd((viltrum_bio *)ctx), buf, len, MSG_NOSIGNAL);
 	if (n < 0) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
 			return MBEDTLS_ERR_SSL_WANT_WRITE;
@@ -113,7 +120,7 @@ static int viltrum_tls_recv(void *ctx, unsigned char *buf, size_t len) {
 		if (b->drained) {
 			return MBEDTLS_ERR_SSL_WANT_READ;
 		}
-		ssize_t n = recv(*b->fd, b->buf, b->cap, 0);
+		ssize_t n = recv(viltrum_bio_fd(b), b->buf, b->cap, 0);
 		if (n < 0) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
 				b->drained = 1;
@@ -138,8 +145,10 @@ static int viltrum_tls_recv(void *ctx, unsigned char *buf, size_t len) {
 }
 
 // net.mbedtls declares session_reset without its result; this keeps it.
-static void viltrum_tls_bio_init(viltrum_bio *b, int *fd, unsigned char *buf, size_t cap) {
+static void viltrum_tls_bio_init(viltrum_bio *b, const void *fd, int fd_size, unsigned char *buf,
+		size_t cap) {
 	b->fd = fd;
+	b->fd_size = fd_size;
 	b->buf = buf;
 	b->cap = cap;
 	b->off = 0;

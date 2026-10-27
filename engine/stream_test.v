@@ -186,7 +186,7 @@ fn test_send_and_publish_reach_the_stream() {
 	w.deliver(http1.stream_post('news', http1.StreamId{}, http1.StreamId{}, c'two', 3), mut conns, mut
 		touched)
 	w.deliver(http1.sse_post('news', http1.StreamId{}, http1.StreamId{}, '', 'e', 'three') or {
-		panic(err)
+		panic('sse_post')
 	}, mut conns, mut touched)
 	stale := http1.StreamId{
 		...me

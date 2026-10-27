@@ -8,15 +8,15 @@ import rand
 
 fn C.viltrum_x25519(out &u8, scalar &u8, point &u8)
 fn C.viltrum_x25519_base(out &u8, scalar &u8)
-fn C.viltrum_hs13_server_hello(out &u8, h &C.viltrum_hs13_hello, random &u8, pub &u8) usize
+fn C.viltrum_hs13_server_hello(out &u8, h &C.viltrum_hs13_hello, random &u8, pub &u8) u64
 fn C.viltrum_hs13_schedule(dh &u8, th &u8, c_hs &u8, s_hs &u8, master &u8) int
 fn C.viltrum_hs13_traffic(secret &u8, key &u8, iv &u8) int
 fn C.viltrum_hs13_finished_mac(secret &u8, th &u8, out &u8) int
 fn C.viltrum_hs13_app(master &u8, th &u8, c_ap &u8, s_ap &u8) int
-fn C.viltrum_hs13_flight_with(rnd &u8, ch &u8, ch_len usize, h &C.viltrum_hs13_hello, cert &u8, cert_len usize, key &C.viltrum_rsa, tx &C.viltrum_gcm, out &u8, cap usize, out_len &usize, keys &C.viltrum_hs13_keys) int
+fn C.viltrum_hs13_flight_with(rnd &u8, ch &u8, ch_len u64, h &C.viltrum_hs13_hello, cert &u8, cert_len u64, key &C.viltrum_rsa, tx &C.viltrum_gcm, out &u8, cap u64, out_len &u64, keys &C.viltrum_hs13_keys) int
 fn C.viltrum_rsa_pss_sha256(key &C.viltrum_rsa, mhash &u8, salt &u8, sig &u8) int
 fn C.viltrum_test_pss_verify(pk &C.mbedtls_pk_context, hash &u8, sig &u8) int
-fn C.viltrum_test_sha256(input &u8, n usize, out &u8) int
+fn C.viltrum_test_sha256(input &u8, n u64, out &u8) int
 
 const hs13_testdata = os.join_path(os.dir(@FILE), 'testdata', 'tls')
 
@@ -30,7 +30,7 @@ fn sha(parts ...string) []u8 {
 		all << unhex(p)
 	}
 	mut out := []u8{len: 32}
-	C.viltrum_test_sha256(all.data, usize(all.len), out.data)
+	C.viltrum_test_sha256(all.data, u64(all.len), out.data)
 	return out
 }
 
@@ -125,7 +125,7 @@ fn test_hs13_rfc8448_trace() {
 	}
 	ch := unhex(r8448_client_hello)
 	mut h := C.viltrum_hs13_hello{}
-	assert C.viltrum_hs13_parse(ch.data, usize(ch.len), &h) == 1
+	assert C.viltrum_hs13_parse(ch.data, u64(ch.len), &h) == 1
 	assert unsafe { h.share[..] }.hex() == r8448_client_pub
 	assert h.session_id_len == 0 && h.alpn == 0
 	// the ServerHello, byte for byte, from the trace's random and key
@@ -174,7 +174,7 @@ fn test_hs13_flight_on_rfc8448() {
 	mut p := load_test_pair('a')
 	ch := unhex(r8448_client_hello)
 	mut h := C.viltrum_hs13_hello{}
-	assert C.viltrum_hs13_parse(ch.data, usize(ch.len), &h) == 1
+	assert C.viltrum_hs13_parse(ch.data, u64(ch.len), &h) == 1
 	mut rnd := []u8{len: 96}
 	for i in 0 .. 32 {
 		rnd[i] = unhex(r8448_server_hello)[6 + i]
@@ -182,10 +182,10 @@ fn test_hs13_flight_on_rfc8448() {
 	}
 	mut tx := C.viltrum_gcm_new()
 	mut out := []u8{len: 8192}
-	mut out_len := usize(0)
+	mut out_len := u64(0)
 	mut keys := C.viltrum_hs13_keys{}
-	assert C.viltrum_hs13_flight_with(rnd.data, ch.data, usize(ch.len), &h, p.cert_msg.data,
-		usize(p.cert_msg.len), &p.rsa, tx, out.data, usize(out.len), &out_len, &keys) == 0
+	assert C.viltrum_hs13_flight_with(rnd.data, ch.data, u64(ch.len), &h, p.cert_msg.data,
+		u64(p.cert_msg.len), &p.rsa, tx, out.data, u64(out.len), &out_len, &keys) == 0
 	assert out[..5].hex() == '160303005a'
 	assert out[5..5 + 90].hex() == r8448_server_hello
 	// no session ID in the hello, so no change_cipher_spec: the next record is protected
@@ -296,7 +296,7 @@ fn hello(o HelloOpts) []u8 {
 
 fn parse(m []u8) int {
 	mut h := C.viltrum_hs13_hello{}
-	return C.viltrum_hs13_parse(m.data, usize(m.len), &h)
+	return C.viltrum_hs13_parse(m.data, u64(m.len), &h)
 }
 
 // alpn_chosen is what ALPN chooses for m on a listener that speaks h2 or not, or -1
@@ -304,7 +304,7 @@ fn parse(m []u8) int {
 fn alpn_chosen(m []u8, h2 bool) int {
 	mut h := C.viltrum_hs13_hello{}
 	h.h2 = if h2 { 1 } else { 0 }
-	if C.viltrum_hs13_parse(m.data, usize(m.len), &h) != 1 {
+	if C.viltrum_hs13_parse(m.data, u64(m.len), &h) != 1 {
 		return -1
 	}
 	return h.alpn
@@ -401,7 +401,7 @@ fn test_hs13_parse_fuzz() {
 			}
 		}
 		mut h := C.viltrum_hs13_hello{}
-		r := C.viltrum_hs13_parse(b.data, usize(b.len), &h)
+		r := C.viltrum_hs13_parse(b.data, u64(b.len), &h)
 		assert r >= -1 && r <= 1
 		if r == 1 {
 			served++

@@ -64,6 +64,12 @@ pub fn (mut c Ctx) form_int(name string) ?i64 {
 // form_file returns the first file part called name of a multipart/form-data body.
 pub fn (c &Ctx) form_file(name string) ?FormPart {
 	mut it := c.form_parts()
+	return next_file(mut it, name)
+}
+
+// next_file is form_file's walk. Inline, or as a method, a part returned from the walk
+// makes V master move the iterator to the heap.
+fn next_file(mut it FormParts, name string) ?FormPart {
 	for {
 		p := it.next() or { break }
 		if p.file && p.name == name {
@@ -210,7 +216,7 @@ fn delim_at(b []u8, i int, bnd string) bool {
 fn find_delim(b []u8, from int, bnd string) int {
 	mut i := from
 	for i + 4 + bnd.len <= b.len {
-		p := unsafe { C.memchr(&u8(b.data) + i, `\r`, usize(b.len - i)) }
+		p := unsafe { C.memchr(&u8(b.data) + i, `\r`, u64(b.len - i)) }
 		if isnil(p) {
 			return -1
 		}

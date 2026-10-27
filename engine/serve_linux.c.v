@@ -8,7 +8,7 @@ import viltrum.router
 
 #include <sched.h>
 
-fn C.sched_getaffinity(pid int, size usize, mask voidptr) int
+fn C.sched_getaffinity(pid int, size u64, mask voidptr) int
 
 const listen_backlog = 4096
 
@@ -177,8 +177,8 @@ fn bound_addr(addr string, fd int) string {
 fn listen_reuseport(addr string) !int {
 	mut s := net.new_tcp_socket(.ip)!
 	fd := s.handle
-	one := 1
-	if C.setsockopt(fd, C.SOL_SOCKET, C.SO_REUSEPORT, &one, sizeof(int)) != 0 {
+	one := i32(1) // C's int: V's int is 64-bit on V master
+	if C.setsockopt(fd, C.SOL_SOCKET, C.SO_REUSEPORT, &one, sizeof(i32)) != 0 {
 		C.close(fd)
 		return error('SO_REUSEPORT setsockopt failed')
 	}

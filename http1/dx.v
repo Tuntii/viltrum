@@ -33,7 +33,7 @@ pub fn (c &Ctx) method_name() string {
 }
 
 // body_text is the request body as a string view, for decoders that take a string
-// (json.decode(T, c.body_text())). Valid until the handler returns.
+// (json2.decode[T](c.body_text())). Valid until the handler returns.
 pub fn (c &Ctx) body_text() string {
 	return str_view(c.body_bytes, 0, c.body_bytes.len)
 }

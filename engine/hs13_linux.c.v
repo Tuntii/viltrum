@@ -13,7 +13,7 @@ module engine
 @[typedef]
 struct C.viltrum_hs13_hello {
 	share          [32]u8
-	session_id_len usize
+	session_id_len u64
 	alpn           int
 	h2             int
 }
@@ -34,11 +34,11 @@ struct C.viltrum_rsa {
 }
 
 fn C.viltrum_hs13_supported() int
-fn C.viltrum_hs13_parse(msg &u8, len usize, h &C.viltrum_hs13_hello) int
-fn C.viltrum_hs13_flight(ch &u8, ch_len usize, h &C.viltrum_hs13_hello, cert &u8, cert_len usize, key &C.viltrum_rsa, drbg &C.mbedtls_ctr_drbg_context, tx &C.viltrum_gcm, out &u8, cap usize, out_len &usize, keys &C.viltrum_hs13_keys) int
-fn C.viltrum_hs13_finished_ok(msg &u8, len usize, keys &C.viltrum_hs13_keys) int
-fn C.viltrum_hs13_cert_msg(crt &C.mbedtls_x509_crt, out &u8, cap usize) usize
-fn C.viltrum_hs13_wipe(p voidptr, n usize)
+fn C.viltrum_hs13_parse(msg &u8, len u64, h &C.viltrum_hs13_hello) int
+fn C.viltrum_hs13_flight(ch &u8, ch_len u64, h &C.viltrum_hs13_hello, cert &u8, cert_len u64, key &C.viltrum_rsa, drbg &C.mbedtls_ctr_drbg_context, tx &C.viltrum_gcm, out &u8, cap u64, out_len &u64, keys &C.viltrum_hs13_keys) int
+fn C.viltrum_hs13_finished_ok(msg &u8, len u64, keys &C.viltrum_hs13_keys) int
+fn C.viltrum_hs13_cert_msg(crt &C.mbedtls_x509_crt, out &u8, cap u64) u64
+fn C.viltrum_hs13_wipe(p voidptr, n u64)
 fn C.viltrum_rsa_load(key &C.viltrum_rsa, pk &C.mbedtls_pk_context, drbg &C.mbedtls_ctr_drbg_context) int
 
 // hs13_supported is whether this build and CPU can run hs13 (AES-NI and PCLMUL for
@@ -122,7 +122,7 @@ fn (mut t TlsConn) hs13_hello() int {
 				return t.hs13_answer(rec_len)
 			}
 		}
-		if b.len == usize(t.inbuf.len) {
+		if b.len == u64(t.inbuf.len) {
 			return hs13_defer // a hello larger than the read-ahead: mbedtls reassembles it
 		}
 		if b.drained != 0 {
@@ -140,7 +140,7 @@ fn (mut t TlsConn) hs13_hello() int {
 			}
 			return hs_failed
 		}
-		b.len += usize(m)
+		b.len += u64(m)
 		if m < room {
 			b.drained = 1
 		}
@@ -162,7 +162,7 @@ fn (mut t TlsConn) hs13_answer(rec_len int) int {
 	if msg_len != rec_len {
 		return hs13_defer
 	}
-	ok := C.viltrum_hs13_parse(msg, usize(msg_len), &t.hello)
+	ok := C.viltrum_hs13_parse(msg, u64(msg_len), &t.hello)
 	if ok < 0 {
 		t.hs13_alert(alert_illegal_parameter)
 		return hs_failed
@@ -176,9 +176,9 @@ fn (mut t TlsConn) hs13_answer(rec_len int) int {
 	if t.hs_out.cap < need {
 		t.hs_out = []u8{cap: need} // cold: grows to the largest certificate chain
 	}
-	mut out_len := usize(0)
-	if C.viltrum_hs13_flight(msg, usize(msg_len), &t.hello, p.cert_msg.data, usize(p.cert_msg.len),
-		&p.rsa, &t.srv.drbg, t.r13.tx, t.hs_out.data, usize(t.hs_out.cap), &out_len, &t.keys) != 0 {
+	mut out_len := u64(0)
+	if C.viltrum_hs13_flight(msg, u64(msg_len), &t.hello, p.cert_msg.data, u64(p.cert_msg.len),
+		&p.rsa, &t.srv.drbg, t.r13.tx, t.hs_out.data, u64(t.hs_out.cap), &out_len, &t.keys) != 0 {
 		t.hs13_alert(alert_internal_error)
 		return hs_failed
 	}
@@ -282,7 +282,7 @@ fn (mut t TlsConn) hs13_open_finished(p &u8, length int) int {
 	nonce(&t.keys.c_iv[0], 0, mut iv)
 	body := unsafe { p + 5 }
 	clen := length - 16
-	if C.viltrum_gcm_open(r.rx, &iv[0], p, 5, body, body, usize(clen), unsafe { body + clen }) != 0 {
+	if C.viltrum_gcm_open(r.rx, &iv[0], p, 5, body, body, u64(clen), unsafe { body + clen }) != 0 {
 		t.hs13_sealed_alert(alert_bad_record_mac)
 		return hs_failed
 	}
@@ -292,7 +292,7 @@ fn (mut t TlsConn) hs13_open_finished(p &u8, length int) int {
 	}
 	// one handshake message, the Finished, and nothing else in the record
 	if e == 0 || unsafe { body[e - 1] } != ct_handshake
-		|| C.viltrum_hs13_finished_ok(body, usize(e - 1), &t.keys) == 0 {
+		|| C.viltrum_hs13_finished_ok(body, u64(e - 1), &t.keys) == 0 {
 		// a Finished split over two records lands here too: no client known does that
 		t.hs13_sealed_alert(alert_decrypt_error)
 		return hs_failed

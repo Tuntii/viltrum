@@ -16,14 +16,14 @@ struct C.viltrum_tls_secrets {
 mut:
 	client [48]u8
 	server [48]u8
-	len    usize
+	len    u64
 	have   int
 }
 
 fn C.viltrum_tls_set_export(ssl &C.mbedtls_ssl_context, s &C.viltrum_tls_secrets)
 fn C.viltrum_tls_is13(ssl &C.mbedtls_ssl_context) int
-fn C.viltrum_tls13_expand(sha384 int, secret &u8, secret_len usize, label &char, out &u8, out_len usize) int
-fn C.viltrum_tls_wipe(p voidptr, n usize)
+fn C.viltrum_tls13_expand(sha384 int, secret &u8, secret_len u64, label &char, out &u8, out_len u64) int
+fn C.viltrum_tls_wipe(p voidptr, n u64)
 fn C.mbedtls_ssl_get_ciphersuite_id_from_ssl(ssl &C.mbedtls_ssl_context) int
 
 const tls13_aes128 = 0x1301 // TLS_AES_128_GCM_SHA256
@@ -138,7 +138,7 @@ fn (mut w Worker) tls_lend(mut t TlsConn) {
 
 // tls_settle takes back t's record buffers that are empty: everything read ahead
 // opened and handed out, no record half sent. With all set the connection is
-// closing, and they go back whatever they hold.
+// closing, and they go back whatever they hold. The pushes are unsafe as in give_back.
 fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
 	mut r := &t.r13
 	if r.inb.cap > 0 && (all || (r.in_off == r.inb.len && r.pt_off >= r.pt_end)) {
@@ -148,7 +148,7 @@ fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
 		r.in_off = 0
 		r.pt_off = 0
 		r.pt_end = 0
-		w.tin_pool << r.inb // cold: grows to the most TLS connections ever busy at once
+		w.tin_pool << unsafe { r.inb } // cold: grows to the most TLS connections ever busy at once
 		r.inb = []u8{}
 	}
 	if r.out.cap > 0 && (all || r.out.len == 0) {
@@ -157,7 +157,7 @@ fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
 		}
 		r.out_off = 0
 		r.out_pt = 0
-		w.tout_pool << r.out // cold: as above
+		w.tout_pool << unsafe { r.out } // cold: as above
 		r.out = []u8{}
 	}
 	// the handshake's read-ahead, once a session no longer needs it: tls13 reads its
@@ -166,7 +166,7 @@ fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
 		unsafe {
 			t.inbuf.len = 0
 		}
-		w.wpool << t.inbuf // cold: as above
+		w.wpool << unsafe { t.inbuf } // cold: as above
 		t.inbuf = []u8{}
 	}
 }
@@ -204,15 +204,15 @@ fn (mut r Tls13) start() {
 
 // derive sets the key and IV of one direction from its traffic secret.
 fn (mut r Tls13) derive(rx bool) bool {
-	mut key := [32]u8{}
+	mut tkey := [32]u8{} // not `key`: ws_test.v has a const of that name
 	klen := if r.sha384 { 32 } else { 16 }
 	sec := if rx { &r.rx_sec[0] } else { &r.tx_sec[0] }
 	iv := if rx { &r.rx_iv[0] } else { &r.tx_iv[0] }
-	mut ok := C.viltrum_tls13_expand(int(r.sha384), sec, usize(r.sec_len), c'key', &key[0],
-		usize(klen)) == 0
-	ok = ok && C.viltrum_tls13_expand(int(r.sha384), sec, usize(r.sec_len), c'iv', iv, 12) == 0
-	ok = ok && C.viltrum_gcm_init(if rx { r.rx } else { r.tx }, &key[0], klen) == 0
-	C.viltrum_tls_wipe(&key[0], 32)
+	mut ok := C.viltrum_tls13_expand(int(r.sha384), sec, u64(r.sec_len), c'key', &tkey[0],
+		u64(klen)) == 0
+	ok = ok && C.viltrum_tls13_expand(int(r.sha384), sec, u64(r.sec_len), c'iv', iv, 12) == 0
+	ok = ok && C.viltrum_gcm_init(if rx { r.rx } else { r.tx }, &tkey[0], klen) == 0
+	C.viltrum_tls_wipe(&tkey[0], 32)
 	return ok
 }
 
@@ -220,8 +220,8 @@ fn (mut r Tls13) derive(rx bool) bool {
 fn (mut r Tls13) update(rx bool) bool {
 	mut next := [48]u8{}
 	sec := if rx { &r.rx_sec[0] } else { &r.tx_sec[0] }
-	if C.viltrum_tls13_expand(int(r.sha384), sec, usize(r.sec_len), c'traffic upd', &next[0],
-		usize(r.sec_len)) != 0 {
+	if C.viltrum_tls13_expand(int(r.sha384), sec, u64(r.sec_len), c'traffic upd', &next[0],
+		u64(r.sec_len)) != 0 {
 		return false
 	}
 	unsafe { vmemcpy(sec, &next[0], r.sec_len) }
@@ -327,7 +327,7 @@ fn (mut r Tls13) open_next() int {
 	nonce(&r.rx_iv[0], r.rx_seq, mut iv)
 	body := unsafe { p + 5 }
 	clen := length - 16
-	if C.viltrum_gcm_open(r.rx, &iv[0], p, 5, body, body, usize(clen), unsafe { body + clen }) != 0 {
+	if C.viltrum_gcm_open(r.rx, &iv[0], p, 5, body, body, u64(clen), unsafe { body + clen }) != 0 {
 		return -2 // bad_record_mac
 	}
 	r.rx_seq++
@@ -437,7 +437,7 @@ fn (mut r Tls13) seal(src &u8, n int, typ u8) {
 		p[5 + n] = typ
 		mut iv := [12]u8{}
 		nonce(&r.tx_iv[0], r.tx_seq, mut iv)
-		C.viltrum_gcm_seal(r.tx, &iv[0], p, 5, p + 5, p + 5, usize(n + 1), p + 5 + n + 1)
+		C.viltrum_gcm_seal(r.tx, &iv[0], p, 5, p + 5, p + 5, u64(n + 1), p + 5 + n + 1)
 		r.out.len = 5 + length
 	}
 	r.tx_seq++

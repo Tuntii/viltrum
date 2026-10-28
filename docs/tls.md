@@ -75,6 +75,7 @@ enable.
 | ALPN | `http/1.1`; `h2` first on a listener with `http2` set ([http2.md](./http2.md)) |
 | SNI | not required; the listener's certificate is served either way |
 | Session resumption | off: no tickets, every connection does a full handshake |
+| Key update | the server rekeys after 2^24 records under one key (RFC 8446 5.5), and when the client asks; a client that asks more than 1024 times on one connection is cut off |
 | Close | `close_notify` before the socket closes |
 
 The handshake runs under `Options.read_timeout`, the same clock as a partly received request.

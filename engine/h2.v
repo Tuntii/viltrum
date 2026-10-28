@@ -66,7 +66,8 @@ mut:
 	owed        i64 // DATA read and not given back yet
 	// request bodies are bounded per stream, not per connection (see h2_credit)
 	stream_win i64  // the receive window each stream starts with
-	buffered   i64  // body bytes held by streams whose requests are still coming
+	bodies     int  // streams whose request body is still coming
+	buffered   i64  // body bytes held by them
 	budget     i64  // past this, only the oldest such stream's window grows
 	withheld   bool // some stream's window waits for buffered to fall
 	hblock     []u8 // a header block arriving in HEADERS and CONTINUATION frames
@@ -138,6 +139,7 @@ fn (mut w Worker) h2_open(mut c Conn) {
 	h.recv_max = h.budget
 	h.recv_win = h.recv_max
 	h.owed = 0
+	h.bodies = 0
 	h.buffered = 0
 	h.withheld = false
 	unsafe {
@@ -319,16 +321,7 @@ fn (mut w Worker) h2_process(mut c Conn) {
 		}
 	}
 	// a frame cut short or a request still coming runs under the read timeout
-	c.reading = rest > 0 || h.hstream != 0 || h.receiving()
-}
-
-fn (h &H2Conn) receiving() bool {
-	for s in h.streams {
-		if s.id != 0 && s.receiving {
-			return true
-		}
-	}
-	return false
+	c.reading = rest > 0 || h.hstream != 0 || h.bodies > 0
 }
 
 // find is the slot of stream id, or -1.
@@ -382,6 +375,7 @@ fn (mut h H2Conn) release(i int) {
 	}
 	if s.receiving {
 		h.buffered -= s.body.len
+		h.bodies--
 		s.receiving = false
 	}
 	if s.waiting {
@@ -509,10 +503,10 @@ fn (mut w Worker) h2_on_data(mut c Conn, fh http2.FrameHeader, payload []u8) {
 	h.owed += fh.length // read now, so given back (h2_process sends it)
 	i := h.find(fh.stream)
 	if i < 0 || !h.streams[i].receiving {
+		h.flood++ // nothing served, whichever way it is dropped
 		if fh.stream > h.last_id {
 			w.h2_fail(mut c, http2.err_protocol) // DATA on a stream never opened
 		} else if i < 0 && !h.was_reset(fh.stream) {
-			h.flood++
 			w.h2_reset(mut c, fh.stream, http2.err_stream_closed)
 		}
 		// else the rest of a body we answered early, or sent before our reset: dropped
@@ -688,6 +682,13 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 		w.h2_reset(mut c, id, http2.err_refused_stream)
 		return
 	}
+	// a body more while the windows the streams already receiving were opened with
+	// add up to the budget: each may fill its window before h2_credit withholds, so
+	// without this a connection could hold 128 of them, far more than max_body_bytes
+	if !end && i64(h.bodies + 1) * h.stream_win > h.budget {
+		w.h2_reset(mut c, id, http2.err_refused_stream)
+		return
+	}
 	if r == http2.hpack_too_large {
 		w.h2_error(mut c, id, 431, 'request header fields too large', h.peer_window)
 		if !end {
@@ -697,6 +698,7 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 	}
 	length := w.h2_head()
 	if length < -1 {
+		h.flood++ // decoded and refused: no request answered
 		w.h2_reset(mut c, id, http2.err_protocol) // a malformed request (RFC 9113 8.1.1)
 		return
 	}
@@ -711,6 +713,7 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 	i := h.take(id, h.peer_window)
 	mut s := &h.streams[i]
 	s.receiving = true
+	h.bodies++
 	s.length = length
 	unsafe { s.head.push_many(w.h2req.data, w.h2req.len) }
 }
@@ -893,6 +896,10 @@ fn (mut w Worker) h2_serve(mut c Conn, id u32, body []u8, send_win i64) {
 	http1.parse_head(msg, msg.len, mut x.head) or {
 		status := if err.code() >= 400 { err.code() } else { 400 }
 		w.h2_error(mut c, id, status, err.msg(), send_win)
+		return
+	}
+	if x.head.nfields > w.opts.limits.max_headers {
+		w.h2_error(mut c, id, 431, 'too many header fields', send_win)
 		return
 	}
 	if w.opts.require_host && !x.head.host_seen {
@@ -1324,6 +1331,7 @@ fn (mut w Worker) h2_on_settings(mut c Conn, fh http2.FrameHeader, payload []u8)
 		if fh.length != 0 {
 			w.h2_fail(mut c, http2.err_frame_size)
 		}
+		h.flood++ // we send one SETTINGS; every ACK past its answer is noise
 		return
 	}
 	if fh.length % 6 != 0 {
@@ -1388,10 +1396,10 @@ fn (mut w Worker) h2_on_ping(mut c Conn, fh http2.FrameHeader, payload []u8) {
 		w.h2_fail(mut c, http2.err_frame_size)
 		return
 	}
+	c.h2.flood++ // a PING either way: we never send one, so an ACK answers nothing
 	if fh.flags & http2.flag_ack != 0 {
 		return
 	}
-	c.h2.flood++
 	http2.write_frame_header(mut c.wbuf, 8, http2.frame_ping, http2.flag_ack, 0)
 	unsafe { c.wbuf.push_many(payload.data, 8) }
 }
@@ -1419,6 +1427,7 @@ fn (mut w Worker) h2_on_window_update(mut c Conn, fh http2.FrameHeader, payload 
 			if fh.stream > h.last_id {
 				w.h2_fail(mut c, http2.err_protocol) // a stream never opened
 			}
+			h.flood++ // a closed stream: nothing to move
 			return
 		}
 		if inc == 0 {
@@ -1462,11 +1471,11 @@ fn (mut w Worker) h2_on_priority(mut c Conn, fh http2.FrameHeader, payload []u8)
 		w.h2_fail(mut c, http2.err_protocol)
 		return
 	}
+	c.h2.flood++ // priorities are not acted on (RFC 9113 5.3.2)
 	if fh.length != 5 {
 		w.h2_reset(mut c, fh.stream, http2.err_frame_size)
 		return
 	}
-	c.h2.flood++ // priorities are not acted on (RFC 9113 5.3.2)
 	if unsafe { http2.get_u32(&u8(payload.data)) } & 0x7fffffff == fh.stream {
 		w.h2_reset(mut c, fh.stream, http2.err_protocol) // depending on itself (RFC 9113 5.3.1)
 	}
@@ -1478,5 +1487,7 @@ fn (mut w Worker) h2_on_priority(mut c Conn, fh http2.FrameHeader, payload []u8)
 fn (mut w Worker) h2_on_goaway(mut c Conn, fh http2.FrameHeader) {
 	if fh.stream != 0 {
 		w.h2_fail(mut c, http2.err_protocol)
+		return
 	}
+	c.h2.flood++ // one is a notice; a stream of them is not
 }

@@ -79,7 +79,8 @@ mut:
 	pbuf    []u8
 	etag    [56]u8
 	lastmod [29]u8
-	crange  [64]u8
+	// max-age (24 bytes) then "bytes start-end/size" with three 20-digit numbers
+	crange [96]u8
 	// what stat said of the file being answered and of a compressed copy of it; kept
 	// here rather than in locals, which V -prod would pin around every call
 	finfo [2]C.viltrum_file_info
@@ -369,7 +370,11 @@ pub fn (mut c Ctx) set_header(name string, value string) {
 		return
 	}
 	if c.nextra == c.extra.len {
-		panic('viltrum: more than 16 response headers')
+		// cold: a panic would take the whole process down (recover cannot catch it)
+		$if viltrum_debug ? {
+			panic('viltrum: more than 16 response headers')
+		}
+		return
 	}
 	c.extra[c.nextra] = HeaderPair{
 		name:  name

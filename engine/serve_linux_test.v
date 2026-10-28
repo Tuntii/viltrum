@@ -133,8 +133,31 @@ fn h_sub(mut c http1.Ctx) {
 	c.sse(sub_h)
 }
 
+// a stream that fills the socket at once (more than its buffers take), then ticks for
+// ever: 80 bytes every 10 ms, which is no write progress unless the client reads
+const pump_fill = []u8{len: 32 * 1024 * 1024, init: u8(`p`)}
+
+fn pump_tick(mut s http1.Stream, arg u64) {
+	s.write_string('tick tick tick tick tick tick tick tick tick tick tick tick tick tick tick\n')
+	s.after(10, pump_tick, arg)
+}
+
+fn pump_open(mut s http1.Stream, mut c http1.Ctx) {
+	s.write(pump_fill)
+	s.after(10, pump_tick, 0)
+}
+
+const pump_h = &http1.StreamHandler{
+	on_open: pump_open
+}
+
+fn h_pump(mut c http1.Ctx) {
+	c.stream(200, 'application/octet-stream', pump_h)
+}
+
 fn make_router() &router.Router {
 	mut r := &router.Router{}
+	r.add(.get, '/pump', [http1.Handler(h_pump)]) or { panic(err) }
 	r.add(.get, '/events', [http1.Handler(h_events)]) or { panic(err) }
 	r.add(.get, '/gen', [http1.Handler(h_gen)]) or { panic(err) }
 	r.add(.get, '/sub', [http1.Handler(h_sub)]) or { panic(err) }
@@ -371,6 +394,40 @@ fn test_client_that_never_reads_is_closed() {
 	time.sleep(3500 * time.millisecond)
 	got, _ := read_until_eof(mut c)
 	assert got < 30 * big_body.len
+	c.close() or {}
+}
+
+// A streaming response whose timers keep adding output does not keep a client that
+// reads none of it alive past write_timeout: the timeout counts from the last write
+// progress, not from the last write attempt.
+fn test_stream_to_a_client_that_never_reads_is_closed() {
+	addr, mut stop := start(Options{
+		write_timeout: time.second
+		max_pending:   64 * 1024 * 1024 // the "too slow" cut-off stays out of reach
+	})
+	defer {
+		stop.request()
+	}
+	mut c := dial(addr)
+	c.write('GET /pump HTTP/1.1\r\nHost: x\r\n\r\n'.bytes()) or { panic(err) }
+	time.sleep(4 * time.second)
+	// what the socket buffers took, then the end; a server still writing would hand
+	// over the whole fill and keep ticking
+	mut tmp := []u8{len: 64 * 1024}
+	mut got := 0
+	mut eof := false
+	for got < pump_fill.len {
+		n := c.read(mut tmp) or {
+			eof = err.code() != net.err_timed_out_code
+			break
+		}
+		if n <= 0 {
+			eof = true
+			break
+		}
+		got += n
+	}
+	assert eof, 'server did not close the stream nobody reads'
 	c.close() or {}
 }
 

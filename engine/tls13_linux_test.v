@@ -199,3 +199,43 @@ fn (r &Tls13) pending13_raw() bool {
 	t.r13 = *r
 	return t.pending13()
 }
+
+fn C.socketpair(domain int, typ int, protocol int, sv &i32) int
+
+// The sender rekeys on its own once 2^24 records went out under one key, and a peer
+// that sends KeyUpdates without end is cut off.
+fn test_key_update_limits() {
+	if !aesgcm_supported {
+		return
+	}
+	mut sv := [2]i32{}
+	assert C.socketpair(C.AF_UNIX, C.SOCK_STREAM, 0, &sv[0]) == 0
+	a, mut b := pair(false)
+	mut t := TlsConn{}
+	t.r13 = *a
+	t.r13.tx_seq = tls13_rekey_at - 1
+	b.rx_seq = tls13_rekey_at - 1
+	assert t.write13(int(sv[0]), c'one', 3) == 3
+	assert t.write13(int(sv[0]), c'two', 3) == 3 // at the limit: a KeyUpdate goes first
+	assert t.r13.tx_seq == 1
+	mut tmp := []u8{len: 4096}
+	n := int(C.recv(int(sv[1]), tmp.data, tmp.len, 0))
+	assert n > 0
+	unsafe { b.inb.push_many(tmp.data, n) }
+	assert b.open_next() == 1 && content(b) == 'one'
+	assert b.open_next() == 1 && !b.ku_owed && b.rx_seq == 0 // the KeyUpdate, not requested back
+	assert b.open_next() == 1 && content(b) == 'two'
+	C.close(int(sv[0]))
+	C.close(int(sv[1]))
+	// a peer that keeps asking
+	mut a2, mut b2 := pair(false)
+	for i in 0 .. tls13_max_key_updates {
+		seal_raw(mut a2, ct_app, [u8(24), 0, 0, 1, 0, ct_handshake])
+		pass(mut a2, mut b2)
+		assert b2.open_next() == 1, 'update ${i}'
+		assert a2.update(false)
+	}
+	seal_raw(mut a2, ct_app, [u8(24), 0, 0, 1, 0, ct_handshake])
+	pass(mut a2, mut b2)
+	assert b2.open_next() == -2
+}

@@ -744,7 +744,12 @@ fn test_malformed_requests_reset_the_stream() {
 }
 
 fn test_stream_limit() {
-	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut w := new_worker(h2_router(), Options{
+		send_date: false
+		limits:    http1.Limits{
+			max_body_bytes: (h2_max_streams + 1) * 65535 // room for every body at once
+		}
+	}, 0)
 	mut c := open(mut w, [])
 	mut cl := Client{}
 	mut b := []u8{}
@@ -1341,4 +1346,67 @@ fn test_h2_stream_allocates_nothing() {
 	}
 	assert http1.allocated_bytes() - before == 0
 	assert c.h2.held == 0 && c.h2.streaming == 1
+}
+
+// Requests with bodies are refused once the streams receiving them could, with the
+// windows they started with, hold more than max_body_bytes between them: a client
+// cannot park 128 bodies of 64 KiB on one connection.
+fn test_bodies_at_once_are_bounded() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	fit := int(c.h2.budget / c.h2.stream_win) // 16 at the defaults
+	mut b := []u8{}
+	for i in 0 .. fit + 1 {
+		b << frame(http2.frame_headers, http2.flag_end_headers, u32(2 * i + 1), cl.block([
+			':method: POST',
+			':scheme: http',
+			':path: /echo',
+			':authority: x',
+		]))
+	}
+	feed(mut w, mut c, b)
+	r := cl.responses(parse(take(mut w, mut c)))
+	assert r.len == 1 && r[u32(2 * fit + 1)].reset == http2.err_refused_stream
+	assert c.h2.bodies == fit && c.h2.open == fit
+	// a GET beside them is served, and a reset body makes room for one more
+	feed(mut w, mut c, cl.get(u32(2 * fit + 3), '/baseline2'))
+	assert cl.responses(parse(take(mut w, mut c)))[u32(2 * fit + 3)].status == '200'
+	mut p := []u8{}
+	http2.put_u32(mut p, http2.err_cancel)
+	feed(mut w, mut c, frame(http2.frame_rst_stream, 0, 1, p))
+	assert c.h2.bodies == fit - 1
+	feed(mut w, mut c, frame(http2.frame_headers, http2.flag_end_headers, u32(2 * fit + 5), cl.block([
+		':method: POST',
+		':scheme: http',
+		':path: /echo',
+		':authority: x',
+	])))
+	assert take(mut w, mut c).len == 0 && c.h2.bodies == fit
+}
+
+// Frames that answer nothing count toward the flood limit whichever kind they are:
+// PING ACKs, SETTINGS ACKs, GOAWAYs and WINDOW_UPDATEs on closed streams included.
+fn test_flood_counts_every_idle_frame() {
+	kinds := {
+		'ping ack':               frame(http2.frame_ping, http2.flag_ack, 0, []u8{len: 8})
+		'settings ack':           frame(http2.frame_settings, http2.flag_ack, 0, []u8{})
+		'goaway':                 frame(http2.frame_goaway, 0, 0, []u8{len: 8})
+		'window update, closed':  window_update(1, 1)
+		'priority, wrong length': frame(http2.frame_priority, 0, 3, []u8{len: 4})
+		'data, closed stream':    frame(http2.frame_data, 0, 1, 'x'.bytes())
+	}
+	for name, f in kinds {
+		mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+		mut c := open(mut w, [])
+		mut cl := Client{}
+		feed(mut w, mut c, cl.get(1, '/baseline2')) // stream 1 is closed from here on
+		assert cl.responses(parse(take(mut w, mut c)))[1].status == '200', name
+		mut b := []u8{}
+		for _ in 0 .. h2_flood + 1 {
+			b << f
+		}
+		feed(mut w, mut c, b)
+		assert goaway_code(parse(take(mut w, mut c))) == http2.err_enhance_your_calm, name
+	}
 }

@@ -70,6 +70,11 @@ static int viltrum_file_open(const char *path, viltrum_file_info *info) {
 	info->mtime_ns = (int64_t)st.st_mtim.tv_nsec;
 #endif
 #endif
+	if (info->mtime < 0) {
+		// before 1970: the IMF-fixdate formatter indexes its tables with the day count
+		info->mtime = 0;
+		info->mtime_ns = 0;
+	}
 	info->size = (int64_t)st.st_size;
 	info->kind = (st.st_mode & S_IFMT) == S_IFREG ? 1 : (st.st_mode & S_IFMT) == S_IFDIR ? 2 : 0;
 	if (info->kind == 2) {

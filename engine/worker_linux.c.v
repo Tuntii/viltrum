@@ -520,6 +520,7 @@ fn (mut l Loop) on_readable(mut c Conn) {
 			c.rbuf.len += n
 		}
 		was_reading := c.reading
+		was_closing := c.ws_closing // our Close is out: the read timeout runs from then
 		reqs_before := l.w.requests
 		l.drain(mut c)
 		if c.fd < 0 || c.out_armed || c.lingering {
@@ -527,7 +528,9 @@ fn (mut l Loop) on_readable(mut c Conn) {
 		}
 		if l.h2_held_deadline(mut c) {
 		} else if !isnil(c.ws) {
-			c.deadline_ms = l.ws_deadline(c)
+			if !was_closing {
+				c.deadline_ms = l.ws_deadline(c)
+			}
 		} else if c.reading && (!was_reading || l.w.requests != reqs_before) {
 			c.deadline_ms = l.now + l.opts.read_timeout.milliseconds()
 		} else if !c.reading {
@@ -557,25 +560,27 @@ fn (mut l Loop) flush(mut c Conn) {
 	l.w.lend(mut c) // HTTP/2 output held in slots, and streams, write into wbuf here
 	mut drained := 0 // what on_drain wrote in this flush
 	mut ended := false // and whether it ended its stream
+	mut moved := false // whether the socket took anything: write progress
 	for {
 		for c.woff < c.wbuf.len {
 			n := l.write(mut c, unsafe { &u8(c.wbuf.data) + c.woff }, c.wbuf.len - c.woff)
 			if n < 0 {
 				if n == -1 {
-					l.arm_out(mut c)
+					l.arm_out(mut c, moved)
 					return
 				}
 				l.close(mut c)
 				return
 			}
 			c.woff += n
+			moved = moved || n > 0
 		}
 		unsafe {
 			c.wbuf.len = 0
 		}
 		c.woff = 0
 		if c.file_fd >= 0 {
-			if !l.send_file(mut c) {
+			if !l.send_file(mut c, moved) {
 				return
 			}
 			continue
@@ -590,7 +595,7 @@ fn (mut l Loop) flush(mut c Conn) {
 				break
 			}
 			if drained >= stream_drain_max {
-				l.arm_out(mut c) // as below
+				l.arm_out(mut c, true) // as below
 				return
 			}
 			n := l.w.h2_drain(mut c)
@@ -607,7 +612,7 @@ fn (mut l Loop) flush(mut c Conn) {
 		if drained >= stream_drain_max {
 			// a client that takes everything at once does not hold the worker: the rest
 			// waits for the next turn of the loop, which EPOLLOUT gives at once
-			l.arm_out(mut c)
+			l.arm_out(mut c, true)
 			return
 		}
 		if !l.w.st_drain(mut c) {
@@ -658,11 +663,17 @@ fn (mut l Loop) h2_held_deadline(mut c Conn) bool {
 	return true
 }
 
-// arm_out waits for the socket to take more output; reading pauses meanwhile.
-fn (mut l Loop) arm_out(mut c Conn) {
+// arm_out waits for the socket to take more output; reading pauses meanwhile. The
+// write timeout counts from the last write progress: it starts when the socket
+// first fills and is put off only when progressed says the socket took something
+// since. A stream timer or a resumed response that only adds to wbuf while the
+// client reads nothing does not keep the connection alive.
+fn (mut l Loop) arm_out(mut c Conn, progressed bool) {
 	if !c.out_armed {
 		l.ctl(C.EPOLL_CTL_MOD, c.fd, u32(C.EPOLLOUT))
 		c.out_armed = true
+	} else if !progressed {
+		return
 	}
 	c.deadline_ms = l.now + l.opts.write_timeout.milliseconds()
 }
@@ -671,7 +682,9 @@ fn (mut l Loop) arm_out(mut c Conn) {
 // the page cache to the socket (sendfile), over TLS one buffer at a time through
 // wbuf, which flush then writes. False when the socket is full (EPOLLOUT armed) or
 // the connection was closed; true when there is more for flush to do or it is done.
-fn (mut l Loop) send_file(mut c Conn) bool {
+// moved says whether this flush already made write progress before the file.
+fn (mut l Loop) send_file(mut c Conn, moved bool) bool {
+	mut progressed := moved
 	if !isnil(c.tls) {
 		n := if c.file_left < c.wbuf.cap { c.file_left } else { i64(c.wbuf.cap) }
 		got := http1.read_at(c.file_fd, c.wbuf.data, n, c.file_off)
@@ -694,10 +707,11 @@ fn (mut l Loop) send_file(mut c Conn) bool {
 		r := C.sendfile(c.fd, c.file_fd, &c.file_off, u64(chunk)) // advances file_off
 		if r > 0 {
 			c.file_left -= r
+			progressed = true
 			continue
 		}
 		if r < 0 && (C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK) {
-			l.arm_out(mut c)
+			l.arm_out(mut c, progressed)
 			return false
 		}
 		if r < 0 && C.errno == C.EINTR {

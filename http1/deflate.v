@@ -130,8 +130,10 @@ pub fn new_deflater() &Deflater {
 // gzip compresses src into one gzip member. The result is a view of the deflater's
 // buffer, valid until the next call.
 pub fn (mut d Deflater) gzip(src []u8) ![]u8 {
-	// stored blocks bound the output: 5 bytes per chunk over the input, plus framing
-	bound := 10 + src.len + 5 * (src.len / max_chunk + 1) + 8 + 16
+	// stored blocks bound the output: a block costs at most 3 + 7 (pad) + 32 bits of
+	// framing over its data, and a dynamic or fixed block is only chosen when it is
+	// cheaper than that, so 6 bytes per chunk over the input, plus the member framing
+	bound := 10 + src.len + 6 * (src.len / max_chunk + 1) + 8 + 16
 	if d.out.cap < bound {
 		d.out = []u8{cap: bound + bound / 4}
 	}

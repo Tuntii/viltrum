@@ -444,3 +444,19 @@ fn test_lent_buffers_allocate_nothing() {
 		assert http1.allocated_bytes() - before == 0, '${name} allocates'
 	}
 }
+
+// Limits.max_headers is enforced: more fields than that answer 431 and close.
+fn test_max_headers_limit() {
+	mut w := new_worker(make_router(), Options{
+		send_date: false
+		limits:    http1.Limits{
+			max_headers: 4
+		}
+	}, 0)
+	mut c := new_conn()
+	run(mut w, mut c, 'GET /pipeline HTTP/1.1\r\nHost: x\r\nA: 1\r\nB: 2\r\nC: 3\r\n\r\n'.bytes())
+	assert c.wbuf.bytestr().ends_with('ok') && !c.close_after
+	run(mut w, mut c,
+		'GET /pipeline HTTP/1.1\r\nHost: x\r\nA: 1\r\nB: 2\r\nC: 3\r\nD: 4\r\n\r\n'.bytes())
+	assert c.wbuf.bytestr().starts_with('HTTP/1.1 431 ') && c.close_after
+}

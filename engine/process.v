@@ -333,6 +333,13 @@ fn (mut w Worker) serve(mut c Conn, msg []u8) {
 		w.refuse(mut c, err)
 		return
 	}
+	if x.head.nfields > w.opts.limits.max_headers {
+		w.refuse(mut c, http1.HttpError{
+			status: 431
+			reason: 'too many header fields'
+		})
+		return
+	}
 	if w.opts.require_host && x.head.minor == 1 && !x.head.host_seen {
 		w.refuse(mut c, http1.HttpError{
 			status: 400

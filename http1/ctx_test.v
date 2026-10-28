@@ -216,3 +216,27 @@ fn test_handler_path_allocates_nothing() {
 	}
 	assert c.out.bytestr().ends_with('{"message":"Hello, World!"}')
 }
+
+// A seventeenth response header is dropped, not a panic: a panic would take the
+// process down, and recover cannot catch it.
+fn test_seventeenth_header_is_dropped() {
+	mut c := test_ctx('GET / HTTP/1.1\r\nHost: h\r\n\r\n')!
+	for i in 0 .. 17 {
+		c.set_header('X-N${i}', 'v')
+	}
+	c.text(200, 'ok')
+	out := out_of(c)
+	assert out.contains('X-N15: v\r\n')
+	assert !out.contains('X-N16')
+}
+
+// Content-Range of a file past 10 GB has three numbers of up to 20 digits: the
+// buffer it is written in holds the widest one.
+fn test_content_range_of_a_huge_file() {
+	mut c := test_ctx('GET / HTTP/1.1\r\nHost: h\r\n\r\n')!
+	size := i64(18446744073709551) // 17 digits, each number
+	s := c.content_range(size - 2, size - 1, size)
+	assert s == 'bytes 18446744073709549-18446744073709550/18446744073709551'
+	assert c.content_range(-1, 0, size) == 'bytes */18446744073709551'
+	assert c.crange.len >= 24 + 6 + 20 + 1 + 20 + 1 + 20
+}

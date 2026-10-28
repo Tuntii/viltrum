@@ -32,6 +32,11 @@ const tls13_max_plain = 16384 // RFC 8446 5.1
 const tls13_max_record = 16384 + 256 // ciphertext limit, 5.2
 const tls13_in_cap = 2 * (5 + tls13_max_record) // a full record and most of the next
 const tls13_out_cap = 5 + tls13_max_plain + 1 + 16
+// Records sealed under one key before we send a KeyUpdate: AES-GCM keeps its
+// margin for 2^24.5 full records (RFC 8446 5.5), and the nonce must never repeat.
+const tls13_rekey_at = u64(1) << 24
+// KeyUpdates accepted from the peer on one connection.
+const tls13_max_key_updates = 1024
 
 const ct_alert = u8(21)
 const ct_handshake = u8(22)
@@ -59,6 +64,7 @@ mut:
 	out_pt  int  // content bytes of the caller's that out carries
 	drained bool // the last recv came back short: the socket is empty until epoll says
 	ku_owed bool // the peer asked for a KeyUpdate; ours goes before the next record
+	ku_seen int  // KeyUpdates the peer sent: each costs a key schedule, so capped
 }
 
 // go_fast moves a finished TLS 1.3 AES-GCM handshake's records here; anything else,
@@ -200,6 +206,7 @@ fn (mut r Tls13) start() {
 	r.out_pt = 0
 	r.drained = false
 	r.ku_owed = false
+	r.ku_seen = 0
 }
 
 // derive sets the key and IV of one direction from its traffic secret.
@@ -359,6 +366,13 @@ fn (mut r Tls13) open_next() int {
 			|| unsafe { body[3] } != 1 || unsafe { body[4] } > 1 {
 			return -2
 		}
+		// A peer rekeys once in 2^24 records; one that rekeys per record is making
+		// this worker derive keys (HKDF, AES key expansion, GHASH powers) at 27
+		// bytes a time, so it is cut off.
+		r.ku_seen++
+		if r.ku_seen > tls13_max_key_updates {
+			return -2
+		}
 		if unsafe { body[4] } == 1 {
 			r.ku_owed = true
 		}
@@ -399,7 +413,7 @@ fn (mut t TlsConn) write13(fd int, buf &u8, n int) int {
 			return taken
 		}
 	}
-	if r.ku_owed {
+	if r.ku_owed || r.tx_seq >= tls13_rekey_at {
 		// our KeyUpdate (update_not_requested), under the old key, then the new one
 		ku := [u8(24), 0, 0, 1, 0]!
 		r.seal(&ku[0], 5, ct_handshake)

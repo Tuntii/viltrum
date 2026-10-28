@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.13.2](https://github.com/Tuntii/viltrum/compare/v1.13.1...v1.13.2) (2026-10-28)
+
+### Bug Fixes
+
+* build, run and stay allocation-free on V master ([b5d6bf6](https://github.com/Tuntii/viltrum/commit/b5d6bf666224c014d78a0b9c6f9a943b95198a10)), closes [vlang/v#31113](https://github.com/vlang/v/issues/31113) [#103](https://github.com/Tuntii/viltrum/issues/103) [#103](https://github.com/Tuntii/viltrum/issues/103)
+
 ## [1.13.1](https://github.com/Tuntii/viltrum/compare/v1.13.0...v1.13.1) (2026-10-26)
 
 ### Performance Improvements

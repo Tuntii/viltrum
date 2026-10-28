@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.13.3](https://github.com/Tuntii/viltrum/compare/v1.13.2...v1.13.3) (2026-10-28)
+
+### Bug Fixes
+
+* harden timeouts, limits and buffers found by a security review ([61d45fb](https://github.com/Tuntii/viltrum/commit/61d45fb4cb4a8ff6a803544cc249df2fa1d44328))
+
 ## [1.13.2](https://github.com/Tuntii/viltrum/compare/v1.13.1...v1.13.2) (2026-10-28)
 
 ### Bug Fixes

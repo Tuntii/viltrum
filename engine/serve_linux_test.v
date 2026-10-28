@@ -494,7 +494,7 @@ fn test_deferred_pipeline_and_closed_waiter() {
 // Over HTTP/2 a deferred response holds only its own stream: on one connection the
 // stream after two waiting ones is answered at once, and the two waits overlap.
 fn test_h2c_deferred() {
-	v := os.execute('curl --version')
+	v := sh('curl --version')
 	if v.exit_code != 0 || !v.output.contains('HTTP2') {
 		eprintln('skip: curl with HTTP/2 not found')
 		return
@@ -506,7 +506,7 @@ fn test_h2c_deferred() {
 	urls := 'http://${addr}/delay/300 http://${addr}/delay/300 http://${addr}/p/fast'
 	t0 := time.sys_mono_now()
 	r :=
-		os.execute('curl -s --http2-prior-knowledge --parallel -o /dev/null -o /dev/null -o /dev/null -w "%{url_effective} %{response_code} %{http_version} %{num_connects} %{time_total}\\n" ${urls}')
+		sh('curl -s --http2-prior-knowledge --parallel -o /dev/null -o /dev/null -o /dev/null -w "%{url_effective} %{response_code} %{http_version} %{num_connects} %{time_total}\\n" ${urls}')
 	took := time.sys_mono_now() - t0
 	lines := r.output.trim_space().split_into_lines()
 	assert lines.len == 3, r.output
@@ -542,7 +542,7 @@ fn read_until(mut conn net.TcpConn, end string) string {
 // Streams over a socket: an SSE stream as curl sees it, a body generated as the
 // client takes it, and a publish from another thread reaching a subscribed stream.
 fn test_streams() {
-	v := os.execute('curl --version')
+	v := sh('curl --version')
 	if v.exit_code != 0 {
 		eprintln('skip: curl not found')
 		return
@@ -555,18 +555,18 @@ fn test_streams() {
 		stop.request()
 	}
 	t0 := time.sys_mono_now()
-	ev := os.execute('curl -sN http://${addr}/events')
+	ev := sh('curl -sN http://${addr}/events')
 	assert ev.output == 'data: hello\n\n' + 'event: tick\ndata: n\n\n'.repeat(3), ev.output
 	assert time.sys_mono_now() - t0 >= 80 * u64(time.millisecond)
-	head := os.execute('curl -sI http://${addr}/events')
+	head := sh('curl -sI http://${addr}/events')
 	assert head.output.contains('Content-Type: text/event-stream'), head.output
-	gen := os.execute('curl -s -o /dev/null -w "%{http_code} %{size_download}" http://${addr}/gen')
+	gen := sh('curl -s -o /dev/null -w "%{http_code} %{size_download}" http://${addr}/gen')
 	assert gen.output == '200 ${80 * 64 * 1024}', gen.output
 	// HTTP/1.0 gets the bytes unchunked, ended by the close
-	gen10 := os.execute('curl -s --http1.0 -o /dev/null -w "%{size_download}" http://${addr}/gen')
+	gen10 := sh('curl -s --http1.0 -o /dev/null -w "%{size_download}" http://${addr}/gen')
 	assert gen10.output == '${80 * 64 * 1024}', gen10.output
 	// the same bytes as were generated, in order, over one keep-alive connection twice
-	sum := os.execute('curl -s http://${addr}/gen http://${addr}/gen | md5sum')
+	sum := sh('curl -s http://${addr}/gen http://${addr}/gen | md5sum')
 	mut want := []u8{}
 	for _ in 0 .. 160 {
 		want << gen_piece
@@ -575,7 +575,7 @@ fn test_streams() {
 	defer {
 		os.rm(file_path + '.gen') or {}
 	}
-	want_sum := os.execute('md5sum < ${file_path}.gen')
+	want_sum := sh('md5sum < ${file_path}.gen')
 	assert sum.output == want_sum.output
 	// a publish from this thread reaches the subscribed stream on its worker
 	mut c := dial(addr)
@@ -589,7 +589,7 @@ fn test_streams() {
 	assert body == '/p/meanwhile'
 	q.close() or {}
 	hub.post(http1.sse_post('news', http1.StreamId{}, http1.StreamId{}, '', 'news', 'hi') or {
-		panic(err)
+		panic('sse_post')
 	})
 	assert read_until(mut c, '\r\n').ends_with('event: news\ndata: hi\n\n\r\n')
 	c.close() or {}
@@ -599,7 +599,7 @@ fn test_streams() {
 // body following the windows, and both at once beside a plain request on one
 // connection, which the streams do not hold up.
 fn test_h2c_streams() {
-	v := os.execute('curl --version')
+	v := sh('curl --version')
 	if v.exit_code != 0 || !v.output.contains('HTTP2') {
 		eprintln('skip: curl with HTTP/2 not found')
 		return
@@ -609,12 +609,12 @@ fn test_h2c_streams() {
 		stop.request()
 	}
 	h2 := 'curl -s --http2-prior-knowledge'
-	ev := os.execute('${h2} -N http://${addr}/events')
+	ev := sh('${h2} -N http://${addr}/events')
 	assert ev.output == 'data: hello\n\n' + 'event: tick\ndata: n\n\n'.repeat(3), ev.output
 	gen :=
-		os.execute('${h2} -o /dev/null -w "%{http_version} %{http_code} %{size_download}" http://${addr}/gen')
+		sh('${h2} -o /dev/null -w "%{http_version} %{http_code} %{size_download}" http://${addr}/gen')
 	assert gen.output == '2 200 ${80 * 64 * 1024}', gen.output
-	sum := os.execute('${h2} http://${addr}/gen | md5sum')
+	sum := sh('${h2} http://${addr}/gen | md5sum')
 	mut want := []u8{}
 	for _ in 0 .. 80 {
 		want << gen_piece
@@ -623,10 +623,10 @@ fn test_h2c_streams() {
 	defer {
 		os.rm(file_path + '.h2gen') or {}
 	}
-	assert sum.output == os.execute('md5sum < ${file_path}.h2gen').output
+	assert sum.output == sh('md5sum < ${file_path}.h2gen').output
 	urls := 'http://${addr}/events http://${addr}/gen http://${addr}/events http://${addr}/p/fast'
 	r :=
-		os.execute('${h2} --parallel -o /dev/null -o /dev/null -o /dev/null -o /dev/null -w "%{url_effective} %{response_code} %{size_download} %{num_connects} %{time_total}\\n" ${urls}')
+		sh('${h2} --parallel -o /dev/null -o /dev/null -o /dev/null -o /dev/null -w "%{url_effective} %{response_code} %{size_download} %{num_connects} %{time_total}\\n" ${urls}')
 	lines := r.output.trim_space().split_into_lines()
 	assert lines.len == 4, r.output
 	mut connects := 0
@@ -649,7 +649,8 @@ fn test_h2c_streams() {
 	assert events.len == 2 && fast < events[0] && fast < events[1], r.output
 }
 
-fn C.socketpair(domain int, typ int, protocol int, sv &int) int
+// i32: sv is C's int[2], which an &int is not on V master
+fn C.socketpair(domain int, typ int, protocol int, sv &i32) int
 
 // fd numbers are process-wide, so with SO_REUSEPORT any worker sees any of them.
 // A worker must pool its closed Conns, not keep one per fd number it ever saw:
@@ -669,23 +670,24 @@ fn test_closed_conns_are_pooled_per_worker() {
 	mut last_fd := -1
 	mut grew := 0
 	for _ in 0 .. 100 {
-		sv := [2]int{}
+		sv := [2]i32{}
 		assert C.socketpair(C.AF_UNIX, C.SOCK_STREAM, 0, &sv[0]) == 0
+		kept, fd := int(sv[0]), int(sv[1])
 		// the kept end holds the fd number just freed, so connections get ever higher
 		// numbers; servers of earlier tests still closing may free a lower one
-		peers << sv[0]
-		if sv[1] > last_fd {
+		peers << kept
+		if fd > last_fd {
 			grew++
 		}
-		last_fd = sv[1]
-		mut c := l.conn_for(sv[1])
-		c.reset(sv[1])
+		last_fd = fd
+		mut c := l.conn_for(fd)
+		c.reset(fd)
 		if isnil(first) {
 			first = c
 		}
 		assert voidptr(c) == voidptr(first)
 		l.close(mut c)
-		assert isnil(l.conns[sv[1]])
+		assert isnil(l.conns[fd])
 	}
 	assert l.free.len == 1 && grew >= 90
 	for fd in peers {
@@ -1047,4 +1049,9 @@ fn test_failed_listen_leaves_nothing_open() {
 	}
 	assert open_fds() == before
 	taken.close() or {}
+}
+
+// sh runs cmd through /bin/sh like os.execute, which V master deprecates.
+fn sh(cmd string) os.Result {
+	return os.exec(['/bin/sh', '-c', cmd])
 }

@@ -16,7 +16,7 @@ fn C.epoll_create1(flags int) int
 fn C.epoll_ctl(epfd int, op int, fd int, event &C.epoll_event) int
 fn C.viltrum_epoll_wait(epfd int, events &C.epoll_event, maxevents int, timeout_ns i64) int
 fn C.accept4(sockfd int, addr voidptr, addrlen voidptr, flags int) int
-fn C.sendfile(out_fd int, in_fd int, offset &i64, count usize) isize
+fn C.sendfile(out_fd int, in_fd int, offset &i64, count u64) i64
 
 @[typedef]
 union C.epoll_data_t {
@@ -288,8 +288,8 @@ fn (mut l Loop) accept_all(li int) {
 			}
 			counted = true
 		}
-		one := 1
-		C.setsockopt(fd, C.IPPROTO_TCP, C.TCP_NODELAY, &one, sizeof(int))
+		one := i32(1) // C's int, as in listen_reuseport
+		C.setsockopt(fd, C.IPPROTO_TCP, C.TCP_NODELAY, &one, sizeof(i32))
 		mut c := l.conn_for(fd)
 		c.reset(fd)
 		// a Conn is not tied to one fd, so its generation comes from the worker
@@ -691,7 +691,7 @@ fn (mut l Loop) send_file(mut c Conn) bool {
 	}
 	for c.file_left > 0 {
 		chunk := if c.file_left < sendfile_max { c.file_left } else { sendfile_max }
-		r := C.sendfile(c.fd, c.file_fd, &c.file_off, usize(chunk)) // advances file_off
+		r := C.sendfile(c.fd, c.file_fd, &c.file_off, u64(chunk)) // advances file_off
 		if r > 0 {
 			c.file_left -= r
 			continue

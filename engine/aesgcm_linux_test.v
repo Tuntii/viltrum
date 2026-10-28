@@ -11,7 +11,7 @@ struct C.mbedtls_gcm_context {}
 
 fn C.mbedtls_gcm_init(ctx &C.mbedtls_gcm_context)
 fn C.mbedtls_gcm_setkey(ctx &C.mbedtls_gcm_context, cipher int, key &u8, keybits u32) int
-fn C.mbedtls_gcm_crypt_and_tag(ctx &C.mbedtls_gcm_context, mode int, length usize, iv &u8, iv_len usize, add &u8, add_len usize, input &u8, output &u8, tag_len usize, tag &u8) int
+fn C.mbedtls_gcm_crypt_and_tag(ctx &C.mbedtls_gcm_context, mode int, length u64, iv &u8, iv_len u64, add &u8, add_len u64, input &u8, output &u8, tag_len u64, tag &u8) int
 fn C.mbedtls_gcm_free(ctx &C.mbedtls_gcm_context)
 
 // The GCM specification's test cases with 96-bit nonces (McGrew and Viega, 2005).
@@ -50,8 +50,7 @@ fn new_gcm(key []u8) &C.viltrum_gcm {
 fn seal(g &C.viltrum_gcm, iv []u8, aad []u8, pt []u8) ([]u8, []u8) {
 	mut ct := []u8{len: pt.len}
 	mut tag := []u8{len: 16}
-	C.viltrum_gcm_seal(g, iv.data, aad.data, usize(aad.len), pt.data, ct.data, usize(pt.len),
-		tag.data)
+	C.viltrum_gcm_seal(g, iv.data, aad.data, u64(aad.len), pt.data, ct.data, u64(pt.len), tag.data)
 	return ct, tag
 }
 
@@ -70,8 +69,8 @@ fn test_gcm_spec_vectors() {
 		assert ct.hex() == v.ct, 'case ${i} ciphertext'
 		assert tag.hex() == v.tag, 'case ${i} tag'
 		mut back := []u8{len: ct.len}
-		assert C.viltrum_gcm_open(g, iv.data, aad.data, usize(aad.len), ct.data, back.data,
-			usize(ct.len), tag.data) == 0, 'case ${i} open'
+		assert C.viltrum_gcm_open(g, iv.data, aad.data, u64(aad.len), ct.data, back.data,
+			u64(ct.len), tag.data) == 0, 'case ${i} open'
 		assert back == pt, 'case ${i} round trip'
 	}
 }
@@ -95,36 +94,36 @@ fn test_gcm_matches_mbedtls() {
 			assert C.mbedtls_gcm_setkey(&ref, 2, key.data, u32(key_len * 8)) == 0 // MBEDTLS_CIPHER_ID_AES
 			mut rct := []u8{len: n}
 			mut rtag := []u8{len: 16}
-			assert C.mbedtls_gcm_crypt_and_tag(&ref, 1, usize(n), iv.data, 12, aad.data,
-				usize(aad.len), pt.data, rct.data, 16, rtag.data) == 0
+			assert C.mbedtls_gcm_crypt_and_tag(&ref, 1, u64(n), iv.data, 12, aad.data,
+				u64(aad.len), pt.data, rct.data, 16, rtag.data) == 0
 			C.mbedtls_gcm_free(&ref)
 			assert ct == rct, 'key ${key_len} length ${n}'
 			assert tag == rtag, 'key ${key_len} length ${n} tag'
 			// in place, both ways
 			mut buf := pt.clone()
 			mut tag2 := []u8{len: 16}
-			C.viltrum_gcm_seal(g, iv.data, aad.data, usize(aad.len), buf.data, buf.data, usize(n),
+			C.viltrum_gcm_seal(g, iv.data, aad.data, u64(aad.len), buf.data, buf.data, u64(n),
 				tag2.data)
 			assert buf == ct && tag2 == tag
-			assert C.viltrum_gcm_open(g, iv.data, aad.data, usize(aad.len), buf.data, buf.data,
-				usize(n), tag.data) == 0
+			assert C.viltrum_gcm_open(g, iv.data, aad.data, u64(aad.len), buf.data, buf.data,
+				u64(n), tag.data) == 0
 			assert buf == pt
 			// tampering
 			mut out := []u8{len: n, init: 0xee}
 			mut bad_tag := tag.clone()
 			bad_tag[n % 16] ^= 1
-			assert C.viltrum_gcm_open(g, iv.data, aad.data, usize(aad.len), ct.data, out.data,
-				usize(n), bad_tag.data) == -1
+			assert C.viltrum_gcm_open(g, iv.data, aad.data, u64(aad.len), ct.data, out.data,
+				u64(n), bad_tag.data) == -1
 			if n > 0 {
 				mut bad_ct := ct.clone()
 				bad_ct[n / 2] ^= 0x80
-				assert C.viltrum_gcm_open(g, iv.data, aad.data, usize(aad.len), bad_ct.data,
-					out.data, usize(n), tag.data) == -1
+				assert C.viltrum_gcm_open(g, iv.data, aad.data, u64(aad.len), bad_ct.data,
+					out.data, u64(n), tag.data) == -1
 			}
 			mut bad_aad := aad.clone()
 			bad_aad << u8(0)
-			assert C.viltrum_gcm_open(g, iv.data, bad_aad.data, usize(bad_aad.len), ct.data,
-				out.data, usize(n), tag.data) == -1
+			assert C.viltrum_gcm_open(g, iv.data, bad_aad.data, u64(bad_aad.len), ct.data,
+				out.data, u64(n), tag.data) == -1
 			assert out.all(it == 0xee), 'a refused open wrote output'
 		}
 	}

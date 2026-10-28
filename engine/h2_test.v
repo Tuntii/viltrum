@@ -1229,7 +1229,7 @@ fn test_h2_send_and_publish_reach_streams() {
 		http1.stream_post('', one, http1.StreamId{}, c'one', 3),
 		http1.stream_post('news', http1.StreamId{}, one, c'two', 3),
 		http1.sse_post('news', http1.StreamId{}, http1.StreamId{}, '', 'e', 'three') or {
-			panic(err)
+			panic('sse_post')
 		},
 		// stream 5 has ended, 9 was never opened
 		http1.stream_post('', http1.StreamId{ ...one, stream: 5 }, http1.StreamId{}, c'no', 2),

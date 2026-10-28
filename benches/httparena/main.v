@@ -1,8 +1,8 @@
 module main
 
-import json
 import os
 import viltrum
+import x.json2
 
 struct Rating {
 	score int
@@ -34,7 +34,7 @@ struct TlsPort {
 }
 
 fn main() {
-	dataset := json.decode([]Item, os.read_file('/data/dataset.json') or { '[]' }) or { []Item{} }
+	dataset := json2.decode[[]Item](os.read_file('/data/dataset.json') or { '[]' }) or { []Item{} }
 	mut app := viltrum.new()
 	// One copy of the dataset per worker: totals are written per request, and a
 	// worker only touches its own copy.

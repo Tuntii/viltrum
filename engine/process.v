@@ -210,14 +210,15 @@ pub fn (mut w Worker) settle(mut c Conn) {
 }
 
 // give_back returns c's read (or write) buffer to the pool, emptied. One that a large
-// request or response grew past what is worth keeping goes to the GC instead.
+// request or response grew past what is worth keeping goes to the GC instead. The
+// pushes are unsafe because V master copies an array pushed as a plain value.
 fn (mut w Worker) give_back(mut c Conn, read bool) {
 	if read {
 		if c.rbuf.cap <= shrink_rbuf_above {
 			unsafe {
 				c.rbuf.len = 0
 			}
-			w.rpool << c.rbuf // cold: grows to the most connections ever busy at once
+			w.rpool << unsafe { c.rbuf } // cold: grows to the most connections ever busy at once
 		}
 		c.rbuf = []u8{}
 	} else {
@@ -225,7 +226,7 @@ fn (mut w Worker) give_back(mut c Conn, read bool) {
 			unsafe {
 				c.wbuf.len = 0
 			}
-			w.wpool << c.wbuf // cold: as above
+			w.wpool << unsafe { c.wbuf } // cold: as above
 		}
 		c.wbuf = []u8{}
 		c.woff = 0

@@ -10,7 +10,7 @@
 | `c.query_param('q')`, `c.query_int('n')` | first query value, `%XX` and `+` decoded |
 | `c.header('name')`, `c.header_values('name')` | first field (any case) / iterator over repeated fields |
 | `c.cookie('name')` | a request cookie's value (every `Cookie` header searched, quotes removed) |
-| `c.body()`, `c.body_text()`, `c.body_int()` | body bytes (chunked bodies arrive decoded) / the same as a string view, for decoders: `json.decode(User, c.body_text())` |
+| `c.body()`, `c.body_text()`, `c.body_int()` | body bytes (chunked bodies arrive decoded) / the same as a string view, for decoders: `json2.decode[User](c.body_text())` (`import x.json2`; V master's json2 slices map keys out of its input, so decode `c.body().bytestr()` when a decoded map outlives the handler) |
 | `c.form_value('f')`, `c.form_int('n')`, `c.form_file('doc')`, `c.form_parts()` | urlencoded and multipart forms ([forms.md](./forms.md)) |
 | `c.worker_id()` | index of the worker thread |
 

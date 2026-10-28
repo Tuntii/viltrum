@@ -104,16 +104,22 @@ pub fn frame(buf []u8, mut f Frame, lim Limits) !int {
 		f.expect_continue = ex.found() && eq_ci(str_view(head, ex.start, ex.len), '100-continue')
 	}
 	if f.chunked {
-		if !scan_chunked(buf, mut f.chunk, lim.max_body_bytes)! {
-			return -1
-		}
-		return f.chunk.pos
+		return frame_chunked(buf, mut f, lim)
 	}
 	total := f.head_end + f.content_length
 	if buf.len < total {
 		return -1
 	}
 	return total
+}
+
+// frame_chunked is frame's chunked tail. A `!` in frame itself makes V master move
+// the spans above to the heap, three allocations a request.
+fn frame_chunked(buf []u8, mut f Frame, lim Limits) !int {
+	if !scan_chunked(buf, mut f.chunk, lim.max_body_bytes)! {
+		return -1
+	}
+	return f.chunk.pos
 }
 
 // find_head_end returns the index just past the first CRLFCRLF at or after from, or -1.
@@ -123,7 +129,7 @@ fn find_head_end(buf []u8, from int) int {
 	// before it, at index from + 3 or later
 	mut i := from + 3
 	for i < buf.len {
-		p := unsafe { C.memchr(&u8(buf.data) + i, `\n`, usize(buf.len - i)) }
+		p := unsafe { C.memchr(&u8(buf.data) + i, `\n`, u64(buf.len - i)) }
 		if isnil(p) {
 			return -1
 		}
@@ -212,7 +218,7 @@ fn framing_fields(head []u8, mut te Span, mut cl Span, mut ex Span) {
 fn crlf_at(head []u8, i int) int {
 	mut k := i + 1
 	for k < head.len {
-		p := unsafe { C.memchr(&u8(head.data) + k, `\n`, usize(head.len - k)) }
+		p := unsafe { C.memchr(&u8(head.data) + k, `\n`, u64(head.len - k)) }
 		if isnil(p) {
 			break
 		}

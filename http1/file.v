@@ -12,7 +12,7 @@ pub mut:
 }
 
 fn C.viltrum_file_open(path &u8, info &C.viltrum_file_info) int
-fn C.viltrum_file_pread(fd int, buf voidptr, n usize, off i64) i64
+fn C.viltrum_file_pread(fd int, buf voidptr, n u64, off i64) i64
 fn C.viltrum_file_close(fd int)
 
 // file_inline_max: a file this size or smaller goes out with its head in one write.
@@ -331,7 +331,7 @@ fn (mut c Ctx) answer_head(status int, content_type string, coding string, lengt
 pub fn read_at(fd int, p &u8, n i64, off i64) i64 {
 	mut got := i64(0)
 	for got < n {
-		r := C.viltrum_file_pread(fd, unsafe { p + got }, usize(n - got), off + got)
+		r := C.viltrum_file_pread(fd, unsafe { p + got }, u64(n - got), off + got)
 		if r <= 0 {
 			break
 		}

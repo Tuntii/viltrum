@@ -211,6 +211,7 @@ fn (mut l Loop) fire() {
 
 // settle hands the buffers the connection on fd left empty back to the worker's
 // pools, once an event on it is handled (Worker.settle).
+@[inline]
 fn (mut l Loop) settle(fd int) {
 	if fd < l.conns.len && !isnil(l.conns[fd]) && l.conns[fd].fd == fd {
 		mut c := l.conns[fd]

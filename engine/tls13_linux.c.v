@@ -127,24 +127,16 @@ fn (mut r Tls13) alloc() bool {
 fn (mut w Worker) tls_lend(mut t TlsConn) {
 	mut r := &t.r13
 	if r.inb.cap == 0 {
-		r.inb = if w.tin_pool.len > 0 {
-			w.tin_pool.pop()
-		} else {
-			[]u8{cap: tls13_in_cap} // cold: past the most TLS connections ever busy at once
-		}
+		r.inb = w.tin_pool.take(tls13_in_cap)
 	}
 	if r.out.cap == 0 {
-		r.out = if w.tout_pool.len > 0 {
-			w.tout_pool.pop()
-		} else {
-			[]u8{cap: tls13_out_cap} // cold: as above
-		}
+		r.out = w.tout_pool.take(tls13_out_cap)
 	}
 }
 
 // tls_settle takes back t's record buffers that are empty: everything read ahead
 // opened and handed out, no record half sent. With all set the connection is
-// closing, and they go back whatever they hold. The pushes are unsafe as in give_back.
+// closing, and they go back whatever they hold.
 fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
 	mut r := &t.r13
 	if r.inb.cap > 0 && (all || (r.in_off == r.inb.len && r.pt_off >= r.pt_end)) {
@@ -154,8 +146,8 @@ fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
 		r.in_off = 0
 		r.pt_off = 0
 		r.pt_end = 0
-		w.tin_pool << unsafe { r.inb } // cold: grows to the most TLS connections ever busy at once
-		r.inb = []u8{}
+		w.tin_pool.put(r.inb)
+		r.inb = unsafe { w.tin_pool.empty }
 	}
 	if r.out.cap > 0 && (all || r.out.len == 0) {
 		unsafe {
@@ -163,8 +155,8 @@ fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
 		}
 		r.out_off = 0
 		r.out_pt = 0
-		w.tout_pool << unsafe { r.out } // cold: as above
-		r.out = []u8{}
+		w.tout_pool.put(r.out)
+		r.out = unsafe { w.tout_pool.empty }
 	}
 	// the handshake's read-ahead, once a session no longer needs it: tls13 reads its
 	// own records, and a closing one needs nothing
@@ -172,19 +164,15 @@ fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
 		unsafe {
 			t.inbuf.len = 0
 		}
-		w.wpool << unsafe { t.inbuf } // cold: as above
-		t.inbuf = []u8{}
+		w.wpool.put(t.inbuf)
+		t.inbuf = unsafe { w.wpool.empty }
 	}
 }
 
 // tls_inbuf is a read-ahead for a handshake, from the write pool: its buffers are at
 // least as large.
 fn (mut w Worker) tls_inbuf() []u8 {
-	mut b := if w.wpool.len > 0 {
-		w.wpool.pop()
-	} else {
-		[]u8{cap: write_buf_size} // cold: past the most connections ever busy at once
-	}
+	mut b := w.wpool.take(write_buf_size)
 	unsafe {
 		b.len = tls_read_ahead
 	}

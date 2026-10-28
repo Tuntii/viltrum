@@ -133,11 +133,11 @@ pub mut:
 	hub      &Hub = unsafe { nil } // where publish and send go; nil drops them (handle_raw)
 	topics   map[string]&Topic // this worker's subscribers per topic
 	// read and write buffers no connection holds (lend, settle)
-	rpool [][]u8
-	wpool [][]u8
+	rpool BufPool
+	wpool BufPool
 	// TLS 1.3 record buffers no connection holds (tls13_linux.c.v)
-	tin_pool  [][]u8
-	tout_pool [][]u8
+	tin_pool  BufPool
+	tout_pool BufPool
 	// HTTP/2 scratch (h2.v), sized on the first HTTP/2 connection: decoded fields, the
 	// request as an HTTP/1.1 head and its body, the response the handler wrote, and
 	// its header block
@@ -172,21 +172,58 @@ pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
 // parsed and answered within one event, so nothing points into a buffer across
 // events but what is still in it.
 
-// lend gives c a read and a write buffer, if it has none.
+// BufPool is a stack of free buffers. Lend and settle run on every event, and V's
+// array pop, push, element store and empty literal each go through runtime calls and
+// a memcpy of the array header, so the slots are written through a pointer: a move
+// is a plain struct copy.
+struct BufPool {
+mut:
+	slots []BufSlot // the first n hold free buffers; slots only grows, on the cold path
+	n     int
+	empty []u8 // what a connection holds without a buffer
+}
+
+struct BufSlot {
+mut:
+	b []u8
+}
+
+// take is a free buffer, or a new one of cap size when none is.
+@[inline]
+fn (mut p BufPool) take(size int) []u8 {
+	if p.n == 0 {
+		return []u8{cap: size} // cold: past the most connections ever busy at once
+	}
+	p.n--
+	mut s := unsafe { &BufSlot(p.slots.data) + p.n }
+	b := s.b
+	s.b = p.empty // the pool no longer holds what a connection does
+	return b
+}
+
+// put keeps b, which the caller emptied, for the next take.
+@[inline]
+fn (mut p BufPool) put(b []u8) {
+	if p.n == p.slots.len {
+		p.slots << BufSlot{
+			b: unsafe { b }
+		} // cold: grows to the most connections ever busy at once
+	} else {
+		mut s := unsafe { &BufSlot(p.slots.data) + p.n }
+		s.b = unsafe { b }
+	}
+	p.n++
+}
+
+// lend gives c a read and a write buffer, if it has none. Inlined, like settle and
+// give_back: all three run on every event.
+@[inline]
 pub fn (mut w Worker) lend(mut c Conn) {
 	if c.rbuf.cap == 0 {
-		c.rbuf = if w.rpool.len > 0 {
-			w.rpool.pop()
-		} else {
-			[]u8{cap: read_buf_size} // cold: past the most connections ever busy at once
-		}
+		c.rbuf = w.rpool.take(read_buf_size)
 	}
 	if c.wbuf.cap == 0 {
-		c.wbuf = if w.wpool.len > 0 {
-			w.wpool.pop()
-		} else {
-			[]u8{cap: write_buf_size} // cold: as above
-		}
+		c.wbuf = w.wpool.take(write_buf_size)
 	}
 	if !isnil(c.tls) {
 		mut t := c.tls
@@ -196,6 +233,7 @@ pub fn (mut w Worker) lend(mut c Conn) {
 
 // settle takes back c's buffers that are empty: rbuf with no request in part, wbuf
 // with all output out.
+@[inline]
 pub fn (mut w Worker) settle(mut c Conn) {
 	if c.rbuf.len == 0 && c.rbuf.cap > 0 {
 		w.give_back(mut c, true)
@@ -211,24 +249,25 @@ pub fn (mut w Worker) settle(mut c Conn) {
 
 // give_back returns c's read (or write) buffer to the pool, emptied. One that a large
 // request or response grew past what is worth keeping goes to the GC instead. The
-// pushes are unsafe because V master copies an array pushed as a plain value.
+// arrays move under unsafe because V master copies an array stored as a plain value.
+@[inline]
 fn (mut w Worker) give_back(mut c Conn, read bool) {
 	if read {
 		if c.rbuf.cap <= shrink_rbuf_above {
 			unsafe {
 				c.rbuf.len = 0
 			}
-			w.rpool << unsafe { c.rbuf } // cold: grows to the most connections ever busy at once
+			w.rpool.put(c.rbuf)
 		}
-		c.rbuf = []u8{}
+		c.rbuf = unsafe { w.rpool.empty }
 	} else {
 		if c.wbuf.cap <= shrink_wbuf_above {
 			unsafe {
 				c.wbuf.len = 0
 			}
-			w.wpool << unsafe { c.wbuf } // cold: as above
+			w.wpool.put(c.wbuf)
 		}
-		c.wbuf = []u8{}
+		c.wbuf = unsafe { w.wpool.empty }
 		c.woff = 0
 	}
 }

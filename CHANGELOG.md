@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.13.4](https://github.com/Tuntii/viltrum/compare/v1.13.3...v1.13.4) (2026-10-29)
+
+### Performance Improvements
+
+* make lending buffers per event cheap again ([7462e09](https://github.com/Tuntii/viltrum/commit/7462e090636a226d9aab8b78e65a67336300fbeb)), closes [#101](https://github.com/Tuntii/viltrum/issues/101)
+
 ## [1.13.3](https://github.com/Tuntii/viltrum/compare/v1.13.2...v1.13.3) (2026-10-28)
 
 ### Bug Fixes

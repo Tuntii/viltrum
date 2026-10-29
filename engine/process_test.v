@@ -376,14 +376,14 @@ fn test_quiet_connection_holds_no_buffers() {
 	assert c.rbuf.cap == 0 && c.wbuf.cap == 0
 	out := serve_lent(mut w, mut c, shapes['get'].bytes())
 	assert out.ends_with('\r\n\r\n55')
-	assert c.rbuf.cap == 0 && c.wbuf.cap == 0 && w.rpool.len == 1 && w.wpool.len == 1
+	assert c.rbuf.cap == 0 && c.wbuf.cap == 0 && w.rpool.n == 1 && w.wpool.n == 1
 	// a request cut short keeps its read buffer until the rest comes; the write buffer,
 	// empty, goes back
 	req := shapes['get'].bytes()
 	assert serve_lent(mut w, mut c, req[..10]) == ''
-	assert c.rbuf.len == 10 && c.rbuf.cap > 0 && c.wbuf.cap == 0 && w.rpool.len == 0
+	assert c.rbuf.len == 10 && c.rbuf.cap > 0 && c.wbuf.cap == 0 && w.rpool.n == 0
 	assert serve_lent(mut w, mut c, req[10..]).ends_with('\r\n\r\n55')
-	assert c.rbuf.cap == 0 && w.rpool.len == 1
+	assert c.rbuf.cap == 0 && w.rpool.n == 1
 	// output the socket has not taken keeps the write buffer
 	w.lend(mut c)
 	unsafe { c.rbuf.push_many(req.data, req.len) }
@@ -397,9 +397,9 @@ fn test_quiet_connection_holds_no_buffers() {
 	unsafe {
 		c.wbuf.len = 0
 	}
-	pooled := w.wpool.len
+	pooled := w.wpool.n
 	w.settle(mut c)
-	assert c.wbuf.cap == 0 && w.wpool.len == pooled
+	assert c.wbuf.cap == 0 && w.wpool.n == pooled
 }
 
 // Many quiet connections share a few buffers: served one after another, they never
@@ -415,7 +415,7 @@ fn test_quiet_connections_share_the_pool() {
 			assert serve_lent(mut w, mut c, shapes['pipelined'].bytes()).count('\r\n\r\nok') == 16
 		}
 	}
-	assert w.rpool.len == 1 && w.wpool.len == 1
+	assert w.rpool.n == 1 && w.wpool.n == 1
 	assert conns.all(it.rbuf.cap == 0 && it.wbuf.cap == 0)
 }
 

@@ -45,9 +45,15 @@ class ResultsTest(unittest.TestCase):
         have = [ok("a", "1"), ok("b", "1"), ok("a", "2")]
         self.assertEqual(results.publish(commits, have)["setup"], "1")
 
-    def test_publish_none_when_no_setup_complete(self):
+    def test_publish_partial_newest_setup_when_none_complete(self):
+        # the very first backfill: show what is measured so far, one setup only
         commits = results.select_commits(LOG)
-        self.assertIsNone(results.publish(commits, [ok("a", "1")]))
+        out = results.publish(commits, [ok("a", "1"), ok("a", "2", 90)])
+        self.assertEqual(out["setup"], "2")
+        self.assertEqual([c["hash"] for c in out["commits"]], ["a"])
+
+    def test_publish_none_without_results(self):
+        self.assertIsNone(results.publish(results.select_commits(LOG), []))
 
     def test_publish_compares_setups_as_numbers(self):
         commits = results.select_commits(LOG)[:1]

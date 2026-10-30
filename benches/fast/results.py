@@ -54,19 +54,20 @@ def add(results, line):
 
 def publish(commits, results):
     """The newest setup that covers every commit, merged into the commits,
-    newest first; None when no setup is complete."""
+    newest first. While none does (the first backfill), the newest setup's
+    commits so far; None without results."""
     by_setup = {}
     for r in results:
         by_setup.setdefault(r["setup"], {})[r["hash"]] = r
-    for setup in sorted(by_setup, key=int, reverse=True):
-        got = by_setup[setup]
-        if all(c["hash"] in got for c in commits):
-            rows = []
-            for c in reversed(commits):
-                r = got[c["hash"]]
-                rows.append({**c, **{k: v for k, v in r.items() if k not in ("hash", "setup")}})
-            return {"setup": setup, "commits": rows}
-    return None
+    if not by_setup:
+        return None
+    order = sorted(by_setup, key=int, reverse=True)
+    complete = [s for s in order if all(c["hash"] in by_setup[s] for c in commits)]
+    setup = (complete or order)[0]
+    got = by_setup[setup]
+    rows = [{**c, **{k: v for k, v in got[c["hash"]].items() if k not in ("hash", "setup")}}
+            for c in reversed(commits) if c["hash"] in got]
+    return {"setup": setup, "commits": rows}
 
 
 def write_json_atomic(path, obj):

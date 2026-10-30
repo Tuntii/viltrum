@@ -26,6 +26,11 @@ as garbage in tests.
 to close the connection after the response. One response per request; a second call is ignored (it panics in
 `-d viltrum_debug` builds).
 
+`c.json` writes what `x.json2.encode` writes: strings, bools, numbers, arrays, maps, structs (embedded ones
+flattened), enums by name, options, pointers, sum types (a struct variant with `"_type"`), interfaces as `null`
+and `time.Time` as RFC 3339. None and nil fields are left out; `@[json: 'name']`, `@[json: '-']`, `@[skip]`,
+`@[omitempty]` and `@[json_null]` work as in `x.json2`.
+
 The framework writes `Content-Length`, `Date` (on by default) and `Server` (if `Options.server_header` is set).
 HEAD answers keep `Content-Length` and drop the body. A 405 carries `Allow` with the methods the path has.
 

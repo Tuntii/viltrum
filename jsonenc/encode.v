@@ -20,7 +20,24 @@ pub fn encode_into[T](mut out []u8, val T) int {
 }
 
 fn encode[T](mut out []u8, val T) bool {
-	$if T.unaliased_typ is string {
+	// Options and pointers come first: the checks below also hold for an option or a
+	// pointer of a matching type.
+	$if T is $interface {
+		// As x.json2 does.
+		_ = push(mut out, 'null')
+	} $else $if T is $option {
+		if val == none {
+			_ = push(mut out, 'null')
+		} else {
+			_ = encode(mut out, unwrap(val))
+		}
+	} $else $if T is $pointer {
+		if voidptr(val) == unsafe { nil } {
+			_ = push(mut out, 'null')
+		} else {
+			_ = encode(mut out, *val)
+		}
+	} $else $if T.unaliased_typ is string {
 		_ = write_string(mut out, string(val))
 	} $else $if T.unaliased_typ is bool {
 		if bool(val) {
@@ -45,22 +62,191 @@ fn encode[T](mut out []u8, val T) bool {
 			_ = encode(mut out, item)
 		}
 		_ = put(mut out, `]`)
+	} $else $if T.unaliased_typ is $map {
+		_ = put(mut out, `{`)
+		mut first := true
+		for k, v in val {
+			if !first {
+				_ = put(mut out, `,`)
+			}
+			first = false
+			$if k is string {
+				_ = write_string(mut out, k)
+			} $else {
+				_ = write_string(mut out, '${k}')
+			}
+			_ = put(mut out, `:`)
+			_ = encode(mut out, v)
+		}
+		_ = put(mut out, `}`)
+	} $else $if T.unaliased_typ is $enum {
+		// By name or its @[json: 'name'], as x.json2 does by default.
+		$for member in T.values {
+			if member.value == val {
+				name, _, _, _ := field_attrs(member.name, member.attrs)
+				_ = write_string(mut out, name)
+			}
+		}
+	} $else $if T.unaliased_typ is $sumtype {
+		$for variant in T.variants {
+			if val is variant {
+				_ = encode_variant(mut out, val)
+			}
+		}
 	} $else $if T.unaliased_typ is time.Time {
 		// As vlib json does. Walking its fields fails on V master, where Time holds a &Location.
 		_ = write_string(mut out, time.Time(val).format_rfc3339())
 	} $else $if T.unaliased_typ is $struct {
 		_ = put(mut out, `{`)
-		mut first := true
-		$for field in T.fields {
-			_ = key(mut out, field.name, first)
-			first = false
-			_ = encode(mut out, val.$(field.name))
-		}
+		_ = fields(mut out, val, true)
 		_ = put(mut out, `}`)
 	} $else {
 		$compile_error('viltrum.jsonenc: unsupported type')
 	}
 	return true
+}
+
+// encode_variant writes a sum type's value; a struct gets a `"_type"` member naming
+// it, as x.json2 does.
+fn encode_variant[T](mut out []u8, val T) bool {
+	$if T.unaliased_typ is time.Time {
+		_ = encode(mut out, val)
+	} $else $if T.unaliased_typ is $struct {
+		_ = put(mut out, `{`)
+		first := fields(mut out, val, true)
+		_ = key(mut out, '_type', first)
+		_ = write_string(mut out, short_name(T.name))
+		_ = put(mut out, `}`)
+	} $else {
+		_ = encode(mut out, val)
+	}
+	return true
+}
+
+// fields writes val's fields as object members, an embedded struct's in its place as
+// x.json2 does, and returns whether it wrote none while first was set.
+// shortcut: an embedded field named like an outer one is written twice, where x.json2
+// prefixes it; handle that when someone needs it.
+fn fields[T](mut out []u8, val T, was_first bool) bool {
+	mut first := was_first
+	$for field in T.fields {
+		$if field.is_embed {
+			first = fields(mut out, val.$(field.name), first)
+		} $else {
+			name, skip, omitempty, keep_null := field_attrs(field.name, field.attrs)
+			if !skip && keep(val.$(field.name), omitempty, keep_null) {
+				_ = key(mut out, name, first)
+				first = false
+				_ = encode(mut out, val.$(field.name))
+			}
+		}
+	}
+	return first
+}
+
+// field_attrs reads a field's (or enum value's) attributes as x.json2 does: its key,
+// and whether to skip it, leave it out when empty, or write null for none. A field
+// without attributes costs a length check.
+fn field_attrs(name string, attrs []string) (string, bool, bool, bool) {
+	mut key_name := name
+	mut omitempty := false
+	mut keep_null := false
+	for a in attrs {
+		if a == 'skip' {
+			return name, true, false, false
+		} else if a == 'omitempty' {
+			omitempty = true
+		} else if a == 'required' || a == 'json_null' {
+			keep_null = true
+		} else if a.starts_with('json:') {
+			key_name = attr_value(a)
+			if key_name == '-' {
+				return name, true, false, false
+			}
+		}
+	}
+	return key_name, false, omitempty, keep_null
+}
+
+// attr_value is the text after `json:`, unquoted, as a view into a.
+fn attr_value(a string) string {
+	mut i := 5
+	mut j := a.len
+	for i < j && a[i] == ` ` {
+		i++
+	}
+	for j > i && a[j - 1] == ` ` {
+		j--
+	}
+	if j - i > 1 && (a[i] == `'` || a[i] == `"`) && a[j - 1] == a[i] {
+		i++
+		j--
+	}
+	return unsafe { tos(a.str + i, j - i) }
+}
+
+// short_name drops the module from a type name, as x.json2's `_type` does.
+fn short_name(s string) string {
+	i := s.last_index_u8(`.`) + 1
+	return unsafe { tos(s.str + i, s.len - i) }
+}
+
+// keep reports whether a struct field is written: never when nil, when none only
+// with @[required] or @[json_null], when empty not with @[omitempty].
+@[inline]
+fn keep[T](val T, omitempty bool, keep_null bool) bool {
+	if is_none(val) {
+		return keep_null && !omitempty
+	}
+	if is_nil(val) {
+		return false
+	}
+	return !omitempty || !is_empty(val)
+}
+
+// is_none and is_nil only return under $if: V 0.5.2 miscompiles an `if val == none`
+// branch in an option's $if.
+@[inline]
+fn is_none[T](val T) bool {
+	$if T is $option {
+		return val == none
+	}
+	return false
+}
+
+@[inline]
+fn is_nil[T](val T) bool {
+	$if T is $pointer {
+		return voidptr(val) == unsafe { nil }
+	}
+	return false
+}
+
+// is_empty is x.json2's test for @[omitempty]: zero, '', false, no items, none, nil,
+// the first enum value, or a struct equal to its defaults.
+fn is_empty[T](val T) bool {
+	$if T is $option {
+		return val == none || is_empty(unwrap(val))
+	} $else $if T is $pointer {
+		return voidptr(val) == unsafe { nil }
+	} $else $if T.unaliased_typ is string {
+		return string(val) == ''
+	} $else $if T.unaliased_typ is bool {
+		return !bool(val)
+	} $else $if T.unaliased_typ is $int || T.unaliased_typ is $float {
+		return val == 0
+	} $else $if T.unaliased_typ is $array || T.unaliased_typ is $map {
+		return val.len == 0
+	} $else $if T.unaliased_typ is $enum {
+		return val == unsafe { T(0) }
+	} $else $if T.unaliased_typ is $struct {
+		return val == T{}
+	}
+	return false
+}
+
+fn unwrap[T](val ?T) T {
+	return val or { T{} }
 }
 
 // The writers below append in place while out has room and fall back to <<

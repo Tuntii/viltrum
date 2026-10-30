@@ -1,5 +1,7 @@
 # Contributing
 
+Everyone taking part in this project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Setup
 
 ```bash

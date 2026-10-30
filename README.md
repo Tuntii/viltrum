@@ -40,7 +40,7 @@ handshake, its own DEFLATE encoder, HTTP/2, and a CI gate that fails if a reques
 ## Quick start
 
 ```bash
-v install --git https://github.com/Tuntii/viltrum
+v install Tuntii.Viltrum
 ```
 
 ```v
@@ -206,7 +206,7 @@ decision before it starts; the plan, its principles and what Viltrum will not do
 Bug reports, questions and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the checks
 CI runs and the commit style; releases are cut by [semantic-release](docs/releasing.md) from conventional commits
 on `main`. Cards on the [project board](https://github.com/users/Tuntii/projects/3) marked *Known gaps* are small,
-self-contained places to start.
+self-contained places to start. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 Found a security problem? Report it privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=viltrum fast: measure new commits on main (benches/fast)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=FAST_HOME=/opt/viltrum-fast
+ExecStart=/bin/bash /opt/viltrum-fast/repo/benches/fast/run.sh
+Nice=10
+IOSchedulingClass=idle

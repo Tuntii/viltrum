@@ -10,9 +10,9 @@ RUN curl -fsSL -o /tmp/v.zip https://github.com/vlang/v/releases/download/0.5.2/
 ENV PATH=/opt/v:$PATH
 
 # The entry parks /async-db on Ctx.suspend and App.wake, so this ref has to be a
-# viltrum that contains them. Pin the merge commit (or the release that includes
-# it) before the files are copied into HttpArena; a branch works until that lands.
-ARG VILTRUM_REF=cursor/httparena-profiles-2fe0
+# viltrum that contains them. ce28bc7 is that commit. After this branch merges,
+# point it at the merge commit or the release tag that includes it.
+ARG VILTRUM_REF=33d6612d8e7d3f3ed3c8cad1da4aa7aec7372e78
 RUN git clone --depth 1 --branch ${VILTRUM_REF} https://github.com/Tuntii/viltrum /root/.vmodules/viltrum
 
 WORKDIR /app

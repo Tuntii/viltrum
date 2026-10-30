@@ -53,7 +53,12 @@ them, the page keeps showing the previous setup, so the chart never mixes two se
   (HttpArena's file at commit `25f5f411dab3451380d1f93069e8ceac67d6d97b`, not committed here), `store.json`
   (every result of every setup), `www/` (what nginx serves), `work/` (scratch builds), `run.lock`.
 - `viltrum-fast.timer` starts `viltrum-fast.service` every 5 minutes; a run that finds the lock held exits.
-  `nice`/`ionice` keep it behind hostlab's live services. The bench server listens on 127.0.0.1:28090 only.
+  The service runs as the system user `viltrum-fast` with only `/opt/viltrum-fast` writable (it builds and
+  runs whatever reaches main), `MemoryMax=6G`, and `nice`/`ionice` behind hostlab's live services. V is a
+  private copy of 0.5.2 at `/opt/viltrum-fast/v`. The bench server listens on 127.0.0.1:28090 only (`smoke.sh`
+  uses 28091: viltrum binds with `SO_REUSEPORT`, so a second server on the same port would take connections).
+- Each measurement has 20 minutes. A `run_failed` (a busy host, a hung server) is retried up to three times;
+  a taken port records nothing and waits for the next run.
 - nginx: two `location` blocks in `sites-available/v.rustapi.cloud.conf` (`deploy/nginx-fast.conf`).
 - Packages installed for this: `valgrind`, which also pulled in `gdb`, `libc6-dbg`, `libc6-i386`,
   `libbabeltrace1`, `libboost-regex1.74.0`, `libdebuginfod-common`, `libdebuginfod1`, `libipt2`,

@@ -20,7 +20,7 @@ main() {
 		echo "busy: another run holds $home/run.lock" >&2
 		exit 0
 	}
-	git -C "$repo" fetch -q origin
+	timeout 120 git -C "$repo" fetch -q origin
 	# git replaces files rather than rewriting them, so this shell keeps reading
 	# the run.sh it started with; everything below comes from the new checkout
 	git -C "$repo" checkout -q --detach "${FAST_SCRIPTS_REF:-origin/main}"
@@ -30,9 +30,17 @@ main() {
 	setup=$(tr -d '[:space:]' <"$fast/SETUP")
 	publish
 	for h in $(python3 "$fast/results.py" pending --repo "$repo" --results "$home/store.json" --setup "$setup"); do
-		LOAD=$home/load FAST_DATA=$home/data/dataset.json nice -n 10 ionice -c3 \
-			bash "$fast/measure.sh" "$repo" "$h" "$home/work" |
-			python3 "$fast/results.py" add --results "$home/store.json"
+		# a measurement killed with -9 can leave its server behind; ours run from work/<hash>/
+		pkill -KILL -f "$home/work/[0-9a-f]{40}/server" || true
+		rc=0
+		line=$(LOAD=$home/load FAST_DATA=$home/data/dataset.json timeout -k 30 1200 \
+			nice -n 10 ionice -c3 bash "$fast/measure.sh" "$repo" "$h" "$home/work") || rc=$?
+		if [ "$rc" = 3 ]; then
+			echo "port busy, trying again on the next run" >&2
+			break
+		fi
+		[ -n "$line" ] || line="{\"hash\":\"$h\",\"setup\":\"$setup\",\"status\":\"run_failed\"}"
+		printf '%s\n' "$line" | python3 "$fast/results.py" add --results "$home/store.json"
 		publish
 	done
 }

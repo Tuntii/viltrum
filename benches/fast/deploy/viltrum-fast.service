@@ -5,7 +5,17 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-Environment=FAST_HOME=/opt/viltrum-fast
+# It builds and runs whatever reaches main, so not as root, and only
+# /opt/viltrum-fast is writable. V is a private copy at /opt/viltrum-fast/v.
+User=viltrum-fast
+Group=viltrum-fast
+Environment=FAST_HOME=/opt/viltrum-fast HOME=/opt/viltrum-fast V=/opt/viltrum-fast/v/v
 ExecStart=/bin/bash /opt/viltrum-fast/repo/benches/fast/run.sh
 Nice=10
 IOSchedulingClass=idle
+MemoryMax=6G
+ProtectSystem=strict
+ReadWritePaths=/opt/viltrum-fast
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes

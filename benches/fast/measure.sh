@@ -4,6 +4,7 @@
 # ir is callgrind instructions per request on one worker and one connection, so
 # it does not move with machine noise; rps is a short run on 4 CPUs and is only
 # roughly comparable. Logs go to stderr. Needs LOAD (the built load client).
+# Exits 3 with no line when FAST_PORT is taken, so nothing is recorded.
 # Changing anything that moves the numbers means bumping SETUP (README.md).
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -19,10 +20,11 @@ d=$work/$hash
 pid=
 
 cleanup() {
-	[ -n "$pid" ] && kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null
+	stop_server
 	rm -rf "$d"
 }
 trap cleanup EXIT
+trap 'exit 1' TERM INT # so a timeout still runs cleanup
 
 emit() { # status [ir-json rps-json]
 	if [ "$1" = ok ]; then
@@ -61,8 +63,15 @@ wait_ready() { # seconds
 	return 1
 }
 
+# stop_server asks for viltrum's graceful stop and kills it if that hangs.
 stop_server() {
+	[ -n "$pid" ] || return 0
 	kill "$pid" 2>/dev/null
+	for _ in $(seq 50); do
+		kill -0 "$pid" 2>/dev/null || break
+		sleep 0.1
+	done
+	kill -9 "$pid" 2>/dev/null
 	wait "$pid" 2>/dev/null
 	pid=
 }
@@ -75,9 +84,10 @@ VMODULES=$d/vm VCACHE=${VCACHE:-$work/.vcache} "$v" -prod -o "$d/server" "$here/
 	emit build_failed
 }
 
+# a taken port says nothing about the commit: no result, exit 3, run.sh retries later
 if ss -Hltn "sport = :$port" | grep -q .; then
 	echo "port $port is taken" >&2
-	emit run_failed
+	exit 3
 fi
 
 # Ir/request: one worker on one CPU under callgrind, one connection.

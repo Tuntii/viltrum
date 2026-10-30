@@ -33,13 +33,22 @@ def select_commits(log):
     return out
 
 
+RETRIES = 3  # a run_failed may be the busy host, not the commit
+
+
 def pending(commits, results, setup):
-    done = {r["hash"] for r in results if r["setup"] == setup}
+    done = {
+        r["hash"] for r in results
+        if r["setup"] == setup and (r["status"] != "run_failed" or r.get("attempts", 1) >= RETRIES)
+    }
     return [c["hash"] for c in commits if c["hash"] not in done]
 
 
 def add(results, line):
     key = (line["hash"], line["setup"])
+    old = [r for r in results if (r["hash"], r["setup"]) == key]
+    if line["status"] == "run_failed":
+        line["attempts"] = (old[0].get("attempts", 1) if old else 0) + 1
     return [r for r in results if (r["hash"], r["setup"]) != key] + [line]
 
 

@@ -73,6 +73,26 @@ class ResultsTest(unittest.TestCase):
         self.assertEqual(len(have), 2)
         self.assertEqual([r["ir"]["baseline"] for r in have if r["setup"] == "1"], [50])
 
+    def test_run_failed_is_retried_up_to_three_attempts(self):
+        commits = results.select_commits(LOG)[:1]
+        fail = {"hash": "a", "setup": "1", "status": "run_failed"}
+        have = []
+        for want in (["a"], ["a"], []):
+            have = results.add(have, dict(fail))
+            self.assertEqual(results.pending(commits, have, "1"), want)
+        self.assertEqual(have[0]["attempts"], 3)
+
+    def test_ok_after_run_failed_is_final(self):
+        commits = results.select_commits(LOG)[:1]
+        have = results.add([], {"hash": "a", "setup": "1", "status": "run_failed"})
+        have = results.add(have, ok("a", "1"))
+        self.assertEqual(results.pending(commits, have, "1"), [])
+
+    def test_build_failed_is_not_retried(self):
+        commits = results.select_commits(LOG)[:1]
+        have = results.add([], {"hash": "a", "setup": "1", "status": "build_failed"})
+        self.assertEqual(results.pending(commits, have, "1"), [])
+
     def test_write_json_atomic_leaves_no_temp(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "results.json")

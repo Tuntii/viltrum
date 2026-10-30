@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.14.0](https://github.com/Tuntii/viltrum/compare/v1.13.5...v1.14.0) (2026-10-30)
+
+### Features
+
+* **jsonenc:** encode every type x.json2 does ([bab6544](https://github.com/Tuntii/viltrum/commit/bab6544ab5783a9fda50737a072937463e7073be))
+
+### Bug Fixes
+
+* **jsonenc:** write integer map keys without allocating ([b564645](https://github.com/Tuntii/viltrum/commit/b564645bba87788ffb8b1ce8e9ed814e0b13bc4c))
+
 ## [1.13.5](https://github.com/Tuntii/viltrum/compare/v1.13.4...v1.13.5) (2026-10-30)
 
 ### Bug Fixes

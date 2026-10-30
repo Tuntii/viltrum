@@ -94,6 +94,118 @@ fn test_time_matches_vlib_json() {
 	assert enc(now) == json2.encode(now)
 }
 
+enum Level {
+	low
+	high
+}
+
+struct Mixed {
+	tags  map[string]int
+	ids   map[int]string
+	level Level
+	note  ?string
+	gone  ?int
+	next  &Rating = unsafe { nil }
+}
+
+// Maps, enums, options and pointers were a compile error before.
+fn test_maps_enums_options_pointers_match_vlib_json() {
+	m := Mixed{
+		tags:  {
+			'a"b': 1
+			'c':   2
+		}
+		ids:   {
+			7: 'x'
+		}
+		level: .high
+		note:  'hi'
+		next:  &Rating{
+			score: 3
+			count: 4
+		}
+	}
+	assert enc(m) == json2.encode(m)
+	assert enc({
+		'msg': 'ok'
+	}) == '{"msg":"ok"}'
+	assert enc(Level.low) == '"low"'
+	keys := {
+		u64(18446744073709551615): 1
+	}
+	assert enc(keys) == json2.encode(keys)
+	neg := {
+		-3: true
+	}
+	assert enc(neg) == json2.encode(neg)
+	runes := {
+		`é`: 1
+	}
+	assert enc(runes) == json2.encode(runes)
+	assert enc(Mixed{}) == json2.encode(Mixed{})
+}
+
+enum Tone {
+	soft  @[json: 'SOFT']
+	loud
+}
+
+type Shape = Rating | Tone | int | string | []int
+
+interface Area {
+	area() int
+}
+
+struct Square {
+	side int
+}
+
+fn (s Square) area() int {
+	return s.side * s.side
+}
+
+struct Base {
+	id   int
+	kind string @[json: 'type']
+}
+
+struct Tagged {
+	Base
+	name   string @[json: 'full_name']
+	secret string @[skip]
+	hidden string @[json: '-']
+	blank  string @[omitempty]
+	zero   int    @[omitempty]
+	list   []int  @[omitempty]
+	opt    ?int   @[json: "o"]
+	must   ?int   @[json_null]
+	tone   Tone
+	shapes []Shape
+	shape  Shape = 0
+	area   Area  = Square{2}
+}
+
+// Field attributes, embedded structs, sum types and interfaces, as x.json2 writes them.
+fn test_attrs_embeds_sumtypes_match_vlib_json() {
+	t := Tagged{
+		id:     7
+		kind:   'k'
+		name:   'n'
+		secret: 's'
+		hidden: 'h'
+		opt:    3
+		shapes: [Shape(Rating{
+			score: 1
+			count: 2
+		}), Tone.soft, 5, 'x', [1, 2]]
+		shape:  Rating{}
+	}
+	assert enc(t) == json2.encode(t)
+	assert enc(Tagged{}) == json2.encode(Tagged{})
+	assert enc(Tone.soft) == '"SOFT"'
+	assert enc(Shape(4)) == '4'
+}
+
 fn test_strings_are_escaped() {
 	assert enc('plain') == '"plain"'
 	assert enc('q"b\\s/') == '"q\\"b\\\\s/"'

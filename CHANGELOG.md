@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.13.5](https://github.com/Tuntii/viltrum/compare/v1.13.4...v1.13.5) (2026-10-30)
+
+### Bug Fixes
+
+* **jsonenc:** encode time.Time as RFC 3339, which also builds on V master ([77655e4](https://github.com/Tuntii/viltrum/commit/77655e4aae5eb01c2a569eb4fb7e0e3756781799)), closes [#107](https://github.com/Tuntii/viltrum/issues/107)
+
 ## [1.13.4](https://github.com/Tuntii/viltrum/compare/v1.13.3...v1.13.4) (2026-10-29)
 
 ### Performance Improvements

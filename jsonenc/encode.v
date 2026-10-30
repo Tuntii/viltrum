@@ -72,8 +72,18 @@ fn encode[T](mut out []u8, val T) bool {
 			first = false
 			$if k is string {
 				_ = write_string(mut out, k)
+			} $else $if k is rune {
+				_ = write_string(mut out, '${k}') // cold: rune keys are rare
+			} $else $if k is u64 {
+				_ = put(mut out, `"`)
+				_ = write_u64(mut out, k)
+				_ = put(mut out, `"`)
+			} $else $if k is $int {
+				_ = put(mut out, `"`)
+				_ = write_i64(mut out, i64(k))
+				_ = put(mut out, `"`)
 			} $else {
-				_ = write_string(mut out, '${k}')
+				_ = write_string(mut out, '${k}') // cold: enum and other keys are rare
 			}
 			_ = put(mut out, `:`)
 			_ = encode(mut out, v)

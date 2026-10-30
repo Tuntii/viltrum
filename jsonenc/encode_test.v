@@ -130,6 +130,18 @@ fn test_maps_enums_options_pointers_match_vlib_json() {
 		'msg': 'ok'
 	}) == '{"msg":"ok"}'
 	assert enc(Level.low) == '"low"'
+	keys := {
+		u64(18446744073709551615): 1
+	}
+	assert enc(keys) == json2.encode(keys)
+	neg := {
+		-3: true
+	}
+	assert enc(neg) == json2.encode(neg)
+	runes := {
+		`é`: 1
+	}
+	assert enc(runes) == json2.encode(runes)
 	assert enc(Mixed{}) == json2.encode(Mixed{})
 }
 

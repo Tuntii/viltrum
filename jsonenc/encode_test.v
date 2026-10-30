@@ -134,7 +134,7 @@ fn test_maps_enums_options_pointers_match_vlib_json() {
 }
 
 enum Tone {
-	soft @[json: 'SOFT']
+	soft  @[json: 'SOFT']
 	loud
 }
 
@@ -170,7 +170,7 @@ struct Tagged {
 	tone   Tone
 	shapes []Shape
 	shape  Shape = 0
-	area   Area   = Square{2}
+	area   Area  = Square{2}
 }
 
 // Field attributes, embedded structs, sum types and interfaces, as x.json2 writes them.

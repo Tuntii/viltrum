@@ -1,5 +1,7 @@
 # Contributing
 
+Everyone taking part in this project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Setup
 
 ```bash
@@ -11,13 +13,19 @@ Requires [V](https://github.com/vlang/v) on `PATH`.
 
 ## Checks
 
+The ones CI runs on every pull request ([ci.yml](.github/workflows/ci.yml)). The unit tests and examples also run
+on V master.
+
 ```bash
-v test http/
-v test router/
-v test engine/
-v test ws/
+v fmt -verify .
+v test http1/ http2/ jsonenc/ router/ engine/ tests/
+v -d viltrum_debug test router/ engine/ tests/
+bash scripts/hotpath_lint.sh
+bash scripts/gcpin_check.sh
 v -o /tmp/viltrum-hello examples/hello
 ```
+
+The engine tests serve on Linux only. On macOS and Windows the unit tests still run and the examples build.
 
 Optional benches (local only):
 

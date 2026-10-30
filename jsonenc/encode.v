@@ -1,6 +1,7 @@
 module jsonenc
 
 import math
+import time
 
 // encode_into appends the JSON encoding of val to out without allocating and returns
 // the number of bytes appended. It is generated per type at compile time, so there is
@@ -44,6 +45,9 @@ fn encode[T](mut out []u8, val T) bool {
 			_ = encode(mut out, item)
 		}
 		_ = put(mut out, `]`)
+	} $else $if T.unaliased_typ is time.Time {
+		// As vlib json does. Walking its fields fails on V master, where Time holds a &Location.
+		_ = write_string(mut out, time.Time(val).format_rfc3339())
 	} $else $if T.unaliased_typ is $struct {
 		_ = put(mut out, `{`)
 		mut first := true

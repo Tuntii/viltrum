@@ -1,8 +1,33 @@
 module main
 
+import net
 import os
 import viltrum
 import x.json2
+
+#flag -I/usr/include/postgresql
+#flag -lpq
+#flag -pthread
+#include "pg.h"
+
+fn C.viltrum_pg_bind(app voidptr)
+fn C.viltrum_pg_app() voidptr
+fn C.viltrum_pg_start(url &u8, max_conn int) int
+fn C.viltrum_pg_submit(min int, max int, limit int) u64
+fn C.viltrum_pg_status(token u64) int
+fn C.viltrum_pg_expired(token u64) int
+fn C.viltrum_pg_body(token u64, n &int) &u8
+fn C.viltrum_pg_release(token u64)
+
+@[export: 'viltrum_pg_on_ready']
+fn viltrum_pg_on_ready(token u64) {
+	app := unsafe { &viltrum.App(C.viltrum_pg_app()) }
+	if !isnil(app) {
+		app.wake(token)
+	}
+}
+
+const db_empty = '{"items":[],"count":0}'.bytes()
 
 struct Rating {
 	score int
@@ -36,6 +61,16 @@ struct TlsPort {
 fn main() {
 	dataset := json2.decode[[]Item](os.read_file('/data/dataset.json') or { '[]' }) or { []Item{} }
 	mut app := viltrum.new()
+	C.viltrum_pg_bind(app)
+	if url := os.getenv_opt('DATABASE_URL') {
+		if url.len > 0 {
+			mut n := (os.getenv_opt('DATABASE_MAX_CONN') or { '64' }).int()
+			if n < 1 {
+				n = 64
+			}
+			C.viltrum_pg_start(url.str, n)
+		}
+	}
 	// One copy of the dataset per worker: totals are written per request, and a
 	// worker only touches its own copy.
 	mut copies := [][]Item{}
@@ -44,6 +79,7 @@ fn main() {
 	}
 	app.get('/baseline11', baseline)
 	app.post('/baseline11', baseline)
+	app.get('/async-db', async_db)
 	// the HTTP/2 profiles' baseline, on 8082 (h2c) and 8443 (h2)
 	app.get('/baseline2', baseline)
 	// static-h2: the files from disk, their .br and .gz copies to clients that accept them
@@ -94,33 +130,119 @@ fn main() {
 			}
 		}
 	})
-	mut listeners := [
-		viltrum.Listener{
+	mut listeners := []viltrum.Listener{}
+	// gateway-64's server: plain HTTP on PROXY_PORT, and 8080 when it is free so the
+	// benchmark's readiness probe has something to ask. No TLS here; the proxy holds 8443.
+	if port := os.getenv_opt('PROXY_PORT') {
+		listeners << viltrum.Listener{
+			addr: '0.0.0.0:${port}'
+		}
+		if probe := os.getenv_opt('H1_PROBE_PORT') {
+			if probe != port && can_listen('0.0.0.0:${probe}') {
+				listeners << viltrum.Listener{
+					addr: '0.0.0.0:${probe}'
+				}
+			}
+		}
+	} else {
+		listeners << viltrum.Listener{
 			addr: '0.0.0.0:8080'
-		},
+		}
 		// baseline-h2c and json-h2c: HTTP/2 with prior knowledge (and HTTP/1.1) on 8082
-		viltrum.Listener{
+		listeners << viltrum.Listener{
 			addr:  '0.0.0.0:8082'
 			http2: true
-		},
-	]
-	// json-tls and 8gbit on 8081; baseline-h2 and static-h2 on 8443, HTTP/2 chosen by
-	// ALPN; the TLS hardening check on 9000 with its own pair, which it replaces on disk
-	// while the server runs.
-	for l in [TlsPort{'/certs', 8081, false}, TlsPort{'/certs', 8443, true},
-		TlsPort{'/certs-tls', 9000, false}] {
-		if os.exists('${l.dir}/server.crt') {
-			listeners << viltrum.Listener{
-				addr:  '0.0.0.0:${l.port}'
-				http2: l.http2
-				tls:   viltrum.TlsOptions{
-					cert_file: '${l.dir}/server.crt'
-					key_file:  '${l.dir}/server.key'
+		}
+	}
+	// json-tls, static-tls and 8gbit on 8081 (HTTP/1.1 only); baseline-h2 and static-h2
+	// on 8443, HTTP/2 chosen by ALPN; the TLS hardening check on 9000 with its own pair,
+	// which it replaces on disk while the server runs. The gateway server skips these:
+	// the proxy owns 8443, and binding it here would share the port.
+	if os.getenv_opt('PROXY_PORT') == none {
+		for l in [TlsPort{'/certs', 8081, false}, TlsPort{'/certs', 8443, true},
+			TlsPort{'/certs-tls', 9000, false}] {
+			if os.exists('${l.dir}/server.crt') {
+				listeners << viltrum.Listener{
+					addr:  '0.0.0.0:${l.port}'
+					http2: l.http2
+					tls:   viltrum.TlsOptions{
+						cert_file: '${l.dir}/server.crt'
+						key_file:  '${l.dir}/server.key'
+					}
 				}
 			}
 		}
 	}
 	app.serve(listeners) or { panic(err) }
+}
+
+fn can_listen(addr string) bool {
+	mut l := net.listen_tcp(.ip, addr) or { return false }
+	l.close() or {}
+	return true
+}
+
+fn db_i(mut c viltrum.Ctx, name string, def int) int {
+	n := c.query_int(name) or { return def }
+	if n > 2147483647 {
+		return 2147483647
+	}
+	if n < -2147483647 {
+		return -2147483647
+	}
+	return int(n)
+}
+
+fn db_limit(mut c viltrum.Ctx) int {
+	n := int(c.query_int('limit') or { 50 })
+	if n < 1 {
+		return 1
+	}
+	if n > 50 {
+		return 50
+	}
+	return n
+}
+
+fn async_db(mut c viltrum.Ctx) {
+	min := db_i(mut c, 'min', 10)
+	max := db_i(mut c, 'max', 50)
+	limit := db_limit(mut c)
+	token := C.viltrum_pg_submit(min, max, limit)
+	if token == 0 || C.viltrum_pg_status(token) != 0 {
+		pg_write(mut c, token)
+		return
+	}
+	c.suspend(token, 30000, pg_done, token)
+}
+
+fn pg_done(mut c viltrum.Ctx, token u64) {
+	if C.viltrum_pg_status(token) == 0 && C.viltrum_pg_expired(token) == 0 {
+		c.suspend(token, 30000, pg_done, token)
+		return
+	}
+	pg_write(mut c, token)
+}
+
+fn pg_write(mut c viltrum.Ctx, token u64) {
+	if token == 0 {
+		c.bytes(200, 'application/json', db_empty)
+		return
+	}
+	mut n := 0
+	p := C.viltrum_pg_body(token, &n)
+	if isnil(p) || n <= 0 {
+		c.bytes(200, 'application/json', db_empty)
+	} else {
+		mut body := unsafe { []u8{} }
+		unsafe {
+			body.data = p
+			body.len = n
+			body.cap = n
+		}
+		c.bytes(200, 'application/json', body)
+	}
+	C.viltrum_pg_release(token)
 }
 
 // first is a view of a's first n items; safe because n <= a.len and jsonenc only reads.

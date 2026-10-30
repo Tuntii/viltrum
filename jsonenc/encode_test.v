@@ -1,6 +1,7 @@
 module jsonenc
 
 import math
+import time
 import x.json2
 
 struct Rating {
@@ -72,6 +73,25 @@ fn test_matches_vlib_json_for_plain_data() {
 	assert enc(true) == 'true'
 	assert enc(u64(18446744073709551615)) == '18446744073709551615'
 	assert enc(i64(-9223372036854775807 - 1)) == '-9223372036854775808'
+}
+
+struct Event {
+	name string
+	at   time.Time
+}
+
+// time.Time holds a &Location on V master, which a field walk cannot encode (issue #107).
+fn test_time_matches_vlib_json() {
+	t := time.unix(1793323412)
+	assert enc(t) == '"2026-10-30T01:23:32.000Z"'
+	ev := Event{
+		name: 'deploy'
+		at:   t
+	}
+	assert enc(ev) == json2.encode(ev)
+	assert enc([t]) == json2.encode([t])
+	now := time.now()
+	assert enc(now) == json2.encode(now)
 }
 
 fn test_strings_are_escaped() {

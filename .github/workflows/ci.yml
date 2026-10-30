@@ -58,6 +58,36 @@ jobs:
             v -o "$RUNNER_TEMP/viltrum-$e" examples/$e
           done
 
+  # Users install V from master too (#103, #107); catch its breaking changes here first.
+  v-master:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install V master
+        run: |
+          git clone -q --depth 1 https://github.com/vlang/v /tmp/v
+          make -C /tmp/v
+          echo /tmp/v >> "$GITHUB_PATH"
+          /tmp/v/v version
+          mkdir -p ~/.vmodules
+          ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
+
+      - name: Unit tests
+        run: |
+          v test http1/
+          v test http2/
+          v test jsonenc/
+          v test router/
+          v test engine/
+          v test tests/
+
+      - name: Build examples
+        run: |
+          for e in hello rest features https ws_chat sse; do
+            v -o /tmp/viltrum-$e examples/$e
+          done
+
   test:
     runs-on: ubuntu-latest
     steps:

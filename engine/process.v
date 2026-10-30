@@ -71,10 +71,12 @@ struct Pending {
 mut:
 	cb     http1.Resume = unsafe { nil }
 	arg    u64
+	token  u64 // App.wake; 0 when this wait is only a timer
 	method http1.Method
 	minor  int
 	close  bool
 	due    u64 // time.sys_mono_now() ns
+	serial u32 // the timer that answers this wait; a kick moves it on
 }
 
 pub fn new_conn() &Conn {
@@ -431,6 +433,11 @@ fn (mut w Worker) run_chain(mut x http1.Ctx) int {
 // resume writes the response deferred on c; the caller then serves what was
 // pipelined behind it (process).
 pub fn (mut w Worker) resume(mut c Conn) {
+	token := c.pending.token
+	c.pending.token = 0
+	if token != 0 && !isnil(w.hub) {
+		w.hub.clear(token)
+	}
 	c.waiting = false
 	mut x := &w.ctx
 	x.out = c.wbuf
@@ -508,11 +515,21 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 		c.waiting = true
 		c.pending.cb = x.defer_cb
 		c.pending.arg = x.defer_arg
+		c.pending.token = x.defer_token
 		c.pending.method = x.head.method
 		c.pending.minor = x.head.minor
 		c.pending.close = x.close_after
+		c.pending.serial++
+		if c.pending.serial == 0 {
+			c.pending.serial = 1
+		}
 		c.pending.due = time.sys_mono_now() + u64(x.defer_ms) * 1_000_000
-		w.timers.push(c.pending.due, c.fd, c.gen, 0)
+		if x.defer_token != 0 && !isnil(w.hub) {
+			if w.hub.note(x.defer_token, w.ctx.worker, c.fd, c.gen, c.pending.serial) {
+				c.pending.due = time.sys_mono_now() // wake already arrived
+			}
+		}
+		w.timers.push_serial(c.pending.due, c.fd, c.gen, 0, c.pending.serial)
 		c.wbuf = x.out
 		return
 	}

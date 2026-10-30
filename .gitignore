@@ -26,6 +26,7 @@ vls.log
 !/benches/AUTOBAHN.md
 !/benches/h2spec/
 !/benches/fast/
+/benches/fast/__pycache__/
 !/benches/hotpath/
 /benches/hotpath/*
 !/benches/hotpath/main.v

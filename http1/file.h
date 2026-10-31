@@ -19,6 +19,12 @@ typedef struct {
 	int64_t size;
 	int64_t mtime;    // seconds since the epoch
 	int64_t mtime_ns; // and the nanoseconds within it, where the platform keeps them
+	// what changes whenever the file is written or replaced, even by a copy that keeps
+	// size and mtime: inode and ctime. ino is -1 where the platform cannot say (Windows),
+	// and such a file is never cached.
+	int64_t ino;
+	int64_t ctime;
+	int64_t ctime_ns;
 	int kind;         // 1: regular file, 2: directory, 0: anything else
 } viltrum_file_info;
 
@@ -28,6 +34,56 @@ static void viltrum_file_close(int fd) {
 #else
 	close(fd);
 #endif
+}
+
+#ifdef _WIN32
+static void viltrum_file_describe(const struct _stat64 *st, viltrum_file_info *info) {
+	info->mtime = (int64_t)st->st_mtime;
+	info->mtime_ns = 0;
+	info->ino = -1;
+	info->ctime = 0;
+	info->ctime_ns = 0;
+#else
+static void viltrum_file_describe(const struct stat *st, viltrum_file_info *info) {
+#if defined(__APPLE__)
+	info->mtime = (int64_t)st->st_mtimespec.tv_sec;
+	info->mtime_ns = (int64_t)st->st_mtimespec.tv_nsec;
+	info->ctime = (int64_t)st->st_ctimespec.tv_sec;
+	info->ctime_ns = (int64_t)st->st_ctimespec.tv_nsec;
+#else
+	info->mtime = (int64_t)st->st_mtim.tv_sec;
+	info->mtime_ns = (int64_t)st->st_mtim.tv_nsec;
+	info->ctime = (int64_t)st->st_ctim.tv_sec;
+	info->ctime_ns = (int64_t)st->st_ctim.tv_nsec;
+#endif
+	info->ino = (int64_t)st->st_ino;
+#endif
+	if (info->mtime < 0) {
+		// before 1970: the IMF-fixdate formatter indexes its tables with the day count
+		info->mtime = 0;
+		info->mtime_ns = 0;
+	}
+	info->size = (int64_t)st->st_size;
+	info->kind = (st->st_mode & S_IFMT) == S_IFREG ? 1 : (st->st_mode & S_IFMT) == S_IFDIR ? 2 : 0;
+}
+
+// viltrum_file_stat describes path in info without opening it; -1 when it cannot be
+// stat'ed (info->kind is then 0).
+static int viltrum_file_stat(const char *path, viltrum_file_info *info) {
+	info->kind = 0;
+#ifdef _WIN32
+	struct _stat64 st;
+	if (_stat64(path, &st) != 0) {
+		return -1;
+	}
+#else
+	struct stat st;
+	if (stat(path, &st) != 0) {
+		return -1;
+	}
+#endif
+	viltrum_file_describe(&st, info);
+	return 0;
 }
 
 // viltrum_file_open opens path read-only and describes it in info; -1 when it cannot
@@ -50,8 +106,6 @@ static int viltrum_file_open(const char *path, viltrum_file_info *info) {
 		_close(fd);
 		return -1;
 	}
-	info->mtime = (int64_t)st.st_mtime;
-	info->mtime_ns = 0;
 #else
 	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	if (fd < 0) {
@@ -62,21 +116,8 @@ static int viltrum_file_open(const char *path, viltrum_file_info *info) {
 		close(fd);
 		return -1;
 	}
-#if defined(__APPLE__)
-	info->mtime = (int64_t)st.st_mtimespec.tv_sec;
-	info->mtime_ns = (int64_t)st.st_mtimespec.tv_nsec;
-#else
-	info->mtime = (int64_t)st.st_mtim.tv_sec;
-	info->mtime_ns = (int64_t)st.st_mtim.tv_nsec;
 #endif
-#endif
-	if (info->mtime < 0) {
-		// before 1970: the IMF-fixdate formatter indexes its tables with the day count
-		info->mtime = 0;
-		info->mtime_ns = 0;
-	}
-	info->size = (int64_t)st.st_size;
-	info->kind = (st.st_mode & S_IFMT) == S_IFREG ? 1 : (st.st_mode & S_IFMT) == S_IFDIR ? 2 : 0;
+	viltrum_file_describe(&st, info);
 	if (info->kind == 2) {
 		viltrum_file_close(fd);
 		return -1;

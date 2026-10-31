@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>viltrum: fast</title>
+<meta name="description" content="Every commit on viltrum's main branch, measured: instructions per request and approximate requests per second.">
+<style>
+:root {
+	--bg: #fbfbfa; --fg: #1d1d1b; --muted: #6b6b66; --line: #e4e3df; --panel: #ffffff;
+	--accent: #2c5f8a; --rel: #b8752a; --up: #b3261e; --dn: #2e7d32; --fail: #8a6d00;
+	color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--bg: #121212; --fg: #e8e6e1; --muted: #9a978f; --line: #2b2a28; --panel: #191918;
+		--accent: #7fb3de; --rel: #e0a35c; --up: #ef8079; --dn: #7cc483; --fail: #d9b84a;
+		color-scheme: dark;
+	}
+}
+:root[data-theme="dark"] {
+	--bg: #121212; --fg: #e8e6e1; --muted: #9a978f; --line: #2b2a28; --panel: #191918;
+	--accent: #7fb3de; --rel: #e0a35c; --up: #ef8079; --dn: #7cc483; --fail: #d9b84a;
+	color-scheme: dark;
+}
+* { box-sizing: border-box }
+body {
+	margin: 0; background: var(--bg); color: var(--fg);
+	font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1100px; margin: 0 auto; padding: 28px 16px 40px }
+header h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em }
+header h1 span { color: var(--muted); font-weight: 400 }
+header p { margin: 4px 0 0; color: var(--muted) }
+a { color: var(--accent) }
+#charts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0 }
+.chart { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px 8px; position: relative }
+.chart figcaption { display: flex; gap: 8px; align-items: baseline; font-size: 13px }
+.chart .what { color: var(--muted) }
+.chart .now { margin-left: auto; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px }
+.chart svg { display: block; width: calc(100% - 52px); height: 90px; margin-top: 6px; overflow: visible }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke }
+.chart .dot { fill: var(--accent) }
+.chart .dot.rel { fill: var(--rel) }
+.chart .scale { position: absolute; right: 12px; top: 36px; bottom: 10px; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; pointer-events: none }
+.chart .scale span { font: 10px ui-monospace, monospace; color: var(--muted) }
+.table { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel) }
+table { border-collapse: collapse; width: 100%; font-size: 13px }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: baseline }
+th { font-weight: 600; color: var(--muted); font-size: 12px; position: sticky; top: 0; background: var(--panel) }
+tr:last-child td { border-bottom: 0 }
+.hash, .num, .date { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px }
+.date { color: var(--muted) }
+.num { text-align: right }
+th.num { text-align: right }
+.msg { max-width: 380px; overflow: hidden; text-overflow: ellipsis }
+.badge { display: inline-block; font: 600 11px ui-monospace, monospace; color: var(--rel); border: 1px solid currentColor; border-radius: 4px; padding: 1px 6px; margin-right: 8px }
+.d { display: block; font-size: 11px }
+.d.up { color: var(--up) }
+.d.dn { color: var(--dn) }
+.rps { color: var(--muted) }
+tr.failed .msg, tr.failed .hash a { color: var(--muted) }
+.status { color: var(--fail); text-align: center }
+footer { margin-top: 18px; color: var(--muted); font-size: 13px }
+footer p { margin: 4px 0 }
+#err { color: var(--up) }
+@media (max-width: 720px) {
+	#charts { grid-template-columns: 1fr }
+	.msg { max-width: 200px }
+}
+</style>
+</head>
+<body>
+<main>
+	<header>
+		<h1>viltrum <span>· fast</span></h1>
+		<p>Every commit on <code>main</code> since v1.0.0: instructions per request (lower is better) and rough requests per second.</p>
+	</header>
+	<section id="charts" aria-label="Instructions per request by commit"></section>
+	<div class="table">
+		<table>
+			<thead>
+				<tr>
+					<th>commit</th><th>date</th><th>message</th>
+					<th class="num">baseline</th><th class="num">json</th><th class="num">pipelined</th>
+					<th class="num">rps ≈ (b / j / p)</th>
+				</tr>
+			</thead>
+			<tbody id="rows"></tbody>
+		</table>
+	</div>
+	<p id="err" hidden>Could not load results.json.</p>
+	<footer>
+		<p>Numbers are callgrind instructions per request on one worker and one keep-alive connection (V 0.5.2,
+			<code>-prod</code>); they do not move with machine noise. rps ≈ is a 3 s run with 64 connections on 4 CPUs of a
+			shared VM and swings about ±10%. Colored deltas: more than 1% against the previous measured commit.</p>
+		<p><span id="count">0</span> commits · setup <span id="setup">?</span> ·
+			<a href="https://github.com/Tuntii/viltrum/tree/main/benches/fast">method and source</a> ·
+			inspired by <a href="https://fast.vlang.io/">fast.vlang.io</a></p>
+	</footer>
+</main>
+<script type="module">
+import { render } from './fast.js'
+try {
+	const r = await fetch('results.json', { cache: 'no-cache' })
+	if (!r.ok) throw new Error(r.status)
+	render(document, await r.json())
+} catch (e) {
+	document.getElementById('err').hidden = false
+}
+</script>
+</body>
+</html>

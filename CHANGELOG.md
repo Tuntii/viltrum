@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.15.0](https://github.com/Tuntii/viltrum/compare/v1.14.0...v1.15.0) (2026-10-31)
+
+### Features
+
+* **fast:** bench server and load client ([a261821](https://github.com/Tuntii/viltrum/commit/a261821473825e250e05822a91c2c49b546e8e24))
+* **fast:** measure one commit ([099887e](https://github.com/Tuntii/viltrum/commit/099887e6cfe96a67ce842ed4af12166c0399bdf8))
+* **fast:** result selection and publishing ([d1d55b8](https://github.com/Tuntii/viltrum/commit/d1d55b8060a687d164d39dfbcc1aa9710f4035d2))
+* **fast:** the page ([57e97e3](https://github.com/Tuntii/viltrum/commit/57e97e38f13c71da7a78b7fd831bd02ec6c24b5a))
+* **fast:** timer entry point ([eea3237](https://github.com/Tuntii/viltrum/commit/eea3237ac7c07e26b37f22f15bc23ffc1c71879c))
+
+### Bug Fixes
+
+* **fast:** retry transient failures, bound every step, run as its own user ([5a361ab](https://github.com/Tuntii/viltrum/commit/5a361ab8cb9d1a473be74109fe7e42e71ce14d57))
+* **fast:** show the first backfill while it runs ([9ecba67](https://github.com/Tuntii/viltrum/commit/9ecba67b7ef59630822fc1e8ae36dbfd824e8695))
+* **middleware:** cors answers only real preflight requests ([d0ad3ea](https://github.com/Tuntii/viltrum/commit/d0ad3ea3ed2fcb0fd16093bae79b1338ce690246))
+
 ## [1.14.0](https://github.com/Tuntii/viltrum/compare/v1.13.5...v1.14.0) (2026-10-30)
 
 ### Features

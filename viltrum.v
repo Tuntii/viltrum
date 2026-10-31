@@ -8,7 +8,7 @@ import viltrum.router
 // Viltrum is an HTTP/1.1 framework for V with its own engine: one epoll worker per
 // CPU, and no allocation per request inside the framework.
 
-pub const version = '1.14.0'
+pub const version = '1.15.0'
 
 pub type Ctx = http1.Ctx
 pub type Handler = fn (mut Ctx)

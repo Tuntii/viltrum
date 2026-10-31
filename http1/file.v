@@ -8,10 +8,14 @@ pub mut:
 	size     i64
 	mtime    i64
 	mtime_ns i64
+	ino      i64
+	ctime    i64
+	ctime_ns i64
 	kind     int
 }
 
 fn C.viltrum_file_open(path &u8, info &C.viltrum_file_info) int
+fn C.viltrum_file_stat(path &u8, info &C.viltrum_file_info) int
 fn C.viltrum_file_pread(fd int, buf voidptr, n u64, off i64) i64
 fn C.viltrum_file_close(fd int)
 
@@ -35,8 +39,8 @@ pub:
 	dotfiles bool // serve names starting with '.' (.env, .git/...); refused by default
 	// precompressed serves name.br or name.gz, the copies compressed ahead of time
 	// beside a file, to a client that accepts that coding (br first), with the file's
-	// own Content-Type; every answer then carries Vary: Accept-Encoding. Like the
-	// files themselves, the copies are read from disk on each request.
+	// own Content-Type; every answer then carries Vary: Accept-Encoding. The copies
+	// follow the disk like the files themselves (see file_cache.v).
 	precompressed bool
 }
 
@@ -71,7 +75,7 @@ pub fn (mut c Ctx) file(path string, o FileOptions) {
 		return
 	}
 	ct := if o.content_type.len > 0 { o.content_type } else { content_type_for(path) }
-	c.send_file(fd, info, ct, '', o.max_age)
+	c.send_file(fd, -1, info, ct, '', o.max_age)
 }
 
 // static_file answers a GET or HEAD for rel, the still percent-encoded rest of the
@@ -112,8 +116,9 @@ pub fn (mut c Ctx) static_file_at(dir string, rel string, o &StaticOptions) {
 			c.pbuf.len-- // dir itself: Windows' stat refuses a trailing slash
 		}
 	}
+	// stat first: only the file or copy that is served gets opened or read (file_cache.v)
 	info := &c.finfo[0]
-	mut fd := c.open_pbuf(info)
+	c.stat_pbuf(info)
 	if info.kind == 2 {
 		path := c.path()
 		if path.len == 0 || path[path.len - 1] != `/` {
@@ -125,45 +130,47 @@ pub fn (mut c Ctx) static_file_at(dir string, rel string, o &StaticOptions) {
 				c.pbuf << `/`
 			}
 			append_str(mut c.pbuf, o.index)
-			fd = c.open_pbuf(info)
+			c.stat_pbuf(info)
 		}
 	}
-	if fd < 0 || info.kind != 1 {
-		if fd >= 0 {
-			C.viltrum_file_close(fd)
-		}
+	if info.kind != 1 {
 		c.text(404, 'not found')
 		return
 	}
 	ct := content_type_for(str_view(c.pbuf, 0, c.pbuf.len))
-	if !o.precompressed {
-		c.send_file(fd, info, ct, '', o.max_age)
+	if o.precompressed {
+		c.set_header('Vary', 'Accept-Encoding')
+		ae := c.header('accept-encoding') or { '' }
+		for k in 0 .. 2 {
+			coding := if k == 0 { 'br' } else { 'gzip' }
+			if !accepts_coding(ae, coding) {
+				continue
+			}
+			mark := c.pbuf.len
+			append_str(mut c.pbuf, if coding == 'br' { '.br' } else { '.gz' })
+			vinfo := &c.finfo[1]
+			c.stat_pbuf(vinfo)
+			if vinfo.kind == 1 {
+				vfd, vslot := c.load_pbuf(vinfo)
+				unsafe {
+					c.pbuf.len = mark
+				}
+				if vfd >= 0 || vslot >= 0 {
+					c.send_file(vfd, vslot, vinfo, ct, coding, o.max_age)
+					return
+				}
+			}
+			unsafe {
+				c.pbuf.len = mark
+			}
+		}
+	}
+	fd, slot := c.load_pbuf(info)
+	if fd < 0 && slot < 0 {
+		c.text(404, 'not found') // gone since the stat
 		return
 	}
-	c.set_header('Vary', 'Accept-Encoding')
-	ae := c.header('accept-encoding') or { '' }
-	for k in 0 .. 2 {
-		coding := if k == 0 { 'br' } else { 'gzip' }
-		if !accepts_coding(ae, coding) {
-			continue
-		}
-		mark := c.pbuf.len
-		append_str(mut c.pbuf, if coding == 'br' { '.br' } else { '.gz' })
-		vinfo := &c.finfo[1]
-		vfd := c.open_pbuf(vinfo)
-		unsafe {
-			c.pbuf.len = mark
-		}
-		if vfd >= 0 && vinfo.kind == 1 {
-			C.viltrum_file_close(fd)
-			c.send_file(vfd, vinfo, ct, coding, o.max_age)
-			return
-		}
-		if vfd >= 0 {
-			C.viltrum_file_close(vfd)
-		}
-	}
-	c.send_file(fd, info, ct, '', o.max_age)
+	c.send_file(fd, slot, info, ct, '', o.max_age)
 }
 
 // append_rel decodes rel onto pbuf name by name; false for a name that must not be
@@ -247,8 +254,9 @@ fn (mut c Ctx) open_pbuf(info &C.viltrum_file_info) int {
 }
 
 // send_file answers with the open file fd, which it takes over (closes or hands to
-// the engine); coding names the Content-Encoding its bytes are in, '' for none.
-fn (mut c Ctx) send_file(fd int, info &C.viltrum_file_info, content_type string, coding string, max_age int) {
+// the engine), or with the copy in fcache slot when fd is -1; coding names the
+// Content-Encoding its bytes are in, '' for none.
+fn (mut c Ctx) send_file(fd int, slot int, info &C.viltrum_file_info, content_type string, coding string, max_age int) {
 	etag := c.make_etag(info)
 	format_imf(info.mtime, &c.lastmod[0])
 	c.set_header('ETag', etag)
@@ -258,7 +266,7 @@ fn (mut c Ctx) send_file(fd int, info &C.viltrum_file_info, content_type string,
 	}
 	method := c.head.method
 	if (method == .get || method == .head) && c.not_modified(etag, info.mtime) {
-		C.viltrum_file_close(fd)
+		close_fd(fd)
 		c.answer_head(304, '', '', -1)
 		return
 	}
@@ -270,7 +278,7 @@ fn (mut c Ctx) send_file(fd int, info &C.viltrum_file_info, content_type string,
 		if r := c.header('range') {
 			start, end := parse_range(r, info.size)
 			if start == range_unsatisfiable {
-				C.viltrum_file_close(fd)
+				close_fd(fd)
 				c.set_header('Content-Range', c.content_range(-1, -1, info.size))
 				c.answer_head(416, '', '', 0)
 				return
@@ -284,7 +292,7 @@ fn (mut c Ctx) send_file(fd int, info &C.viltrum_file_info, content_type string,
 		}
 	}
 	if method == .head || n == 0 {
-		C.viltrum_file_close(fd)
+		close_fd(fd)
 		c.answer_head(status, content_type, coding, n)
 		return
 	}
@@ -300,8 +308,13 @@ fn (mut c Ctx) send_file(fd int, info &C.viltrum_file_info, content_type string,
 	if c.out.cap - c.out.len < n {
 		unsafe { c.out.grow_cap(int(n)) } // cold: a write buffer smaller than the file
 	}
-	got := read_at(fd, unsafe { &u8(c.out.data) + c.out.len }, n, off)
-	C.viltrum_file_close(fd)
+	mut got := n
+	if slot >= 0 {
+		unsafe { C.memcpy(&u8(c.out.data) + c.out.len, &u8(c.fcache[slot].data.data) + off, n) }
+	} else {
+		got = read_at(fd, unsafe { &u8(c.out.data) + c.out.len }, n, off)
+		C.viltrum_file_close(fd)
+	}
 	if got != n {
 		// the file shrank or failed under us: take the head back and say so
 		unsafe {
@@ -316,6 +329,13 @@ fn (mut c Ctx) send_file(fd int, info &C.viltrum_file_info, content_type string,
 	}
 	unsafe {
 		c.out.len += int(n)
+	}
+}
+
+// close_fd closes fd unless it is -1 (an answer from the cache).
+fn close_fd(fd int) {
+	if fd >= 0 {
+		C.viltrum_file_close(fd)
 	}
 }
 

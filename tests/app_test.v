@@ -58,8 +58,13 @@ fn test_routes_groups_and_global_middleware() {
 	assert r2.contains('X-Tag: g\r\n') && r2.ends_with('\r\n\r\n7')
 	r3 := a.handle_raw('GET /nope HTTP/1.1\r\nHost: x\r\n\r\n')!
 	assert r3.starts_with('HTTP/1.1 404 ') && r3.contains('Access-Control-Allow-Origin')
-	r4 := a.handle_raw('OPTIONS /api/users/7 HTTP/1.1\r\nHost: x\r\n\r\n')!
+	r4 :=
+		a.handle_raw('OPTIONS /api/users/7 HTTP/1.1\r\nHost: x\r\nAccess-Control-Request-Method: PUT\r\n\r\n')!
 	assert r4.starts_with('HTTP/1.1 204 ') && r4.contains('Access-Control-Allow-Methods')
+	// not a preflight: the routes answer it
+	r4b := a.handle_raw('OPTIONS /api/users/7 HTTP/1.1\r\nHost: x\r\n\r\n')!
+	assert r4b.starts_with('HTTP/1.1 405 ') && r4b.contains('\r\nAllow: GET, HEAD\r\n')
+	assert !r4b.contains('Access-Control-Allow-Methods')
 	r5 := a.handle_raw('GET /silent HTTP/1.1\r\nHost: x\r\n\r\n')!
 	assert r5.starts_with('HTTP/1.1 500 ') && r5.contains('Connection: close\r\n')
 	r6 := a.handle_raw('GET /big HTTP/1.1\r\nHost: x\r\nAccept-Encoding: gzip\r\n\r\n')!

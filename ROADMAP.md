@@ -179,10 +179,8 @@ None are smuggling or correctness bugs on valid traffic; pull when touched or as
 | Area | Gap |
 |------|-----|
 | Router | 404/405 cost O(routes) |
-| Middleware | Global `cors` answers every OPTIONS |
 | API | `Ctx` exposes internals as `pub mut` (`buf`, `out`, `chain`, `idx`, …); request counter not on `App` |
-| Buffers | Shrink only on close, not when a grown connection goes idle |
-| Tests | Alloc guard around `DateCache.format`; cumulative chunked cap across chunks; trailers split across reads; EMFILE path |
+| Tests | EMFILE path |
 | Lint | Map/array literals not linted (the zero-alloc gate is the real enforcement) |
 
 ---

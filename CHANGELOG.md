@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.15.1](https://github.com/Tuntii/viltrum/compare/v1.15.0...v1.15.1) (2026-10-31)
+
+### Performance Improvements
+
+* **static:** keep small files in memory, revalidated by stat ([cce1040](https://github.com/Tuntii/viltrum/commit/cce1040cfddbc4abc54b8fd733420a483716d8c8))
+
 ## [1.15.0](https://github.com/Tuntii/viltrum/compare/v1.14.0...v1.15.0) (2026-10-31)
 
 ### Features

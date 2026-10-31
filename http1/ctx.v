@@ -84,6 +84,10 @@ mut:
 	// what stat said of the file being answered and of a compressed copy of it; kept
 	// here rather than in locals, which V -prod would pin around every call
 	finfo [2]C.viltrum_file_info
+	// small files static_file_at has read, by path (file_cache.v)
+	fcache       []CachedFile
+	fcache_idx   map[string]int // slot + 1
+	fcache_bytes int
 }
 
 pub fn Ctx.new() Ctx {

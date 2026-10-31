@@ -158,7 +158,11 @@ Decided on 2026-10-26, after HttpArena's memory-efficiency view put viltrum seco
       them empty; zero-allocation gate on the lend/settle cycle
 - [x] TLS: tls13's record buffers and the handshake's read-ahead lent the same way; mbedtls' context set up
       only for sessions mbedtls has
-- [ ] HTTP/2: the per-connection tables and stream slots (static-h2 used 875 MiB at 1024 connections on v1.10.0)
+- [x] HTTP/2: measured on 2026-10-31, the tables and stream slots are small (two slots, no held output, at close);
+      the 875 MiB static-h2 took at 1024 connections on v1.10.0 was the buffers, and the v1.13.1 run shows 237 MiB
+- [x] `static_files` keeps small files in memory per worker, revalidated by one `stat` per request: 6.4 syscalls a
+      static-h2 request down to 2.1, 45% less system time over h2c (static-h2 spent 163 us CPU a request against
+      39-66 for the leaders)
 
 ## Feature backlog
 

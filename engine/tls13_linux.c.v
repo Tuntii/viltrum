@@ -31,7 +31,11 @@ const tls13_aes256 = 0x1302 // TLS_AES_256_GCM_SHA384
 const tls13_max_plain = 16384 // RFC 8446 5.1
 const tls13_max_record = 16384 + 256 // ciphertext limit, 5.2
 const tls13_in_cap = 2 * (5 + tls13_max_record) // a full record and most of the next
-const tls13_out_cap = 5 + tls13_max_plain + 1 + 16
+const tls13_record_cap = 5 + tls13_max_plain + 1 + 16
+// Records sealed into out before one send: a send per 16 KiB record cost more system
+// time than the encryption. Room is left for a KeyUpdate in front.
+const tls13_out_records = 4
+const tls13_out_cap = tls13_out_records * tls13_record_cap + 32
 // Records sealed under one key before we send a KeyUpdate: AES-GCM keeps its
 // margin for 2^24.5 full records (RFC 8446 5.5), and the nonce must never repeat.
 const tls13_rekey_at = u64(1) << 24
@@ -59,9 +63,8 @@ mut:
 	in_off  int  // next unread record
 	pt_off  int  // the opened record's content not yet handed out runs from pt_off to pt_end
 	pt_end  int
-	out     []u8 // one sealed record on its way out
+	out     []u8 // sealed records on their way out
 	out_off int  // bytes of out already sent
-	out_pt  int  // content bytes of the caller's that out carries
 	drained bool // the last recv came back short: the socket is empty until epoll says
 	ku_owed bool // the peer asked for a KeyUpdate; ours goes before the next record
 	ku_seen int  // KeyUpdates the peer sent: each costs a key schedule, so capped
@@ -154,7 +157,6 @@ fn (mut w Worker) tls_settle(mut t TlsConn, all bool) {
 			r.out.len = 0
 		}
 		r.out_off = 0
-		r.out_pt = 0
 		w.tout_pool.put(r.out)
 		r.out = unsafe { w.tout_pool.empty }
 	}
@@ -191,7 +193,6 @@ fn (mut r Tls13) start() {
 	r.pt_off = 0
 	r.pt_end = 0
 	r.out_off = 0
-	r.out_pt = 0
 	r.drained = false
 	r.ku_owed = false
 	r.ku_seen = 0
@@ -385,9 +386,10 @@ fn (t &TlsConn) pending13() bool {
 }
 
 // write13 is TlsConn.write for a fast session: content bytes taken, -1 when the
-// socket is full (call again from the same offset once it is writable), -2 on error.
-// One call seals at most one record, and a record that goes out in pieces is not
-// counted as taken until its last byte is sent.
+// socket is full, -2 on error. One call seals up to tls13_out_records records and
+// sends them together. Sealed bytes count as taken even when the socket takes only part
+// of the records: the rest waits in out (out_pending, push), so the caller's buffer
+// need not.
 fn (mut t TlsConn) write13(fd int, buf &u8, n int) int {
 	mut r := &t.r13
 	if r.out_off < r.out.len {
@@ -395,55 +397,53 @@ fn (mut t TlsConn) write13(fd int, buf &u8, n int) int {
 		if s != 1 {
 			return s
 		}
-		taken := r.out_pt
-		r.out_pt = 0
-		if taken > 0 {
-			return taken
+	}
+	mut k := 0
+	for {
+		if r.ku_owed || r.tx_seq >= tls13_rekey_at {
+			if r.out.cap - r.out.len < tls13_record_cap + 32 {
+				break
+			}
+			// our KeyUpdate (update_not_requested), under the old key, then the new one
+			ku := [u8(24), 0, 0, 1, 0]!
+			r.seal(&ku[0], 5, ct_handshake)
+			r.ku_owed = false
+			if !r.update(false) {
+				return -2
+			}
+		}
+		m := if n - k > tls13_max_plain { tls13_max_plain } else { n - k }
+		if r.out.cap - r.out.len < 5 + m + 1 + 16 {
+			break
+		}
+		r.seal(unsafe { buf + k }, m, ct_app)
+		k += m
+		if k == n {
+			break
 		}
 	}
-	if r.ku_owed || r.tx_seq >= tls13_rekey_at {
-		// our KeyUpdate (update_not_requested), under the old key, then the new one
-		ku := [u8(24), 0, 0, 1, 0]!
-		r.seal(&ku[0], 5, ct_handshake)
-		r.ku_owed = false
-		if !r.update(false) {
-			return -2
-		}
-		s := r.send(fd)
-		if s != 1 {
-			return s
-		}
+	if r.send(fd) == -2 {
+		return -2
 	}
-	k := if n > tls13_max_plain { tls13_max_plain } else { n }
-	r.seal(buf, k, ct_app)
-	r.out_pt = k
-	s := r.send(fd)
-	if s != 1 {
-		return s
-	}
-	r.out_pt = 0
 	return k
 }
 
-// seal makes out one record of n content bytes of type typ.
+// seal appends to out one record of n content bytes of type typ.
 fn (mut r Tls13) seal(src &u8, n int, typ u8) {
 	length := n + 1 + 16
 	unsafe {
-		mut p := &u8(r.out.data)
+		mut p := &u8(r.out.data) + r.out.len
 		p[0] = ct_app
 		p[1] = 3
 		p[2] = 3
 		p[3] = u8(length >> 8)
 		p[4] = u8(length)
-		vmemcpy(p + 5, src, n)
-		p[5 + n] = typ
 		mut iv := [12]u8{}
 		nonce(&r.tx_iv[0], r.tx_seq, mut iv)
-		C.viltrum_gcm_seal(r.tx, &iv[0], p, 5, p + 5, p + 5, u64(n + 1), p + 5 + n + 1)
-		r.out.len = 5 + length
+		C.viltrum_gcm_seal_record(r.tx, &iv[0], p, 5, src, u64(n), typ, p + 5, p + 5 + n + 1)
+		r.out.len += 5 + length
 	}
 	r.tx_seq++
-	r.out_off = 0
 }
 
 // send pushes out what is left of the sealed record: 1 when all of it is sent, -1

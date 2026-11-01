@@ -96,7 +96,8 @@ Three layers, by where the CPU went:
   suite) runs on mbedtls 3.6, the copy that ships with V (`thirdparty/mbedtls`, behind `net.mbedtls`). Nothing
   to install.
 - **Records** of TLS 1.3 AES-GCM sessions are sealed and opened by viltrum's own AES-GCM on AES-NI and PCLMUL;
-  TLS 1.2 and ChaCha20 sessions stay on mbedtls.
+  TLS 1.2 and ChaCha20 sessions stay on mbedtls. Output is sealed straight from the write buffer, up to four
+  records (64 KB) at a time, and those go out in one `send`.
 
 A handshake's expensive step runs one per turn of a worker's loop, with the requests that are ready served in
 between, so a burst of new connections does not hold up the open ones.
@@ -105,7 +106,8 @@ Design notes and trade-offs: [design/1.x-tls.md](./design/1.x-tls.md).
 
 ## Cost
 
-Each TLS connection holds about 50 KB for record buffers. The gcc build gets the fast paths above; a tcc build
+A TLS connection borrows record buffers from its worker while they hold something: about 33 KB for input, and
+up to 66 KB while a response is going out. A quiet connection holds none. The gcc build gets the fast paths above; a tcc build
 (V's default for `v run`) has no 128-bit integers and does all of TLS on mbedtls. Build with `-prod` or
 `-cc gcc` for production.
 

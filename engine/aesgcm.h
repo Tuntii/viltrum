@@ -224,14 +224,13 @@ VILTRUM_GCM_TARGET static inline __m128i viltrum_ghash(const viltrum_gcm *g, __m
 	return y;
 }
 
-// viltrum_gcm_ctr XORs n bytes of in with the keystream from counter block 2 on (block
-// 1 masks the tag), eight blocks at a time. in and out may be the same buffer.
-VILTRUM_GCM_TARGET static void viltrum_gcm_ctr(const viltrum_gcm *g, const uint8_t iv[12], const uint8_t *in, uint8_t *out, size_t n) {
+// viltrum_gcm_ctr_from XORs n bytes of in with the keystream from counter block ctr on,
+// eight blocks at a time. in and out may be the same buffer.
+VILTRUM_GCM_TARGET static void viltrum_gcm_ctr_from(const viltrum_gcm *g, const uint8_t iv[12], uint32_t ctr, const uint8_t *in, uint8_t *out, size_t n) {
 	uint8_t cb[16];
 	memcpy(cb, iv, 12);
 	memset(cb + 12, 0, 4);
 	const __m128i base = _mm_loadu_si128((const __m128i *)cb);
-	uint32_t ctr = 2;
 	const int nr = g->nr;
 	while (n >= 128) {
 		__m128i b[8];
@@ -273,6 +272,11 @@ VILTRUM_GCM_TARGET static void viltrum_gcm_ctr(const viltrum_gcm *g, const uint8
 	}
 }
 
+// viltrum_gcm_ctr is the data's keystream: from counter block 2 on (block 1 masks the tag).
+VILTRUM_GCM_TARGET static void viltrum_gcm_ctr(const viltrum_gcm *g, const uint8_t iv[12], const uint8_t *in, uint8_t *out, size_t n) {
+	viltrum_gcm_ctr_from(g, iv, 2, in, out, n);
+}
+
 // viltrum_gcm_tag finishes GHASH with the length block and masks it with block 1.
 VILTRUM_GCM_TARGET static void viltrum_gcm_tag(const viltrum_gcm *g, const uint8_t iv[12], __m128i y, size_t aad_len, size_t n, uint8_t tag[16]) {
 	__m128i lens = _mm_set_epi64x((long long)(aad_len * 8), (long long)(n * 8));
@@ -294,6 +298,22 @@ VILTRUM_GCM_TARGET static void viltrum_gcm_seal(const viltrum_gcm *g, const uint
 	__m128i y = viltrum_ghash(g, _mm_setzero_si128(), aad, aad_len);
 	y = viltrum_ghash(g, y, out, n);
 	viltrum_gcm_tag(g, iv, y, aad_len, n, tag);
+}
+
+// viltrum_gcm_seal_record is viltrum_gcm_seal of n bytes of in followed by the byte typ
+// (a TLS 1.3 record's content and type), written to out (n + 1 bytes, not overlapping
+// in), without first copying in next to typ.
+VILTRUM_GCM_TARGET static void viltrum_gcm_seal_record(const viltrum_gcm *g, const uint8_t iv[12], const uint8_t *aad, size_t aad_len, const uint8_t *in, size_t n, uint8_t typ, uint8_t *out, uint8_t tag[16]) {
+	size_t full = n & ~(size_t)15;
+	viltrum_gcm_ctr_from(g, iv, 2, in, out, full);
+	uint8_t last[16];
+	size_t rest = n - full;
+	memcpy(last, in + full, rest);
+	last[rest] = typ;
+	viltrum_gcm_ctr_from(g, iv, 2 + (uint32_t)(full / 16), last, out + full, rest + 1);
+	__m128i y = viltrum_ghash(g, _mm_setzero_si128(), aad, aad_len);
+	y = viltrum_ghash(g, y, out, n + 1);
+	viltrum_gcm_tag(g, iv, y, aad_len, n + 1, tag);
 }
 
 // viltrum_gcm_open checks the tag, in constant time, and only then decrypts (in may
@@ -347,6 +367,18 @@ static void viltrum_gcm_seal(const viltrum_gcm *g, const uint8_t iv[12], const u
 	(void)in;
 	(void)out;
 	(void)n;
+	(void)tag;
+}
+
+static void viltrum_gcm_seal_record(const viltrum_gcm *g, const uint8_t iv[12], const uint8_t *aad, size_t aad_len, const uint8_t *in, size_t n, uint8_t typ, uint8_t *out, uint8_t tag[16]) {
+	(void)g;
+	(void)iv;
+	(void)aad;
+	(void)aad_len;
+	(void)in;
+	(void)n;
+	(void)typ;
+	(void)out;
 	(void)tag;
 }
 

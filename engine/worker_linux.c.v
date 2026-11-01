@@ -559,6 +559,9 @@ fn (mut l Loop) drain(mut c Conn) {
 
 fn (mut l Loop) flush(mut c Conn) {
 	l.w.lend(mut c) // HTTP/2 output held in slots, and streams, write into wbuf here
+	if !isnil(c.h2) {
+		l.w.lend_big(mut c)
+	}
 	mut drained := 0 // what on_drain wrote in this flush
 	mut ended := false // and whether it ended its stream
 	mut moved := false // whether the socket took anything: write progress
@@ -580,6 +583,20 @@ fn (mut l Loop) flush(mut c Conn) {
 			c.wbuf.len = 0
 		}
 		c.woff = 0
+		// TLS 1.3 takes what it seals: records the socket has not taken wait in the
+		// session, and wbuf, empty, goes back to the pool meanwhile (Worker.settle)
+		if !isnil(c.tls) && c.tls.out_pending() {
+			r := c.tls.push()
+			if r == -1 {
+				l.arm_out(mut c, moved)
+				return
+			}
+			if r == -2 {
+				l.close(mut c)
+				return
+			}
+			moved = true
+		}
 		if c.file_fd >= 0 {
 			if !l.send_file(mut c, moved) {
 				return

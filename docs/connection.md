@@ -6,12 +6,16 @@
   write buffer when there is something to read or write, and takes each back once it is empty: once the
   request is answered and the response is out. A connection waiting on its client (keep-alive), on a timer
   (`c.after`), or on a topic costs its `Conn` alone, a few hundred bytes, and the kernel's socket. Under load
-  the pools stay at a few buffers per worker. A buffer one request or response grew stays in the pool up to
-  64 KiB (read) or 256 KiB (write); a larger one goes back to the GC. TLS sessions borrow their record
+  the pools stay at a few buffers per worker. A read buffer one request grew stays in the pool up to 64 KiB.
+  A write buffer one response grew, up to 256 KiB, is kept apart, at most 32 per worker, for HTTP/2, whose
+  connections take one before they answer; the rest go back to the GC. TLS sessions borrow their record
   buffers the same way, and mbedtls' context exists only while mbedtls has the session (TLS 1.2, or a
   handshake viltrum's own TLS 1.3 code passes on).
 - Every complete request in a read is served, and the responses go out in one `send`. Processing pauses once
-  `Options.max_pending` (1 MiB) of output waits; reading pauses while output is pending.
+  `Options.max_pending` (1 MiB) of output waits; reading pauses while output is pending. HTTP/2 answers a
+  read's requests 32 KiB of output at a time; the rest of the read waits for the next round. Over TLS 1.3 the
+  session takes what it encrypts, so a connection whose socket is full holds its encrypted records alone,
+  not the write buffer too.
 - Limits live under `Options.limits`: `max_header_bytes` 64 KiB (431), `max_body_bytes` 1 MiB (413),
   `max_headers` 32 (431). `Options.max_conns` (503 and close).
 - Timeouts: `read_timeout` 30 s from a request's first byte, `idle_timeout` 60 s between requests,

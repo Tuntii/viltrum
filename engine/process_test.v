@@ -399,7 +399,21 @@ fn test_quiet_connection_holds_no_buffers() {
 	}
 	pooled := w.wpool.n
 	w.settle(mut c)
-	assert c.wbuf.cap == 0 && w.wpool.n == pooled
+	assert c.wbuf.cap == 0 && w.wpool.n == pooled && w.bpool.n == 0
+	// one it grew less is kept apart, a limited number of them, for lend_big
+	for i in 0 .. big_pool_max + 2 {
+		w.lend(mut c)
+		unsafe { c.wbuf.grow_cap(4 * write_buf_size) }
+		w.settle(mut c)
+		assert c.wbuf.cap == 0
+		want := if i < big_pool_max { i + 1 } else { big_pool_max }
+		assert w.bpool.n == want
+	}
+	w.lend(mut c)
+	assert c.wbuf.cap == write_buf_size
+	small := w.wpool.n
+	w.lend_big(mut c)
+	assert c.wbuf.cap > write_buf_size && w.bpool.n == big_pool_max - 1 && w.wpool.n == small + 1
 }
 
 // Many quiet connections share a few buffers: served one after another, they never

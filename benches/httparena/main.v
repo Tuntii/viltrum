@@ -5,30 +5,6 @@ import os
 import viltrum
 import x.json2
 
-#flag -I/usr/include/postgresql
-#flag -lpq
-#flag -pthread
-#include "pg.h"
-
-fn C.viltrum_pg_bind(app voidptr)
-fn C.viltrum_pg_app() voidptr
-fn C.viltrum_pg_start(url &u8, max_conn int) int
-fn C.viltrum_pg_submit(min int, max int, limit int) u64
-fn C.viltrum_pg_status(token u64) int
-fn C.viltrum_pg_expired(token u64) int
-fn C.viltrum_pg_body(token u64, n &int) &u8
-fn C.viltrum_pg_release(token u64)
-
-@[export: 'viltrum_pg_on_ready']
-fn viltrum_pg_on_ready(token u64) {
-	app := unsafe { &viltrum.App(C.viltrum_pg_app()) }
-	if !isnil(app) {
-		app.wake(token)
-	}
-}
-
-const db_empty = '{"items":[],"count":0}'.bytes()
-
 struct Rating {
 	score int
 	count int
@@ -61,15 +37,15 @@ struct TlsPort {
 fn main() {
 	dataset := json2.decode[[]Item](os.read_file('/data/dataset.json') or { '[]' }) or { []Item{} }
 	mut app := viltrum.new()
-	C.viltrum_pg_bind(app)
-	if url := os.getenv_opt('DATABASE_URL') {
-		if url.len > 0 {
-			mut n := (os.getenv_opt('DATABASE_MAX_CONN') or { '64' }).int()
-			if n < 1 {
-				n = 64
-			}
-			C.viltrum_pg_start(url.str, n)
-		}
+	// async-db: one connection per thread, up to DATABASE_MAX_CONN less the few
+	// Postgres keeps for the superuser
+	mut conns := (os.getenv_opt('DATABASE_MAX_CONN') or { '64' }).int() - 4
+	if conns < 1 {
+		conns = 1
+	}
+	mut pg := new_pg(app, os.getenv('DATABASE_URL'), conns)
+	pg_done := fn [mut pg] (mut c viltrum.Ctx, token u64) {
+		pg.answer(mut c, token)
 	}
 	// One copy of the dataset per worker: totals are written per request, and a
 	// worker only touches its own copy.
@@ -79,7 +55,14 @@ fn main() {
 	}
 	app.get('/baseline11', baseline)
 	app.post('/baseline11', baseline)
-	app.get('/async-db', async_db)
+	app.get('/async-db', fn [mut pg, pg_done] (mut c viltrum.Ctx) {
+		token := pg.submit(db_i(mut c, 'min', 10), db_i(mut c, 'max', 50), db_limit(mut c))
+		if token == 0 {
+			c.bytes(200, 'application/json', db_empty)
+			return
+		}
+		c.suspend(token, 30000, pg_done, token)
+	})
 	// the HTTP/2 profiles' baseline, on 8082 (h2c) and 8443 (h2)
 	app.get('/baseline2', baseline)
 	// static-h2: the files from disk, their .br and .gz copies to clients that accept them
@@ -202,47 +185,6 @@ fn db_limit(mut c viltrum.Ctx) int {
 		return 50
 	}
 	return n
-}
-
-fn async_db(mut c viltrum.Ctx) {
-	min := db_i(mut c, 'min', 10)
-	max := db_i(mut c, 'max', 50)
-	limit := db_limit(mut c)
-	token := C.viltrum_pg_submit(min, max, limit)
-	if token == 0 || C.viltrum_pg_status(token) != 0 {
-		pg_write(mut c, token)
-		return
-	}
-	c.suspend(token, 30000, pg_done, token)
-}
-
-fn pg_done(mut c viltrum.Ctx, token u64) {
-	if C.viltrum_pg_status(token) == 0 && C.viltrum_pg_expired(token) == 0 {
-		c.suspend(token, 30000, pg_done, token)
-		return
-	}
-	pg_write(mut c, token)
-}
-
-fn pg_write(mut c viltrum.Ctx, token u64) {
-	if token == 0 {
-		c.bytes(200, 'application/json', db_empty)
-		return
-	}
-	mut n := 0
-	p := C.viltrum_pg_body(token, &n)
-	if isnil(p) || n <= 0 {
-		c.bytes(200, 'application/json', db_empty)
-	} else {
-		mut body := unsafe { []u8{} }
-		unsafe {
-			body.data = p
-			body.len = n
-			body.cap = n
-		}
-		c.bytes(200, 'application/json', body)
-	}
-	C.viltrum_pg_release(token)
 }
 
 // first is a view of a's first n items; safe because n <= a.len and jsonenc only reads.

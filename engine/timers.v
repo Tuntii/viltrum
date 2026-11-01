@@ -15,8 +15,9 @@ struct Timer {
 	// the tick's http1.StreamTick, 0 for none. Kept as an integer: a function is code,
 	// which the GC never needs to see, and a pointer field would make every Timer in
 	// scope a GC scope pin under V -prod (see jsonenc.encode_into).
-	tick u64
-	arg  u64
+	tick   u64
+	arg    u64
+	serial u32 // Pending.serial for an HTTP/1.1 wait; 0 for anything else
 }
 
 // cb is the timer's tick; call it only when tick != 0.
@@ -33,11 +34,16 @@ mut:
 }
 
 fn (mut t Timers) push(due u64, fd int, gen u32, stream u32) {
+	t.push_serial(due, fd, gen, stream, 0)
+}
+
+fn (mut t Timers) push_serial(due u64, fd int, gen u32, stream u32, serial u32) {
 	t.a << Timer{
 		due:    due
 		fd:     fd
 		gen:    gen
 		stream: stream
+		serial: serial
 	} // cold: grows to the peak pending count once
 	t.up()
 }

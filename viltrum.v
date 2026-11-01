@@ -100,6 +100,16 @@ pub fn new() &App {
 	return &App{}
 }
 
+// wake answers the HTTP/1.1 request that parked token with Ctx.suspend, on the
+// worker that owns it. It may be called from any thread. A token that has not
+// parked yet is remembered and answered on the turn it does; a token nobody
+// parks is ignored. Over HTTP/2, suspend waits out its timeout instead.
+pub fn (app &App) wake(token u64) {
+	if token != 0 {
+		app.hub.wake(token)
+	}
+}
+
 // publish sends a text message to every WebSocket subscribed to topic (Ws.subscribe),
 // on every worker. It may be called from any thread, handlers included; the message
 // is copied once. Without a running server it is dropped.

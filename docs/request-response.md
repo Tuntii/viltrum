@@ -95,6 +95,12 @@ the connection's other streams are answered meanwhile ([docs/http2.md](http2.md)
 response yet, so a deferred response is not gzipped. `ms <= 0` calls `cb` right away. Timers have millisecond
 granularity and round up.
 
+`c.suspend(token, timeout_ms, cb, arg)` is the same wait, and also ends when `app.wake(token)` is called from
+any thread — a query finishing on another thread, for example. `token` is yours: its low 32 bits pick a slot
+from 1 to 8191, and the high 32 bits are a generation so a late wake cannot answer the next request that
+reused the slot. `0` is not wakeable. `cb` may suspend again. Over HTTP/2 the wake is not delivered and the
+timeout still answers.
+
 ## Middleware
 
 `recover`, `gzip`, `cors` and `logger` are plain `fn (mut c Ctx)` middleware. `gzip` compresses text and JSON bodies of 256 bytes or more with viltrum's own DEFLATE encoder (`http1/deflate.v`, no C library), tuned for response-sized bodies. V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).

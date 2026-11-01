@@ -41,10 +41,11 @@ pub mut:
 	file_off  i64
 	file_left i64
 	// deferred response (after): the engine reads these once the chain returns
-	deferred  bool
-	defer_ms  int
-	defer_cb  Resume = unsafe { nil }
-	defer_arg u64
+	deferred    bool
+	defer_ms    int
+	defer_cb    Resume = unsafe { nil }
+	defer_arg   u64
+	defer_token u64 // App.wake resumes this request; 0 is after() with only its timer
 	// WebSocket upgrade (ws_upgrade): the engine takes the connection over after a 101
 	ws       &WsHandler = unsafe { nil }
 	ws_proto int
@@ -107,6 +108,7 @@ pub fn (mut c Ctx) begin(msg []u8) {
 	c.status = 0
 	c.responded = false
 	c.deferred = false
+	c.defer_token = 0
 	c.ws = unsafe { nil }
 	c.st = unsafe { nil }
 	c.capture = false
@@ -350,6 +352,7 @@ pub fn (mut c Ctx) after(ms int, cb Resume, arg u64) {
 		}
 		return
 	}
+	c.defer_token = 0
 	if ms <= 0 {
 		cb(mut c, arg)
 		return
@@ -358,6 +361,18 @@ pub fn (mut c Ctx) after(ms int, cb Resume, arg u64) {
 	c.defer_ms = ms
 	c.defer_cb = cb
 	c.defer_arg = arg
+}
+
+// suspend is after, plus App.wake(token): cb runs on this worker when wake is
+// called, or after timeout_ms, whichever comes first. token is chosen by the
+// caller (0 is not wakeable). The request is gone when cb runs, as with after,
+// and cb may suspend again. Over HTTP/2 only the timeout applies; wake answers
+// an HTTP/1.1 request.
+pub fn (mut c Ctx) suspend(token u64, timeout_ms int, cb Resume, arg u64) {
+	c.after(timeout_ms, cb, arg)
+	if c.deferred && token != 0 {
+		c.defer_token = token
+	}
 }
 
 // close asks the engine to close the connection after this response. Call it

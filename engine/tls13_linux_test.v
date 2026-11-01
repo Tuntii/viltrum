@@ -224,6 +224,7 @@ fn test_key_update_limits() {
 	assert b.open_next() == 1 && content(b) == 'one'
 	assert b.open_next() == 1 && !b.ku_owed && b.rx_seq == 0 // the KeyUpdate, not requested back
 	assert b.open_next() == 1 && content(b) == 'two'
+	b.pt_off = b.pt_end
 	// a large write goes out as several records in one send, and no more than out holds
 	big := []u8{len: 5 * tls13_max_plain, init: u8(index)}
 	assert t.write13(int(sv[0]), big.data, big.len) == tls13_out_records * tls13_max_plain

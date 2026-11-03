@@ -27,7 +27,8 @@
   <a href="#benchmarks">Benchmarks</a> ·
   <a href="https://github.com/users/Tuntii/projects/3">Roadmap</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
-  <a href="https://v.rustapi.cloud">Live demo</a>
+  <a href="https://v.rustapi.cloud">Live demo</a> ·
+  <a href="https://discord.gg/mY7JBbGhp">Discord</a>
 </p>
 
 ---
@@ -203,7 +204,8 @@ decision before it starts; the plan, its principles and what Viltrum will not do
 
 ## Contributing
 
-Bug reports, questions and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the checks
+Bug reports, questions and pull requests are welcome; for questions and ideas there is also the
+[Discord server](https://discord.gg/mY7JBbGhp). [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the checks
 CI runs and the commit style; releases are cut by [semantic-release](docs/releasing.md) from conventional commits
 on `main`. Cards on the [project board](https://github.com/users/Tuntii/projects/3) marked *Known gaps* are small,
 self-contained places to start. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).

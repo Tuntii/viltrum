@@ -4,6 +4,8 @@ Viltrum 1.x is a small HTTP/1.1 framework for [V](https://vlang.io) on a zero-al
 `SO_REUSEPORT` epoll worker per CPU, a compile-time JSON encoder, Linux only. HTTPS runs in-process on the same
 workers, or TLS terminates at a reverse proxy (Caddy, nginx).
 
+Questions the docs do not answer: ask on [Discord](https://discord.gg/mY7JBbGhp).
+
 ## Start here
 
 | Doc | When to read |

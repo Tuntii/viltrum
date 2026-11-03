@@ -284,22 +284,6 @@ pub fn ws_unmask(p &u8, n int, mask &u8) {
 // valid_utf8 reports whether p[0..n] is well-formed UTF-8 (RFC 3629: no overlong
 // forms, no surrogates, nothing past U+10FFFF). ASCII runs go 8 bytes at a time.
 pub fn valid_utf8(p &u8, n int) bool {
-	// all-ASCII text, the usual case, is one pass of 8-byte ORs
-	mut acc := u64(0)
-	mut t := 0
-	for t + 8 <= n {
-		mut x := u64(0)
-		unsafe { C.memcpy(&x, p + t, 8) }
-		acc |= x
-		t += 8
-	}
-	for t < n {
-		acc |= u64(unsafe { p[t] })
-		t++
-	}
-	if acc & 0x8080808080808080 == 0 {
-		return true
-	}
 	mut i := 0
 	for i < n {
 		if i + 8 <= n {

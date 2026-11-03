@@ -7,17 +7,18 @@ as a badge on the commit before them.
 
 ## What is measured
 
-Three scenarios, with the same handlers as viltrum's HttpArena entry (`server.v`):
+Four scenarios, with the same handlers as viltrum's HttpArena entry (`server.v`):
 
 | Scenario | Request |
 |----------|---------|
 | baseline | `GET /baseline11?a=1&b=2` |
 | json | `GET /json/50?m=1`, `Accept-Encoding: gzip` (jsonenc + the gzip middleware) |
 | pipelined | `GET /pipeline`, 16 requests per write |
+| json-plain | `GET /json/50?m=1`, no compression: jsonenc alone (added in SETUP 2, after #110 cost it +25% unseen) |
 
 - **Instructions per request (the headline number).** The server runs under callgrind with one worker
   (`VILTRUM_WORKERS=1`) pinned to one CPU. The load client warms up, then the counters are zeroed, a fixed number
-  of requests goes over one keep-alive connection (baseline and pipelined 20 000, json 2 000), and the total Ir
+  of requests goes over one keep-alive connection (baseline and pipelined 20 000, json and json-plain 2 000), and the total Ir
   is divided by that count. One connection keeps epoll batching, which depends on timing, out of the number.
   Two runs of the same commit give the same values to the instruction.
 - **rps ≈.** Four workers on CPUs 0-3, the client on CPUs 4-7 with 64 connections, the median of three 3 s
@@ -26,6 +27,14 @@ Three scenarios, with the same handlers as viltrum's HttpArena entry (`server.v`
 `server.v` uses only API that viltrum has had since `v1.0.0`, so one source builds at every measured commit.
 The server is built with V 0.5.2 (the version CI pins) and `-prod`. A commit that does not build shows as
 `build failed`.
+
+## The PR gate
+
+[`perf.yml`](../../.github/workflows/perf.yml) runs on every pull request: `measure.sh` with `FAST_IR_ONLY=1`
+(no rps) for the PR's base and head on the same runner, then [`gate.py`](gate.py) compares them. Any scenario
+more than 1% above base fails the check; the table is in the job summary. A cost taken on purpose (a feature
+that has to pay something) gets the `perf-ok` label and a line in the PR saying why. The runner's numbers are
+not hostlab's (another CPU and libc), so only the base/head difference means anything there.
 
 ## The SETUP rule
 

@@ -4,6 +4,7 @@
 export const SCENARIOS = [
 	['baseline', 'baseline', 'GET /baseline11'],
 	['json', 'json', 'GET /json/50, gzip'],
+	['json-plain', 'json plain', 'GET /json/50'],
 	['pipelined', 'pipelined', 'GET /pipeline ×16'],
 ]
 
@@ -91,10 +92,19 @@ function cell(doc, c, prev, key) {
 	return td
 }
 
+// shown lists the scenarios the published setup measured: an older setup lacks the newer ones.
+export function shown(commits) {
+	return SCENARIOS.filter(([k]) => commits.some((c) => c.status === 'ok' && k in c.ir))
+}
+
 export function render(doc, data) {
 	const commits = data.commits
+	const scen = shown(commits)
 	const charts = doc.getElementById('charts')
-	for (const [key, label, what] of SCENARIOS) charts.append(chart(doc, commits, key, label, what))
+	for (const [key, label, what] of scen) charts.append(chart(doc, commits, key, label, what))
+	const head = doc.getElementById('head')
+	for (const [, label] of scen) head.append(el(doc, 'th', { class: 'num' }, label))
+	head.append(el(doc, 'th', { class: 'num' }, 'rps ≈ (' + scen.map(([, l]) => l).join(' / ') + ')'))
 
 	const body = doc.getElementById('rows')
 	commits.forEach((c, i) => {
@@ -108,10 +118,10 @@ export function render(doc, data) {
 		tr.append(msg)
 		if (c.status === 'ok') {
 			const prev = previousOk(commits, i)
-			for (const [key] of SCENARIOS) tr.append(cell(doc, c, prev, key))
-			tr.append(el(doc, 'td', { class: 'num rps' }, SCENARIOS.map(([k]) => fmtRps(c.rps[k])).join(' / ')))
+			for (const [key] of scen) tr.append(cell(doc, c, prev, key))
+			tr.append(el(doc, 'td', { class: 'num rps' }, scen.map(([k]) => fmtRps(c.rps[k])).join(' / ')))
 		} else {
-			tr.append(el(doc, 'td', { class: 'num status', colspan: SCENARIOS.length + 1 }, c.status.replace('_', ' ')))
+			tr.append(el(doc, 'td', { class: 'num status', colspan: scen.length + 1 }, c.status.replace('_', ' ')))
 		}
 		body.append(tr)
 	})

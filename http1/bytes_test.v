@@ -11,6 +11,24 @@ fn test_append_int_matches_str() {
 	}
 }
 
+fn test_put_spare_full_and_slice() {
+	mut out := []u8{cap: 8}
+	put(mut out, c'abc', 3) // spare capacity
+	put(mut out, c'defghij', 7) // past cap: grows
+	put(mut out, c'x', 0)
+	assert out.bytestr() == 'abcdefghij'
+	// a slice shares its parent's block: appending must not write into the parent
+	mut parent := 'abcdef'.bytes()
+	parent << `g` // leave spare capacity behind the slice
+	mut s := unsafe { parent[..2] } // a real slice: a plain `mut s := parent[..2]` is a clone
+	unsafe {
+		s.cap = 4 // V gives slices cap == len; spare room would make put write into parent
+	}
+	put(mut s, c'XY', 2)
+	assert s.bytestr() == 'abXY'
+	assert parent.bytestr() == 'abcdefg'
+}
+
 fn test_views_share_memory() {
 	buf := 'GET /abc HTTP/1.1'.bytes()
 	v := view(buf, 4, 4)

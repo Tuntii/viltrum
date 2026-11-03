@@ -195,6 +195,19 @@ pub fn (s &Ws) protocol() string {
 
 // ws_frame appends one final, unmasked frame (servers do not mask).
 pub fn ws_frame(mut out []u8, op u8, p &u8, n int) {
+	if n < 126 && out.cap - out.len >= n + 2 && !out.flags.has(.is_slice) {
+		// the usual small frame: header and payload straight into spare capacity
+		unsafe {
+			q := &u8(out.data) + out.len
+			q[0] = 0x80 | op
+			q[1] = u8(n)
+			if n > 0 {
+				C.memcpy(q + 2, p, n)
+			}
+			out.len += n + 2
+		}
+		return
+	}
 	mut h := [10]u8{}
 	h[0] = 0x80 | op
 	mut k := 2
@@ -212,10 +225,8 @@ pub fn ws_frame(mut out []u8, op u8, p &u8, n int) {
 		}
 		k = 10
 	}
-	unsafe { out.push_many(&h[0], k) }
-	if n > 0 {
-		unsafe { out.push_many(p, n) }
-	}
+	put(mut out, &h[0], k)
+	put(mut out, p, n)
 }
 
 // ws_close_frame appends a Close carrying code and as much of reason as fits (a

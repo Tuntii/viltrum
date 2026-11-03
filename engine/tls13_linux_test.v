@@ -166,9 +166,8 @@ fn test_key_update_both_ways() {
 	mut a, mut b := pair(true)
 	mut both := []u8{}
 	seal_raw(mut a, ct_app, [u8(24), 0, 0, 1, 1, ct_handshake])
-	both << a.out
 	assert a.update(false)
-	a.seal(c'after', 5, ct_app)
+	a.seal(c'after', 5, ct_app) // seal appends: out holds both records now
 	both << a.out
 	b.inb << both
 	assert b.open_next() == 1 && b.ku_owed && b.rx_seq == 0
@@ -225,8 +224,58 @@ fn test_key_update_limits() {
 	assert b.open_next() == 1 && content(b) == 'one'
 	assert b.open_next() == 1 && !b.ku_owed && b.rx_seq == 0 // the KeyUpdate, not requested back
 	assert b.open_next() == 1 && content(b) == 'two'
+	b.pt_off = b.pt_end
+	// a large write goes out as several records in one send, and no more than out holds
+	big := []u8{len: 5 * tls13_max_plain, init: u8(index)}
+	assert t.write13(int(sv[0]), big.data, big.len) == tls13_out_records * tls13_max_plain
+	mut got := []u8{}
+	for got.len < tls13_out_records * tls13_max_plain {
+		for !b.pending13_raw() {
+			m := int(C.recv(int(sv[1]), tmp.data, tmp.len, 0))
+			assert m > 0
+			unsafe { b.inb.push_many(tmp.data, m) }
+		}
+		assert b.open_next() == 1
+		got << b.inb[b.pt_off..b.pt_end]
+		b.pt_off = b.pt_end
+	}
+	assert got == big[..tls13_out_records * tls13_max_plain]
 	C.close(int(sv[0]))
 	C.close(int(sv[1]))
+	// a full socket: what was sealed counts as taken, and waits in out until push
+	mut fds := [2]i32{}
+	assert C.socketpair(C.AF_UNIX, C.SOCK_STREAM, 0, &fds[0]) == 0
+	small := i32(4096)
+	C.setsockopt(int(fds[0]), C.SOL_SOCKET, C.SO_SNDBUF, &small, sizeof(i32))
+	C.fcntl(int(fds[0]), C.F_SETFL, C.O_NONBLOCK)
+	a3, mut b3 := pair(false)
+	mut t3 := TlsConn{
+		fast: true
+	}
+	t3.r13 = *a3
+	fd3 := int(fds[0])
+	t3.fd = &fd3
+	sent := t3.write13(fd3, big.data, big.len)
+	assert sent == tls13_out_records * tls13_max_plain
+	assert t3.out_pending()
+	mut got3 := []u8{}
+	for got3.len < sent {
+		if t3.out_pending() {
+			assert t3.push() != -2
+		}
+		m := int(C.recv(int(fds[1]), tmp.data, tmp.len, C.MSG_DONTWAIT))
+		if m > 0 {
+			unsafe { b3.inb.push_many(tmp.data, m) }
+		}
+		for b3.pending13_raw() {
+			assert b3.open_next() == 1
+			got3 << b3.inb[b3.pt_off..b3.pt_end]
+			b3.pt_off = b3.pt_end
+		}
+	}
+	assert !t3.out_pending() && got3 == big[..sent]
+	C.close(int(fds[0]))
+	C.close(int(fds[1]))
 	// a peer that keeps asking
 	mut a2, mut b2 := pair(false)
 	for i in 0 .. tls13_max_key_updates {

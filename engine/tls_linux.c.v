@@ -375,8 +375,8 @@ fn (mut t TlsConn) read(buf &u8, n int) int {
 }
 
 // write is send for a TLS connection: bytes taken, -1 when the socket is full (call
-// again from the same offset once it is writable), -2 on error. One call writes at
-// most one record.
+// again from the same offset once it is writable), -2 on error. On mbedtls one call
+// writes at most one record; a fast session takes what it seals (write13).
 fn (mut t TlsConn) write(buf &u8, n int) int {
 	if t.fast {
 		return t.write13(*t.fd, buf, n)
@@ -411,6 +411,18 @@ fn (t &TlsConn) fresh() bool {
 		return true // hs13 has not read the hello yet
 	}
 	return C.viltrum_tls_fresh(&t.ssl) != 0
+}
+
+// out_pending is whether records a fast session sealed, and counted as taken, still
+// wait for the socket.
+fn (t &TlsConn) out_pending() bool {
+	return t.fast && t.r13.out_off < t.r13.out.len
+}
+
+// push sends what out_pending reports: 1 when it is all out, -1 when the socket is
+// full, -2 on error.
+fn (mut t TlsConn) push() int {
+	return t.r13.send(*t.fd)
 }
 
 // pending reports input that epoll cannot see: in mbedtls or in the read-ahead.

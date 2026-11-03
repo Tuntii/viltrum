@@ -597,6 +597,34 @@ fn test_held_output_is_bounded() {
 	assert c.h2.held == 2 * big_body.len && c.h2.sending == 2
 }
 
+// The answers to one read go out a batch at a time: wbuf stays small enough to go back
+// to the pool, and the rest of the read waits in rbuf for the next round.
+fn test_one_read_is_answered_a_batch_at_a_time() {
+	mut w := new_worker(h2_router(), Options{
+		send_date: false
+	}, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	feed(mut w, mut c, window_update(0, 0x7fff0000))
+	take(mut w, mut c)
+	for i in 0 .. 8 {
+		c.rbuf << cl.get(u32(2 * i + 1), '/big')
+	}
+	w.process(mut c)
+	assert c.rbuf.len > 0, 'the rest of the read waits'
+	assert c.wbuf.cap <= shrink_wbuf_above
+	mut out := []u8{}
+	for c.rbuf.len > 0 {
+		out << take(mut w, mut c)
+		w.process(mut c)
+	}
+	out << take(mut w, mut c)
+	r := cl.responses(parse(out))
+	for i in 0 .. 8 {
+		assert r[u32(2 * i + 1)].status == '200'
+	}
+}
+
 // Trailers on a stream we already answered and reset were in flight, not an error.
 fn test_frames_after_our_reset_are_ignored() {
 	mut w := new_worker(h2_router(), Options{
@@ -972,12 +1000,18 @@ fn test_h2_allocates_nothing() {
 			}
 			for req in b {
 				unsafe { c.rbuf.push_many(req.data, req.len) }
-				w.process(mut c)
+				// as Loop.drain: past h2_pump_max of output the rest of rbuf waits a round
 				for {
-					unsafe {
-						c.wbuf.len = 0
+					w.process(mut c)
+					for {
+						unsafe {
+							c.wbuf.len = 0
+						}
+						if !w.h2_pump(mut c) {
+							break
+						}
 					}
-					if !w.h2_pump(mut c) {
+					if c.rbuf.len == 0 {
 						break
 					}
 				}

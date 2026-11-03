@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.2](https://github.com/Tuntii/viltrum/compare/v1.15.1...v1.15.2) (2026-11-03)
+
+### Performance Improvements
+
+* **h2,tls:** batch TLS records per send, stop regrowing h2 write buffers ([e2a727b](https://github.com/Tuntii/viltrum/commit/e2a727b7f99b4cff2b112f12b867015680b9d495))
+* **jsonenc:** write fields without attributes directly ([58b7eab](https://github.com/Tuntii/viltrum/commit/58b7eab08edf002626b3bf42806f5ef3803f315f)), closes [#110](https://github.com/Tuntii/viltrum/issues/110) [#110](https://github.com/Tuntii/viltrum/issues/110) [#110](https://github.com/Tuntii/viltrum/issues/110)
+
 ## [1.15.1](https://github.com/Tuntii/viltrum/compare/v1.15.0...v1.15.1) (2026-10-31)
 
 ### Performance Improvements

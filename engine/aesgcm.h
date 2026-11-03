@@ -2,7 +2,8 @@
 // for the TLS 1.3 record layer (tls13.v). mbedtls does GCM a block at a time through
 // its cipher layer, which was two thirds of a 10 KB TLS echo; here eight counter
 // blocks go through the AES rounds side by side, and GHASH multiplies eight blocks by
-// H^8..H^1 and reduces once.
+// H^8..H^1 (three carry-less multiplies each, Karatsuba) and reduces once; sealing
+// runs both in one pass over the data.
 //
 // The methods are Intel's published ones: AES key expansion with AESKEYGENASSIST and
 // GHASH by carry-less multiplication over byte-reflected blocks (Gueron and Kounavis,
@@ -33,6 +34,7 @@ typedef struct viltrum_gcm viltrum_gcm;
 struct viltrum_gcm {
 	__m128i rk[15]; // round keys
 	__m128i hp[8];  // H^1..H^8, byte-reflected
+	__m128i hk[8];  // their two 64-bit halves XORed, in the low half (Karatsuba)
 	int nr;         // rounds: 10 or 14
 };
 
@@ -140,6 +142,22 @@ VILTRUM_GCM_TARGET static inline void viltrum_clmul_wide(__m128i a, __m128i b, _
 	*hi = _mm_xor_si128(*hi, _mm_xor_si128(h, _mm_srli_si128(m, 8)));
 }
 
+// viltrum_clmul_kar adds a*b to (lo, mid, hi) with three multiplies instead of four
+// (Karatsuba): mid collects (a1^a0)(b1^b0), and viltrum_kar_fold turns the sums into
+// viltrum_clmul_wide's (lo, hi) once per batch. bk is b's halves XORed, in its low half.
+VILTRUM_GCM_TARGET static inline void viltrum_clmul_kar(__m128i a, __m128i b, __m128i bk, __m128i *lo, __m128i *mid, __m128i *hi) {
+	*lo = _mm_xor_si128(*lo, _mm_clmulepi64_si128(a, b, 0x00));
+	*hi = _mm_xor_si128(*hi, _mm_clmulepi64_si128(a, b, 0x11));
+	__m128i ak = _mm_xor_si128(a, _mm_shuffle_epi32(a, 0x4e));
+	*mid = _mm_xor_si128(*mid, _mm_clmulepi64_si128(ak, bk, 0x00));
+}
+
+VILTRUM_GCM_TARGET static inline void viltrum_kar_fold(__m128i *lo, __m128i mid, __m128i *hi) {
+	mid = _mm_xor_si128(mid, _mm_xor_si128(*lo, *hi));
+	*lo = _mm_xor_si128(*lo, _mm_slli_si128(mid, 8));
+	*hi = _mm_xor_si128(*hi, _mm_srli_si128(mid, 8));
+}
+
 // viltrum_gf_reduce turns a 256-bit product of byte-reflected operands into their
 // GF(2^128) product: a one-bit left shift for the reflection, then reduction modulo
 // x^128 + x^7 + x^2 + x + 1.
@@ -186,6 +204,9 @@ VILTRUM_GCM_TARGET static int viltrum_gcm_init(viltrum_gcm *g, const uint8_t *ke
 	for (int i = 1; i < 8; i++) {
 		g->hp[i] = viltrum_gf_mul(g->hp[i - 1], h);
 	}
+	for (int i = 0; i < 8; i++) {
+		g->hk[i] = _mm_xor_si128(g->hp[i], _mm_shuffle_epi32(g->hp[i], 0x4e));
+	}
 	return 0;
 }
 
@@ -193,13 +214,15 @@ VILTRUM_GCM_TARGET static int viltrum_gcm_init(viltrum_gcm *g, const uint8_t *ke
 VILTRUM_GCM_TARGET static inline __m128i viltrum_ghash_blocks(const viltrum_gcm *g, __m128i y, const uint8_t *p, size_t n) {
 	while (n >= 8) {
 		__m128i lo = _mm_setzero_si128();
+		__m128i mid = _mm_setzero_si128();
 		__m128i hi = _mm_setzero_si128();
 		__m128i x0 = _mm_xor_si128(y, viltrum_bswap128(_mm_loadu_si128((const __m128i *)p)));
-		viltrum_clmul_wide(x0, g->hp[7], &lo, &hi);
+		viltrum_clmul_kar(x0, g->hp[7], g->hk[7], &lo, &mid, &hi);
 		for (int k = 1; k < 8; k++) {
 			__m128i x = viltrum_bswap128(_mm_loadu_si128((const __m128i *)(p + 16 * k)));
-			viltrum_clmul_wide(x, g->hp[7 - k], &lo, &hi);
+			viltrum_clmul_kar(x, g->hp[7 - k], g->hk[7 - k], &lo, &mid, &hi);
 		}
+		viltrum_kar_fold(&lo, mid, &hi);
 		y = viltrum_gf_reduce(lo, hi);
 		p += 128;
 		n -= 8;
@@ -272,6 +295,62 @@ VILTRUM_GCM_TARGET static void viltrum_gcm_ctr_from(const viltrum_gcm *g, const 
 	}
 }
 
+// viltrum_gcm_enc_ghash encrypts the whole 128-byte chunks of n bytes from counter block
+// ctr on and folds the ciphertext into *y, in one pass: the AES rounds of chunk j run
+// between the carry-less multiplies of chunk j-1's ciphertext, so the AES and PCLMUL
+// units work at the same time instead of in two passes over the data. in may equal
+// out. Returns the bytes done (n rounded down to 128).
+VILTRUM_GCM_TARGET static size_t viltrum_gcm_enc_ghash(const viltrum_gcm *g, const uint8_t iv[12], uint32_t ctr, const uint8_t *in, uint8_t *out, size_t n, __m128i *y) {
+	size_t chunks = n / 128;
+	if (chunks == 0) {
+		return 0;
+	}
+	viltrum_gcm_ctr_from(g, iv, ctr, in, out, 128);
+	uint8_t cb[16];
+	memcpy(cb, iv, 12);
+	memset(cb + 12, 0, 4);
+	const __m128i base = _mm_loadu_si128((const __m128i *)cb);
+	const int nr = g->nr;
+	__m128i acc = *y;
+	for (size_t j = 1; j < chunks; j++) {
+		const uint8_t *prev = out + 128 * (j - 1);
+		const uint8_t *src = in + 128 * j;
+		uint8_t *dst = out + 128 * j;
+		uint32_t c = ctr + 8 * (uint32_t)j;
+		__m128i x[8];
+		x[0] = _mm_xor_si128(acc, viltrum_bswap128(_mm_loadu_si128((const __m128i *)prev)));
+		for (int k = 1; k < 8; k++) {
+			x[k] = viltrum_bswap128(_mm_loadu_si128((const __m128i *)(prev + 16 * k)));
+		}
+		__m128i b[8];
+		for (int k = 0; k < 8; k++) {
+			b[k] = _mm_xor_si128(_mm_insert_epi32(base, (int)__builtin_bswap32(c + (uint32_t)k), 3), g->rk[0]);
+		}
+		__m128i lo = _mm_setzero_si128();
+		__m128i mid = _mm_setzero_si128();
+		__m128i hi = _mm_setzero_si128();
+		// nr - 1 >= 9 middle rounds: one block's multiply after each of the first eight
+		for (int r = 1; r < nr; r++) {
+			const __m128i key = g->rk[r];
+			for (int k = 0; k < 8; k++) {
+				b[k] = _mm_aesenc_si128(b[k], key);
+			}
+			if (r <= 8) {
+				viltrum_clmul_kar(x[r - 1], g->hp[8 - r], g->hk[8 - r], &lo, &mid, &hi);
+			}
+		}
+		viltrum_kar_fold(&lo, mid, &hi);
+		acc = viltrum_gf_reduce(lo, hi);
+		for (int k = 0; k < 8; k++) {
+			b[k] = _mm_aesenclast_si128(b[k], g->rk[nr]);
+			__m128i v = _mm_loadu_si128((const __m128i *)(src + 16 * k));
+			_mm_storeu_si128((__m128i *)(dst + 16 * k), _mm_xor_si128(v, b[k]));
+		}
+	}
+	*y = viltrum_ghash_blocks(g, acc, out + 128 * (chunks - 1), 8);
+	return chunks * 128;
+}
+
 // viltrum_gcm_ctr is the data's keystream: from counter block 2 on (block 1 masks the tag).
 VILTRUM_GCM_TARGET static void viltrum_gcm_ctr(const viltrum_gcm *g, const uint8_t iv[12], const uint8_t *in, uint8_t *out, size_t n) {
 	viltrum_gcm_ctr_from(g, iv, 2, in, out, n);
@@ -294,9 +373,10 @@ VILTRUM_GCM_TARGET static void viltrum_gcm_tag(const viltrum_gcm *g, const uint8
 
 // viltrum_gcm_seal encrypts n bytes (in may equal out) and writes the 16-byte tag.
 VILTRUM_GCM_TARGET static void viltrum_gcm_seal(const viltrum_gcm *g, const uint8_t iv[12], const uint8_t *aad, size_t aad_len, const uint8_t *in, uint8_t *out, size_t n, uint8_t tag[16]) {
-	viltrum_gcm_ctr(g, iv, in, out, n);
 	__m128i y = viltrum_ghash(g, _mm_setzero_si128(), aad, aad_len);
-	y = viltrum_ghash(g, y, out, n);
+	size_t done = viltrum_gcm_enc_ghash(g, iv, 2, in, out, n, &y);
+	viltrum_gcm_ctr_from(g, iv, 2 + (uint32_t)(done / 16), in + done, out + done, n - done);
+	y = viltrum_ghash(g, y, out + done, n - done);
 	viltrum_gcm_tag(g, iv, y, aad_len, n, tag);
 }
 
@@ -305,14 +385,15 @@ VILTRUM_GCM_TARGET static void viltrum_gcm_seal(const viltrum_gcm *g, const uint
 // in), without first copying in next to typ.
 VILTRUM_GCM_TARGET static void viltrum_gcm_seal_record(const viltrum_gcm *g, const uint8_t iv[12], const uint8_t *aad, size_t aad_len, const uint8_t *in, size_t n, uint8_t typ, uint8_t *out, uint8_t tag[16]) {
 	size_t full = n & ~(size_t)15;
-	viltrum_gcm_ctr_from(g, iv, 2, in, out, full);
+	__m128i y = viltrum_ghash(g, _mm_setzero_si128(), aad, aad_len);
+	size_t done = viltrum_gcm_enc_ghash(g, iv, 2, in, out, full, &y);
+	viltrum_gcm_ctr_from(g, iv, 2 + (uint32_t)(done / 16), in + done, out + done, full - done);
 	uint8_t last[16];
 	size_t rest = n - full;
 	memcpy(last, in + full, rest);
 	last[rest] = typ;
 	viltrum_gcm_ctr_from(g, iv, 2 + (uint32_t)(full / 16), last, out + full, rest + 1);
-	__m128i y = viltrum_ghash(g, _mm_setzero_si128(), aad, aad_len);
-	y = viltrum_ghash(g, y, out, n + 1);
+	y = viltrum_ghash(g, y, out + done, n + 1 - done);
 	viltrum_gcm_tag(g, iv, y, aad_len, n + 1, tag);
 }
 

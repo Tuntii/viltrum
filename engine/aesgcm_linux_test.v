@@ -81,8 +81,11 @@ fn test_gcm_matches_mbedtls() {
 	if !aesgcm_supported {
 		return
 	}
+	// up to a few 128-byte chunks byte by byte, then full TLS records (16384 + type byte)
+	mut lens := []int{len: 600, init: index}
+	lens << [1023, 1024, 1025, 4096, 16383, 16384, 16385]
 	for key_len in [16, 32] {
-		for n in 0 .. 600 {
+		for n in lens {
 			key := rand.bytes(key_len)!
 			iv := rand.bytes(12)!
 			aad := rand.bytes(n % 23)!

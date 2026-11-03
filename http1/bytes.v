@@ -36,7 +36,7 @@ pub fn put(mut out []u8, p &u8, n int) {
 	}
 	if out.cap - out.len >= n && !out.flags.has(.is_slice) {
 		unsafe {
-			vmemcpy(&u8(out.data) + out.len, p, n)
+			C.memcpy(&u8(out.data) + out.len, p, n) // vmemcpy's extra pointer checks cost ~12 Ir
 			out.len += n
 		}
 	} else {

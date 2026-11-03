@@ -2,6 +2,8 @@
 
 Everyone taking part in this project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+Questions, ideas or not sure where to start? Ask on [Discord](https://discord.gg/mY7JBbGhp).
+
 ## Setup
 
 ```bash

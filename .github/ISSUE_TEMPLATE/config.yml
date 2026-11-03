@@ -1,0 +1,7 @@
+contact_links:
+  - name: Questions and ideas
+    url: https://discord.gg/mY7JBbGhp
+    about: Ask on the Viltrum Discord server.
+  - name: Security problem
+    url: https://github.com/Tuntii/viltrum/security/advisories/new
+    about: Report it privately, not in a public issue (see SECURITY.md).

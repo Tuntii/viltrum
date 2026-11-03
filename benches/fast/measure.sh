@@ -3,7 +3,7 @@
 #   {"hash":..,"setup":..,"status":"ok|build_failed|run_failed","ir":{..},"rps":{..}}
 # ir is callgrind instructions per request on one worker and one connection, so
 # it does not move with machine noise; rps is a short run on 4 CPUs and is only
-# roughly comparable. Logs go to stderr. Needs LOAD (the built load client).
+# roughly comparable (skipped with FAST_IR_ONLY=1). Logs go to stderr. Needs LOAD (the built load client).
 # Exits 3 with no line when FAST_PORT is taken, so nothing is recorded.
 # Changing anything that moves the numbers means bumping SETUP (README.md).
 set -uo pipefail
@@ -40,6 +40,7 @@ scenarios=(
 	"baseline|/baseline11?a=1&b=2|500|20000|"
 	"json|/json/50?m=1|100|2000|-H Accept-Encoding: gzip"
 	"pipelined|/pipeline|500|20000|-p 16"
+	"json-plain|/json/50?m=1|100|2000|"
 )
 
 run_load() { # cpus (or ""), path, -n|-d, value, scenario flags, more load flags...
@@ -112,6 +113,9 @@ for s in "${scenarios[@]}"; do
 	ir="$ir\"$name\":$per,"
 done
 stop_server
+
+# FAST_IR_ONLY=1 (the PR gate) stops here: rps on a CI runner says nothing.
+[ -n "${FAST_IR_ONLY:-}" ] && emit ok "{${ir%,}}" "{}"
 
 # rps: 4 workers on CPUs 0-3, the client on 4-7, median of three 3 s runs.
 FAST_ADDR=127.0.0.1:$port FAST_DATA=$data VILTRUM_WORKERS=4 taskset -c 0-3 "$d/server" 2>/dev/null &

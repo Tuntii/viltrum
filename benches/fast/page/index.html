@@ -33,7 +33,7 @@ header h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em }
 header h1 span { color: var(--muted); font-weight: 400 }
 header p { margin: 4px 0 0; color: var(--muted) }
 a { color: var(--accent) }
-#charts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0 }
+#charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 22px 0 }
 .chart { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px 8px; position: relative }
 .chart figcaption { display: flex; gap: 8px; align-items: baseline; font-size: 13px }
 .chart .what { color: var(--muted) }
@@ -80,10 +80,8 @@ footer p { margin: 4px 0 }
 	<div class="table">
 		<table>
 			<thead>
-				<tr>
+				<tr id="head">
 					<th>commit</th><th>date</th><th>message</th>
-					<th class="num">baseline</th><th class="num">json</th><th class="num">pipelined</th>
-					<th class="num">rps ≈ (b / j / p)</th>
 				</tr>
 			</thead>
 			<tbody id="rows"></tbody>

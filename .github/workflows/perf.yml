@@ -1,0 +1,61 @@
+name: perf
+
+# The PR perf gate: callgrind Ir/request (benches/fast, the fast page's method) for the
+# PR's base and head on the same runner. A scenario more than 1% slower fails the check,
+# unless the PR carries the `perf-ok` label (a cost taken on purpose; say why in the PR).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install V, valgrind and the load client
+        run: |
+          curl -fsSL -o /tmp/v_linux.zip https://github.com/vlang/v/releases/download/0.5.2/v_linux.zip
+          unzip -q /tmp/v_linux.zip -d /tmp
+          sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
+          gcc -O2 -o /tmp/load benches/fast/load.c
+          # HttpArena's dataset at the commit the fast page uses (benches/fast/README.md)
+          curl -fsSL -o /tmp/dataset.json https://raw.githubusercontent.com/MDA2AV/HttpArena/25f5f411dab3451380d1f93069e8ceac67d6d97b/data/dataset.json
+
+      - name: Gate and fast page tests
+        run: |
+          cd benches/fast && python3 -m unittest -q test_gate test_results
+          node --test page/fast_test.mjs
+
+      - name: Measure base and head
+        env:
+          V: /tmp/v/v
+          LOAD: /tmp/load
+          FAST_DATA: /tmp/dataset.json
+          FAST_IR_ONLY: '1'
+        run: |
+          mkdir -p "$RUNNER_TEMP/work"
+          bash benches/fast/measure.sh . ${{ github.event.pull_request.base.sha }} "$RUNNER_TEMP/work" > /tmp/base.json
+          bash benches/fast/measure.sh . ${{ github.event.pull_request.head.sha }} "$RUNNER_TEMP/work" > /tmp/head.json
+          cat /tmp/base.json /tmp/head.json
+
+      - name: Compare
+        id: gate
+        run: |
+          set +e
+          python3 benches/fast/gate.py /tmp/base.json /tmp/head.json > /tmp/gate.md
+          echo "failed=$([ $? -ne 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          { echo '### callgrind Ir/request, base vs head'; echo; cat /tmp/gate.md; } >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/gate.md
+
+      - name: Fail on a regression (label perf-ok to accept it)
+        if: steps.gate.outputs.failed == 'true' && !contains(github.event.pull_request.labels.*.name, 'perf-ok')
+        run: |
+          echo "::error::A scenario is more than 1% slower than base; see the job summary."
+          exit 1

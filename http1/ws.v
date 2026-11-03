@@ -212,10 +212,8 @@ pub fn ws_frame(mut out []u8, op u8, p &u8, n int) {
 		}
 		k = 10
 	}
-	unsafe { out.push_many(&h[0], k) }
-	if n > 0 {
-		unsafe { out.push_many(p, n) }
-	}
+	put(mut out, &h[0], k)
+	put(mut out, p, n)
 }
 
 // ws_close_frame appends a Close carrying code and as much of reason as fits (a

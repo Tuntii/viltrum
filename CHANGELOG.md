@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.4](https://github.com/Tuntii/viltrum/compare/v1.15.3...v1.15.4) (2026-11-03)
+
+### Performance Improvements
+
+* **http1:** append into spare capacity without push_many ([dea4d27](https://github.com/Tuntii/viltrum/commit/dea4d2756594ff1efbb982525611b5f713fe34e4))
+* **ws:** drop the ASCII pre-pass, it saved 3 Ir ([96e2492](https://github.com/Tuntii/viltrum/commit/96e2492dfead18d7092d763516a2eed0291cb494))
+* **ws:** write small frames in one copy, check ASCII text in one pass ([ec9d261](https://github.com/Tuntii/viltrum/commit/ec9d261e6e7c36a810b50feee263de0e6dcaa42c))
+
 ## [1.15.3](https://github.com/Tuntii/viltrum/compare/v1.15.2...v1.15.3) (2026-11-03)
 
 ### Performance Improvements

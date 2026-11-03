@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.15.3](https://github.com/Tuntii/viltrum/compare/v1.15.2...v1.15.3) (2026-11-03)
+
+### Performance Improvements
+
+* **tls:** seal AES-GCM in one pass, GHASH with Karatsuba ([b0a8646](https://github.com/Tuntii/viltrum/commit/b0a8646dee78fd3b1514bf674280d53a23c381d0))
+
 ## [1.15.2](https://github.com/Tuntii/viltrum/compare/v1.15.1...v1.15.2) (2026-11-03)
 
 ### Performance Improvements

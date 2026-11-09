@@ -110,6 +110,56 @@ fn test_fuzz_parse() {
 	}
 }
 
+const reply_seeds = [
+	'HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Type: a/b\r\n\r\nhello',
+	'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n3;x\r\nabc\r\n0\r\nT: 1\r\n\r\n',
+	'HTTP/1.0 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok',
+	'HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n',
+	'HTTP/1.1 200 OK\r\n\r\nuntil close',
+]
+
+// Random mutations over replies from an upstream. Invariants: no panic; a reply framed
+// whole and framed as it arrives a byte at a time end at the same place, with the same
+// status and body; the body stays inside what was framed.
+fn test_fuzz_reply() {
+	iters := os.getenv_opt('VILTRUM_FUZZ_ITERS') or { '20000' }.int() / 4
+	rand.seed([u32(0x5eed), 0x4])
+	for _ in 0 .. iters {
+		mut b := reply_seeds[rand.intn(reply_seeds.len) or { 0 }].bytes()
+		for _ in 0 .. 1 + (rand.intn(4) or { 0 }) {
+			b = mutate(b)
+		}
+		eof := rand.intn(2) or { 0 } == 1
+		mut f := ReplyFrame{}
+		n := frame_reply(b, mut f, false, eof, 4096) or { continue }
+		if n < 0 {
+			continue
+		}
+		assert n <= b.len && f.head_end <= n
+		mut g := ReplyFrame{}
+		mut m := -1
+		for i in 1 .. n + 1 {
+			m = frame_reply(b[..i], mut g, false, eof && i == b.len, 4096) or { -2 }
+			if m != -1 {
+				break
+			}
+		}
+		if f.until_close {
+			continue // whole only at eof, which the prefixes before the last are not
+		}
+		assert m == n, b.bytestr()
+		assert g.status == f.status && g.interim == f.interim
+		if !f.interim {
+			mut c1 := b.clone()
+			mut c2 := b[..n].clone()
+			b1 := reply_body(c1, &f, n)
+			b2 := reply_body(c2, &g, n)
+			assert b1 == b2
+			assert b1.len <= n - f.head_end
+		}
+	}
+}
+
 fn mutate(b []u8) []u8 {
 	mut out := b.clone()
 	pos := if out.len == 0 { 0 } else { rand.intn(out.len) or { 0 } }

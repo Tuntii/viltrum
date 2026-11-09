@@ -61,6 +61,7 @@ mut:
 	touched    []&Conn         // connections a batch wrote to, to flush
 	hs         []int           // fds whose first handshake step waits, oldest first from hs_head
 	hs_head    int
+	peers      []&Peer // connections to upstreams (client_linux.c.v), indexed by fd
 }
 
 fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opts Options, hub &Hub, mut stop Stop, mut count ConnCount) {
@@ -133,6 +134,7 @@ fn (mut l Loop) run() {
 			}
 		}
 		l.fire()
+		l.kick()
 		if l.now - l.last_sweep >= 1000 {
 			l.sweep()
 			l.last_sweep = l.now
@@ -145,6 +147,7 @@ fn (mut l Loop) run() {
 			l.close(mut c)
 		}
 	}
+	l.close_peers()
 	C.close(l.epfd)
 }
 
@@ -196,17 +199,23 @@ fn (mut l Loop) fire() {
 			l.w.settle(mut c)
 			continue
 		}
-		l.drain(mut c)
-		l.read_pending(mut c)
-		if c.fd >= 0 && !c.out_armed && !c.lingering && !l.h2_held_deadline(mut c) {
-			c.deadline_ms = l.now + if c.reading {
-				l.opts.read_timeout.milliseconds()
-			} else {
-				l.opts.idle_timeout.milliseconds()
-			}
-		}
-		l.settle(t.fd)
+		l.after_wait(mut c, t.fd)
 	}
+}
+
+// after_wait serves what was pipelined behind a deferred response and arms the
+// connection's next deadline. fd is the connection the timer or reply named.
+fn (mut l Loop) after_wait(mut c Conn, fd int) {
+	l.drain(mut c)
+	l.read_pending(mut c)
+	if c.fd >= 0 && !c.out_armed && !c.lingering && !l.h2_held_deadline(mut c) {
+		c.deadline_ms = l.now + if c.reading {
+			l.opts.read_timeout.milliseconds()
+		} else {
+			l.opts.idle_timeout.milliseconds()
+		}
+	}
+	l.settle(fd)
 }
 
 // settle hands the buffers the connection on fd left empty back to the worker's
@@ -335,6 +344,10 @@ fn (mut l Loop) conn_for(fd int) &Conn {
 
 fn (mut l Loop) on_event(fd int, ev u32) {
 	if fd >= l.conns.len || isnil(l.conns[fd]) || l.conns[fd].fd != fd {
+		if fd < l.peers.len && !isnil(l.peers[fd]) {
+			mut peer := l.peers[fd]
+			l.on_peer(mut peer, ev)
+		}
 		return
 	}
 	mut c := l.conns[fd]
@@ -862,6 +875,7 @@ fn (mut l Loop) sweep() {
 			srv.reload()
 		}
 	}
+	l.sweep_peers()
 	for i in 0 .. l.conns.len {
 		if isnil(l.conns[i]) || l.conns[i].fd < 0 {
 			continue

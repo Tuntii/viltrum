@@ -153,6 +153,12 @@ pub mut:
 	h2body []u8
 	h2out  []u8
 	h2blk  []u8
+	// the HTTP client (client.v): a pool per upstream, peers to connect or write on
+	// this turn, fetches to answer at once, and closed peers kept for reuse
+	pools     []Pool
+	ready     []&Peer
+	fails     []Fail
+	peer_free []&Peer
 }
 
 pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
@@ -167,6 +173,11 @@ pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
 	w.ctx.worker = index
 	w.ws.worker = index
 	w.st.worker = index
+	for spec in opts.upstreams {
+		w.pools << Pool{
+			spec: spec
+		}
+	}
 	return w
 }
 
@@ -458,6 +469,7 @@ pub fn (mut w Worker) resume(mut c Conn) {
 	x.out = c.wbuf
 	x.begin_resumed(c.pending.method, c.pending.minor, !c.pending.close)
 	c.pending.cb(mut x, c.pending.arg)
+	w.reply_done()
 	w.finish(mut c, 0)
 }
 
@@ -491,6 +503,9 @@ pub fn (mut w Worker) process_waiting(mut c Conn) {
 		}
 	}
 	w.timers = Timers{}
+	// no event loop here to reach an upstream: a fetch is answered .timeout at once
+	w.ready.clear()
+	w.fails.clear()
 }
 
 // inline_file appends what is left of a streamed file to wbuf, for process_waiting:
@@ -534,8 +549,16 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 		c.pending.minor = x.head.minor
 		c.pending.close = x.close_after
 		c.pending.due = time.sys_mono_now() + u64(x.defer_ms) * 1_000_000
-		w.timers.push(c.pending.due, c.fd, c.gen, 0)
 		c.wbuf = x.out
+		if x.fetching {
+			// the reply, or the peer's timeout, answers it (Loop.answer); no timer
+			w.fetch_start(Waiter{
+				fd:  c.fd
+				gen: c.gen
+			})
+			return
+		}
+		w.timers.push(c.pending.due, c.fd, c.gen, 0)
 		return
 	}
 	w.answer_default(idx)

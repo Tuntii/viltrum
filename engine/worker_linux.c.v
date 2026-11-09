@@ -134,7 +134,9 @@ fn (mut l Loop) run() {
 			}
 		}
 		l.fire()
-		l.kick()
+		if l.w.ready.len > 0 || l.w.fails.len > 0 {
+			l.kick() // only with fetches to start: the call alone cost 32 Ir a turn
+		}
 		if l.now - l.last_sweep >= 1000 {
 			l.sweep()
 			l.last_sweep = l.now

@@ -1,6 +1,6 @@
 # Documentation
 
-Viltrum 1.x is a small HTTP/1.1 framework for [V](https://vlang.io) on a zero-allocation core: one
+Viltrum 1.x is a small HTTP framework (HTTP/1.1, HTTP/2, WebSocket) for [V](https://vlang.io) on a zero-allocation core: one
 `SO_REUSEPORT` epoll worker per CPU, a compile-time JSON encoder, Linux only. HTTPS runs in-process on the same
 workers, or TLS terminates at a reverse proxy (Caddy, nginx).
 
@@ -24,12 +24,8 @@ Questions the docs do not answer: ask on [Discord](https://discord.gg/mY7JBbGhp)
 | [releasing.md](./releasing.md) | Semantic-release and commit conventions |
 
 Also: [../CHANGELOG.md](../CHANGELOG.md), [../benches/RESULTS.md](../benches/RESULTS.md), examples in
-[../examples/README.md](../examples/README.md) (`hello`, `rest`, `features`, `https`, `ws_chat`).
+[../examples/README.md](../examples/README.md) (`hello`, `rest`, `features`, `https`, `ws_chat`, `sse`).
 
 ## Not on the 1.x core yet
 
 Generic upgrade and hijack, `https://` upstreams for the HTTP client, non-Linux platforms.
-
-## v0.13 reference (not 1.x)
-
-[upgrade.md](./upgrade.md) describes the v0.13 upgrade API and is kept for reference only.

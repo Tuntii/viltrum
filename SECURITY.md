@@ -12,10 +12,11 @@ Expect a first reply within a few days. Fixes ship as a patch release with credi
 
 ## In scope
 
-- Request smuggling / framing disagreements (Content-Length, Transfer-Encoding, header parsing)
-- Crashes or panics reachable from a remote peer (HTTP, multipart, WebSocket frames)
+- Request smuggling / framing disagreements (Content-Length, Transfer-Encoding, header parsing), over HTTP/1.1 and HTTP/2
+- Crashes or panics reachable from a remote peer (HTTP/1.1, HTTP/2 and HPACK, multipart, WebSocket frames)
 - Limit bypasses (`max_body_bytes`, header size, timeouts, `max_conns`)
-- TLS / WSS handling in `listen_tls`
+- TLS: the TLS 1.3 records and handshake, certificate handling, WSS
+- The HTTP client: replies from an upstream that crash a worker, stall it, or reach another request's handler
 
 ## Supported versions
 

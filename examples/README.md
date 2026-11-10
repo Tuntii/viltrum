@@ -33,4 +33,4 @@ curl -N http://127.0.0.1:8085/events
 curl -s http://127.0.0.1:8085/export.csv | tail -1
 ```
 
-The HTTP client is not on the 1.x core yet; see the README.
+Calling another service from a handler (`c.fetch`) is in [docs/client.md](../docs/client.md); there is no example app for it yet.

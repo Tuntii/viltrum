@@ -47,6 +47,11 @@ fn on_user(mut c viltrum.Ctx, arg u64) {
   Both point into the upstream connection's buffer and are valid until the callback returns. Clone what you
   keep.
 
+The example forwards the path the client sent. `:id` matches any one segment, `..` included, and `c.path()` is
+not decoded or normalised: an upstream that resolves `/users/..` would serve `/`. When the route is meant to
+limit what the upstream is asked for, build the target from what you checked (`c.param_int('id')`, an
+allow-list) instead of passing `c.path()` through.
+
 As with `after`, the incoming request is gone by the time `cb` runs: path, params, headers and body read
 empty. Pass what the callback needs in `arg`. The callback may write the response, `fetch` again (calls in a
 chain), or call `after`. A response written in the handler after `fetch` is dropped: the callback answers

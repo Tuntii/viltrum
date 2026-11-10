@@ -44,19 +44,10 @@ jobs:
           fi
 
       - name: Unit tests
-        run: |
-          v test http1/
-          v test http2/
-          v test jsonenc/
-          v test router/
-          v test engine/
-          v test tests/
+        run: bash scripts/check.sh tests
 
       - name: Build examples
-        run: |
-          for e in hello rest features https ws_chat sse; do
-            v -o "$RUNNER_TEMP/viltrum-$e" examples/$e
-          done
+        run: bash scripts/check.sh examples
 
   # Users install V from master too (#103, #107); catch its breaking changes here first.
   v-master:
@@ -74,19 +65,10 @@ jobs:
           ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
 
       - name: Unit tests
-        run: |
-          v test http1/
-          v test http2/
-          v test jsonenc/
-          v test router/
-          v test engine/
-          v test tests/
+        run: bash scripts/check.sh tests
 
       - name: Build examples
-        run: |
-          for e in hello rest features https ws_chat sse; do
-            v -o /tmp/viltrum-$e examples/$e
-          done
+        run: bash scripts/check.sh examples
 
   test:
     runs-on: ubuntu-latest
@@ -106,13 +88,7 @@ jobs:
         run: v fmt -verify .
 
       - name: Unit tests
-        run: |
-          v test http1/
-          v test http2/
-          v test jsonenc/
-          v test router/
-          v test engine/
-          v test tests/
+        run: bash scripts/check.sh tests
 
       # viltrum_debug poisons each request after its handler returns, so a view kept past
       # the handler reads garbage. http1/ stays out: its tests check the release-build
@@ -133,13 +109,7 @@ jobs:
         run: bash scripts/gcpin_check.sh
 
       - name: Build examples
-        run: |
-          v -o /tmp/viltrum-hello examples/hello
-          v -o /tmp/viltrum-rest examples/rest
-          v -o /tmp/viltrum-features examples/features
-          v -o /tmp/viltrum-https examples/https
-          v -o /tmp/viltrum-ws-chat examples/ws_chat
-          v -o /tmp/viltrum-sse examples/sse
+        run: bash scripts/check.sh examples
 
       - name: Parser fuzz (500k mutations)
         run: |

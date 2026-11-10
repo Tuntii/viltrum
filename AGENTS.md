@@ -20,11 +20,7 @@ non-goals before proposing a feature; each feature gets a design note in `docs/d
 
 ```bash
 bash scripts/install.sh            # links this checkout as ~/.vmodules/viltrum (import viltrum)
-v fmt -verify .
-v test http1/ http2/ jsonenc/ router/ engine/ tests/
-v -d viltrum_debug test router/ engine/ tests/
-bash scripts/hotpath_lint.sh
-bash scripts/gcpin_check.sh        # Linux, slow: builds benches/httparena with -prod
+bash scripts/check.sh              # what CI runs; Linux-only parts are skipped elsewhere
 ```
 
 V 0.5.2 is the pinned compiler; CI also runs the tests on V master.

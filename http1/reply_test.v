@@ -90,20 +90,23 @@ fn test_reply_keep_alive_rules() {
 
 fn test_reply_refused() {
 	cases := {
-		'HTTP/2 200 OK\r\n\r\n':                                                           502
-		'HTTP/1.1 2x0 OK\r\n\r\n':                                                         502
-		'HTTP/1.1 200OK\r\n\r\n':                                                          502
-		'HTTP/1.1 101 Switching\r\n\r\n':                                                  502
-		'HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n':      502
-		'HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n':                              502
-		'HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\n':                                   502
+		'HTTP/2 200 OK\r\n\r\n':                                                                        502
+		'HTTP/1.1 2x0 OK\r\n\r\n':                                                                      502
+		'HTTP/1.1 200OK\r\n\r\n':                                                                       502
+		'HTTP/1.1 101 Switching\r\n\r\n':                                                               502
+		'HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n':                   502
+		'HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n':                                           502
+		'HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\n':                                                502
 		// a bare LF or CR, or a NUL, in the head: a handler could copy it into its response
-		'HTTP/1.1 200 OK\r\nContent-Type: a\nSet-Cookie: x\r\n\r\n':                       502
-		'HTTP/1.1 200 OK\r\nContent-Type: a\rb\r\n\r\n':                                   502
-		'HTTP/1.1 200 OK\r\nX: a\x00b\r\n\r\n':                                            502
-		'HTTP/1.1 200 OK\r\nContent-Length: 2000000\r\n\r\n':                              413
-		'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n':                     502
-		'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n200000\r\n${'x'.repeat(8)}': 413
+		'HTTP/1.1 200 OK\r\nContent-Type: a\nSet-Cookie: x\r\n\r\n':                                    502
+		'HTTP/1.1 200 OK\r\nContent-Type: a\rb\r\n\r\n':                                                502
+		'HTTP/1.1 200 OK\r\nX: a\x00b\r\n\r\n':                                                         502
+		'HTTP/1.1 200 OK\r\nContent-Length: 2000000\r\n\r\n':                                           413
+		'HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nab':                          502
+		'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n': 502
+		'HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n\r\n':                                           413
+		'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n':                                  502
+		'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n200000\r\n${'x'.repeat(8)}':              413
 	}
 	for s, code in cases {
 		reply_of(s, false, false) or {

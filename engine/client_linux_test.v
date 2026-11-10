@@ -479,6 +479,123 @@ fn test_fetch_reply_shapes() {
 	}
 }
 
+// early_upstream answers a POST as soon as its head is in, then reads nothing for
+// a while: a reply that overtakes its request. Any other request gets 200 with the
+// number of the connection it came on.
+fn early_upstream() string {
+	mut l := net.listen_tcp(.ip, '127.0.0.1:0') or { panic(err) }
+	addr := (l.addr() or { panic(err) }).str()
+	spawn fn [l] () {
+		mut ln := l
+		mut k := 0
+		for {
+			conn := ln.accept() or { return }
+			k++
+			spawn fn [conn, k] () {
+				mut c := conn
+				mut acc := []u8{}
+				mut tmp := []u8{len: 4096}
+				for {
+					end := head_end(acc)
+					if end < 0 {
+						n := c.read(mut tmp) or { 0 }
+						if n <= 0 {
+							c.close() or {}
+							return
+						}
+						acc << tmp[..n]
+						continue
+					}
+					if acc[..4].bytestr() == 'POST' {
+						c.write_string('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n') or {}
+						time.sleep(500 * time.millisecond)
+						for {
+							n := c.read(mut tmp) or { 0 }
+							if n <= 0 {
+								break
+							}
+						}
+						c.close() or {}
+						return
+					}
+					acc = acc[end..].clone()
+					c.write_string('HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n${k}') or {}
+				}
+			}()
+		}
+	}()
+	return addr
+}
+
+fn start_front_opts(up_addr string, uo UpstreamOptions, o Options) (string, &Stop) {
+	spec := new_upstream('http://${up_addr}', uo) or { panic(err) }
+	return serve_on(front_router(), Options{
+		...o
+		upstreams: [spec]
+	}, false)
+}
+
+// A reply that arrives while the request is still going out must not leave the
+// connection in the pool: the next fetch would land in the middle of that request.
+fn test_early_reply_closes_the_connection() {
+	front, mut stop := start_front_opts(early_upstream(), UpstreamOptions{ max_conns: 1 }, Options{
+		limits: http1.Limits{
+			max_body_bytes: 64 * 1024 * 1024
+		}
+	})
+	defer {
+		stop.request()
+	}
+	mut c := dial(front)
+	mut r := Reader{}
+	body := 'x'.repeat(32 * 1024 * 1024)
+	c.write_string('POST /f-post HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.len}\r\n\r\n') or {
+		panic(err)
+	}
+	c.write_string(body) or { panic(err) }
+	st, _ := r.response(mut c) or { panic(err) }
+	assert st == 401
+	// the same client connection stays on its worker, so on the same pool
+	st2, b2 := get(mut c, mut r, '/f/x')
+	assert st2 == 200 && b2 == '2', b2
+	c.close() or {}
+}
+
+fn script_many_interims(n int) (string, bool) {
+	return 'HTTP/1.1 100 Continue\r\n\r\n'.repeat(20) +
+		'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok', true
+}
+
+// 40 one-byte chunks whose size lines carry 4000 bytes of extension each: 40 bytes of
+// data, 160 KiB on the wire.
+fn script_padded_chunks(n int) (string, bool) {
+	chunk := '1;' + 'a'.repeat(4000) + '\r\nx\r\n'
+	return 'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n' + chunk.repeat(40) + '0\r\n\r\n', false
+}
+
+fn test_fetch_hostile_replies_end_at_once() {
+	front, mut stop := start_front(raw_upstream(script_many_interims), UpstreamOptions{}, false)
+	mut c := dial(front)
+	mut r := Reader{}
+	st, body := get(mut c, mut r, '/f/x')
+	assert st == 599 && body == 'protocol', body
+	c.close() or {}
+	stop.request()
+
+	front2, mut stop2 := start_front(raw_upstream(script_padded_chunks), UpstreamOptions{
+		max_reply: 1000
+		timeout:   6 * time.second
+	}, false)
+	mut c2 := dial(front2)
+	mut r2 := Reader{}
+	t0 := time.sys_mono_now()
+	st2, body2 := get(mut c2, mut r2, '/f/x')
+	assert st2 == 599 && body2 == 'too_big', body2
+	assert time.sys_mono_now() - t0 < 3 * u64(time.second)
+	c2.close() or {}
+	stop2.request()
+}
+
 // Over HTTP/2 a fetch holds only its own stream.
 fn test_h2c_fetch() {
 	v := sh('curl --version')

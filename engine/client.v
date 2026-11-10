@@ -35,6 +35,7 @@ mut:
 	head        bool // the request is HEAD: its reply has no body
 	idem        bool // the request may be sent again on a new connection
 	retried     bool
+	interims    int // 1xx heads dropped for this request
 	waiter      Waiter
 	busy        bool
 	connecting  bool
@@ -140,6 +141,7 @@ fn (mut peer Peer) begin(wt Waiter, head bool, idem bool) {
 	peer.head = head
 	peer.idem = idem
 	peer.retried = false
+	peer.interims = 0
 	peer.busy = true
 	peer.woff = 0
 	peer.frame.reset()

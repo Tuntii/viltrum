@@ -133,7 +133,7 @@ pub fn (mut c Ctx) set_cookie(ck Cookie) {
 	if !valid_name(ck.name) || !valid_cookie_value(ck.value) || !valid_attr(ck.path)
 		|| !valid_attr(ck.domain) {
 		$if viltrum_debug ? {
-			panic('viltrum: invalid cookie ${ck.name}')
+			panic('viltrum: invalid cookie ${ck.name}') // cold: debug builds only
 		}
 		return
 	}
@@ -261,7 +261,7 @@ fn (mut c Ctx) hval_int(n int) {
 fn (mut c Ctx) hval_header(name string, start int) {
 	if c.hval_full {
 		$if viltrum_debug ? {
-			panic('viltrum: response header values over ${c.hval.len} bytes')
+			panic('viltrum: response header values over ${c.hval.len} bytes') // cold: debug builds only
 		}
 		c.nhval = start
 		c.hval_full = false

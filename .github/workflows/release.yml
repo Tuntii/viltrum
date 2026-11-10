@@ -20,6 +20,7 @@ jobs:
   release:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Independent of unit CI; only needs full git history + GITHUB_TOKEN.
     steps:
       - name: Checkout
@@ -34,7 +35,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
 
       - name: Install release tooling

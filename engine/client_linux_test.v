@@ -630,3 +630,122 @@ fn test_h2c_fetch() {
 	}
 	assert connects == 1, out
 }
+
+// Past max_conns and max_queue a fetch answers .busy at once. Two workers with one
+// connection each and no queue: of eight fetches at once, at most two get through.
+fn test_fetch_busy_past_the_queue() {
+	up, mut up_stop := start(Options{})
+	defer {
+		up_stop.request()
+	}
+	front, mut stop := start_front(up, UpstreamOptions{ max_conns: 1, max_queue: 0 }, false)
+	defer {
+		stop.request()
+	}
+	ch := chan string{cap: 8}
+	for _ in 0 .. 8 {
+		spawn fn [front, ch] () {
+			mut c := dial(front)
+			mut r := Reader{}
+			st, body := get(mut c, mut r, '/f/delay/400')
+			ch <- '${st} ${body}'
+			c.close() or {}
+		}()
+	}
+	mut busy := 0
+	mut ok := 0
+	for _ in 0 .. 8 {
+		got := <-ch
+		if got == '599 busy' {
+			busy++
+		} else if got == '200 400' {
+			ok++
+		} else {
+			assert false, got
+		}
+	}
+	assert ok >= 1 && ok <= 2 && busy >= 6, '${ok} ok, ${busy} busy'
+}
+
+// A fetch that never got a connection times out in the queue, on its own deadline.
+fn test_queued_fetch_times_out() {
+	up, mut up_stop := start(Options{})
+	defer {
+		up_stop.request()
+	}
+	front, mut stop := start_front(up, UpstreamOptions{
+		max_conns: 1
+		timeout:   time.second
+	}, false)
+	defer {
+		stop.request()
+	}
+	t0 := time.sys_mono_now()
+	ch := chan string{cap: 6}
+	for _ in 0 .. 6 {
+		spawn fn [front, ch] () {
+			mut c := dial(front)
+			mut r := Reader{}
+			st, body := get(mut c, mut r, '/f/delay/6000')
+			ch <- '${st} ${body}'
+			c.close() or {}
+		}()
+	}
+	for _ in 0 .. 6 {
+		got := <-ch
+		assert got == '599 timeout', got
+	}
+	// in flight or queued, each answered about a second in (the sweep runs once a
+	// second), none after the upstream's six
+	assert time.sys_mono_now() - t0 < 5900 * u64(time.millisecond)
+}
+
+fn script_ordinal(n int) (string, bool) {
+	return 'HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n${n}', false
+}
+
+// A pooled connection idle past idle_timeout is closed: the next fetch opens a new
+// one, where the scripted upstream counts from 1 again.
+fn test_idle_peer_is_closed() {
+	front, mut stop := start_front(raw_upstream(script_ordinal), UpstreamOptions{
+		idle_timeout: time.second
+	}, false)
+	defer {
+		stop.request()
+	}
+	mut c := dial(front)
+	mut r := Reader{}
+	_, a := get(mut c, mut r, '/f/x')
+	_, b := get(mut c, mut r, '/f/x')
+	assert a == '1' && b == '2', '${a} ${b}' // the second reused the connection
+	time.sleep(2500 * time.millisecond)
+	_, d := get(mut c, mut r, '/f/x')
+	assert d == '1', d
+	c.close() or {}
+}
+
+// A client that leaves while its fetch is out costs nothing: the reply is dropped
+// and the server and its pool go on.
+fn test_client_gone_mid_fetch() {
+	up, mut up_stop := start(Options{})
+	defer {
+		up_stop.request()
+	}
+	front, mut stop := start_front(up, UpstreamOptions{ max_conns: 1 }, false)
+	defer {
+		stop.request()
+	}
+	for _ in 0 .. 4 {
+		mut c := dial(front)
+		c.write_string('GET /f/delay/200 HTTP/1.1\r\nHost: x\r\n\r\n') or { panic(err) }
+		c.close() or {}
+	}
+	time.sleep(500 * time.millisecond)
+	for i in 0 .. 8 {
+		mut c := dial(front)
+		mut r := Reader{}
+		st, body := get(mut c, mut r, '/f/p/ok${i}')
+		assert st == 200 && body == '/p/ok${i}', body
+		c.close() or {}
+	}
+}

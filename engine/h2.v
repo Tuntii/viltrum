@@ -85,6 +85,7 @@ mut:
 	open       int // streams in use
 	sending    int // streams with output held back
 	waiting    int // streams whose response is deferred
+	orphans    int // streams reset while waiting: their timer or fetch is still out
 	streaming  int // streams whose body is still being written (Ctx.stream)
 	held       i64 // response bytes held back in slots
 	files      int // file answers held back
@@ -154,6 +155,7 @@ fn (mut w Worker) h2_open(mut c Conn) {
 	h.open = 0
 	h.sending = 0
 	h.waiting = 0
+	h.orphans = 0
 	h.streaming = 0
 	h.held = 0
 	h.files = 0
@@ -385,7 +387,10 @@ fn (mut h H2Conn) release(i int) {
 		s.receiving = false
 	}
 	if s.waiting {
-		h.waiting-- // its timer finds the stream gone and is dropped
+		// its timer or fetch finds the stream gone and is dropped (h2_resume); until
+		// then it still counts against the streams this connection may have open
+		h.waiting--
+		h.orphans++
 		s.waiting = false
 	}
 	if !isnil(s.st) {
@@ -684,7 +689,9 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 	}
 	// a stream more than we announced, or one more while what is held back waiting on
 	// the client's windows is already as much as an HTTP/1.1 connection may hold
-	if h.open >= h2_max_streams || h.held >= w.opts.max_pending || h.files >= h2_max_files {
+	// (streams reset while their deferred response was out count until it is due)
+	if h.open + h.orphans >= h2_max_streams || h.held >= w.opts.max_pending
+		|| h.files >= h2_max_files {
 		w.h2_reset(mut c, id, http2.err_refused_stream)
 		return
 	}
@@ -982,6 +989,9 @@ fn (mut w Worker) h2_defer(mut c Conn, id u32, send_win i64) {
 fn (mut w Worker) h2_resume(mut c Conn, id u32) bool {
 	mut h := c.h2
 	i := h.find(id)
+	if i < 0 && h.orphans > 0 {
+		h.orphans-- // the timer or fetch of a stream reset meanwhile
+	}
 	if c.close_after || i < 0 || !h.streams[i].waiting {
 		return false
 	}
@@ -990,6 +1000,8 @@ fn (mut w Worker) h2_resume(mut c Conn, id u32) bool {
 	arg := s.arg
 	method := s.method
 	send_win := s.send_win
+	h.streams[i].waiting = false // answered here, not orphaned
+	h.waiting--
 	h.release(i)
 	mut x := &w.ctx
 	unsafe {

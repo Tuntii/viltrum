@@ -83,7 +83,9 @@ HTTP/1.1 for those routes.
 ## Limits
 
 Each holds per connection; going past one ends what it says, the rest of the connection carries on unless
-noted.
+noted. A stream reset while its response is deferred (`c.after`, `c.fetch`) keeps counting toward the 128
+concurrent streams until its timer is due or its fetch is answered, so resetting streams does not buy more
+deferred work.
 
 | Limit | Value | Past it |
 |-------|-------|---------|

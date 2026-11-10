@@ -85,7 +85,7 @@ close an idle connection just as it is taken. Other methods answer `.closed`.
 | Field | Default | |
 |-------|---------|--|
 | `max_conns` | 64 | Connections open to the upstream. |
-| `max_queue` | 1024 | Fetches that wait for a connection; past it, `.busy` at once. |
+| `max_queue` | 1024 | Fetches that wait for a connection; past it, or past 16 MiB of queued requests, `.busy` at once. |
 | `timeout` | 10 s | From the fetch to the whole reply, the queue included. |
 | `idle_timeout` | 30 s | A pooled connection unused this long is closed. |
 | `max_reply` | 1 MiB | Head and body together. |

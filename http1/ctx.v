@@ -405,13 +405,32 @@ pub fn (mut c Ctx) fetch_body(data []u8) {
 	}
 }
 
-// fetch_header adds a header to the request fetch sends; at most 8. Host and
-// Content-Length are written by the engine. A field that is not a valid header is
-// dropped.
+// fetch_header adds a header to the request fetch sends; at most 8. The engine
+// frames the request, so Host, Content-Length, Transfer-Encoding and the
+// connection's own fields (fetch_reserved) are dropped, as is a field that is not a
+// valid header.
 pub fn (mut c Ctx) fetch_header(name string, value string) {
-	if c.fetching && c.nfetch_hdrs < c.fetch_hdrs.len && valid_name(name) && valid_value(value) {
+	if c.fetching && c.nfetch_hdrs < c.fetch_hdrs.len && valid_name(name) && valid_value(value)
+		&& !fetch_reserved(name) {
 		c.fetch_hdrs[c.nfetch_hdrs] = HeaderPair{name, value}
 		c.nfetch_hdrs++
+	}
+}
+
+// fetch_reserved is whether name is a field the client writes itself or that speaks
+// for the connection, not the request: forwarded from a caller, it would frame the
+// request a second way on a connection other requests share.
+fn fetch_reserved(name string) bool {
+	return match name.len {
+		2 { eq_ci(name, 'te') }
+		4 { eq_ci(name, 'host') }
+		6 { eq_ci(name, 'expect') }
+		7 { eq_ci(name, 'upgrade') }
+		10 { eq_ci(name, 'connection') || eq_ci(name, 'keep-alive') }
+		14 { eq_ci(name, 'content-length') }
+		16 { eq_ci(name, 'proxy-connection') }
+		17 { eq_ci(name, 'transfer-encoding') }
+		else { false }
 	}
 }
 
@@ -574,9 +593,9 @@ pub fn (mut c Ctx) send_captured(body []u8, content_encoding string) {
 	c.write_response(c.status, c.cap_type, content_encoding, body.data, body.len)
 }
 
-// respond returns false when a response was already sent.
+// respond returns false when a response was already sent, or is deferred (after, fetch).
 fn (mut c Ctx) respond(status int, content_type string, body voidptr, n int) bool {
-	if c.responded {
+	if c.responded || c.deferred {
 		$if viltrum_debug ? {
 			panic('viltrum: second response for one request')
 		}

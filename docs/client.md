@@ -39,7 +39,9 @@ fn on_user(mut c viltrum.Ctx, arg u64) {
 - `c.fetch(up, method, target, cb, arg)` sends `method target` to the upstream with a `Host` header. The handler
   returns at once; `cb(mut c, arg)` runs exactly once, with the reply or with the error that ended the wait.
 - Before the handler returns, `c.fetch_body(data)` sets a request body (`Content-Length` is added) and
-  `c.fetch_header(name, value)` adds a header, at most 8. `target`, `data` and header values may be views of
+  `c.fetch_header(name, value)` adds a header, at most 8. `Host`, `Content-Length`, `Transfer-Encoding`,
+  `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Upgrade` and `Expect` are the engine's to write and
+  are dropped. `target`, `data` and header values may be views of
   the incoming request (`c.path()`, `c.body()`, `c.header(...)`): they are copied when the handler returns.
 - In the callback, `c.fetched()` is `{err, status, body}` and `c.fetched_header(name)` reads a reply header.
   Both point into the upstream connection's buffer and are valid until the callback returns. Clone what you
@@ -47,7 +49,8 @@ fn on_user(mut c viltrum.Ctx, arg u64) {
 
 As with `after`, the incoming request is gone by the time `cb` runs: path, params, headers and body read
 empty. Pass what the callback needs in `arg`. The callback may write the response, `fetch` again (calls in a
-chain), or call `after`.
+chain), or call `after`. A response written in the handler after `fetch` is dropped: the callback answers
+the request.
 
 ```v
 // forward a JSON body and the caller's auth header

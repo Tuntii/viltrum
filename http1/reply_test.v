@@ -124,6 +124,11 @@ fn test_write_fetch() {
 	c.fetch_body('{"a":1}'.bytes())
 	c.fetch_header('Content-Type', 'application/json')
 	c.fetch_header('Bad', 'a\r\nInjected: 1') // dropped
+	// the engine frames the request: these names are not the handler's to set
+	for name in ['Host', 'content-length', 'Transfer-Encoding', 'CONNECTION', 'Keep-Alive',
+		'Proxy-Connection', 'TE', 'Upgrade', 'Expect'] {
+		c.fetch_header(name, 'x')
+	}
 	assert c.fetch_valid()
 	mut out := []u8{}
 	c.write_fetch(mut out, 'api:9000')

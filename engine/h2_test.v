@@ -965,6 +965,35 @@ fn test_deferred_stream_reset() {
 	assert fire(mut w, mut c) == 0
 }
 
+// Resetting a stream that waits does not hand its slot to the next request: the
+// timer (or fetch) it started is still out, and counts until it is due.
+fn test_reset_streams_keep_counting_until_due() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	mut b := []u8{}
+	for k in 0 .. 300 {
+		id := u32(2 * k + 1)
+		b << cl.get(id, '/defer')
+		b << rst(id)
+	}
+	feed(mut w, mut c, b)
+	assert !c.close_after
+	assert c.h2.open == 0 && c.h2.waiting == 0
+	assert c.h2.orphans == h2_max_streams
+	assert w.timers.a.len == h2_max_streams
+	// the streams past the limit were refused
+	fs := parse(take(mut w, mut c))
+	refused := fs.filter(it.typ == http2.frame_rst_stream)
+	assert refused.len == 300 - h2_max_streams
+	// once the timers are due the connection takes requests again
+	assert fire(mut w, mut c) == 0
+	assert c.h2.orphans == 0
+	feed(mut w, mut c, cl.get(601, '/baseline2?a=1&b=2'))
+	r := cl.responses(parse(take(mut w, mut c)))
+	assert r[601].body == '3'.bytes()
+}
+
 // requests is n copies of frames on streams from id on, two apart: the client's
 // block is the same bytes once its encoder has indexed the fields.
 fn requests(mut cl Client, path string, id u32, n int, window bool) [][]u8 {

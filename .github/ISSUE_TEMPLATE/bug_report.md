@@ -11,6 +11,6 @@ labels: bug
 ```v
 ```
 
-**Versions:** Viltrum `v0.x.y` / commit, `v version`, OS:
+**Versions:** Viltrum `v1.x.y` / commit, `v version`, OS:
 
 <!-- Security issue (crash from a remote peer, smuggling, limit bypass)? Don't file here, see SECURITY.md. -->

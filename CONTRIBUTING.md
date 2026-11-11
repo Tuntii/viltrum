@@ -15,16 +15,13 @@ Requires [V](https://github.com/vlang/v) on `PATH`.
 
 ## Checks
 
-The ones CI runs on every pull request ([ci.yml](.github/workflows/ci.yml)). The unit tests and examples also run
-on V master.
+One script runs what CI runs on every pull request
+([ci.yml](.github/workflows/ci.yml)): formatting, the unit tests, the tests under
+`viltrum_debug`, the hot-path lint, and a build of every example; on Linux also the
+scope-pin check and the gcc builds. CI adds V master and the parser fuzz runs.
 
 ```bash
-v fmt -verify .
-v test http1/ http2/ jsonenc/ router/ engine/ tests/
-v -d viltrum_debug test router/ engine/ tests/
-bash scripts/hotpath_lint.sh
-bash scripts/gcpin_check.sh
-v -o /tmp/viltrum-hello examples/hello
+bash scripts/check.sh
 ```
 
 The engine tests serve on Linux only. On macOS and Windows the unit tests still run and the examples build.

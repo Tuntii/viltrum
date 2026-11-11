@@ -8,6 +8,7 @@ import viltrum.http1
 
 const peer_in = u32(C.EPOLLIN) | u32(C.EPOLLRDHUP)
 const peer_out = peer_in | u32(C.EPOLLOUT)
+const peer_max_interims = 8 // 1xx replies one request may get
 const peer_keep_wbuf = 64 * 1024 // a request buffer grown past this goes to the GC
 
 // kick connects or writes the peers fetches took on this turn and answers the fetches
@@ -153,7 +154,7 @@ fn (mut l Loop) peer_read(mut peer Peer) {
 	for {
 		if peer.rbuf.len == peer.rbuf.cap {
 			if peer.rbuf.cap > max + 64 * 1024 {
-				break // frame_reply refuses it
+				break // the framing below ends the fetch
 			}
 			unsafe { peer.rbuf.grow_cap(peer.rbuf.cap) } // cold: a reply larger than the buffer
 		}
@@ -191,9 +192,19 @@ fn (mut l Loop) peer_read(mut peer Peer) {
 			return
 		}
 		if n < 0 {
+			// the read loop stopped at the cap: nothing more will be read, and the
+			// socket would stay readable and wake the loop on every turn
+			if peer.rbuf.len == peer.rbuf.cap && peer.rbuf.cap > max + 64 * 1024 {
+				l.peer_fail(mut peer, .too_big)
+			}
 			return
 		}
 		if peer.frame.interim {
+			peer.interims++
+			if peer.interims > peer_max_interims {
+				l.peer_fail(mut peer, .protocol)
+				return
+			}
 			// a 1xx head: drop it, the reply follows
 			rest := peer.rbuf.len - n
 			unsafe {
@@ -204,7 +215,8 @@ fn (mut l Loop) peer_read(mut peer Peer) {
 			continue
 		}
 		body := http1.reply_body(peer.rbuf, &peer.frame, n)
-		keep := peer.frame.keep && !eof && n == peer.rbuf.len
+		// a reply that overtook its request leaves unsent bytes the upstream still expects
+		keep := peer.frame.keep && !eof && n == peer.rbuf.len && peer.woff == peer.wbuf.len
 		wt := peer.waiter
 		peer.busy = false
 		peer.waiter = Waiter{}

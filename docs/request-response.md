@@ -93,7 +93,8 @@ Requests pipelined behind a deferred one wait their turn, the connection's timeo
 a connection that closes first simply drops its response. Over HTTP/2 only the request's own stream waits;
 the connection's other streams are answered meanwhile ([docs/http2.md](http2.md)). Middleware that runs after `c.next()` sees no
 response yet, so a deferred response is not gzipped. `ms <= 0` calls `cb` right away. Timers have millisecond
-granularity and round up.
+granularity and round up. A response written in the handler after `after` is dropped: the callback answers the
+request.
 
 `c.suspend(token, timeout_ms, cb, arg)` is the same wait, and also ends when `app.wake(token)` is called from
 any thread — a query finishing on another thread, for example. `token` is yours: its low 32 bits pick a slot

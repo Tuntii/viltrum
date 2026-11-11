@@ -927,4 +927,8 @@ fn (mut l Loop) sweep() {
 		}
 		l.close(mut c)
 	}
+	// a stream ended above may have let a pipelined request run and fetch
+	if l.w.ready.len > 0 || l.w.fails.len > 0 {
+		l.kick()
+	}
 }

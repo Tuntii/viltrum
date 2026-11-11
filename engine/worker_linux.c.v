@@ -58,6 +58,7 @@ mut:
 	paused     bool // listener removed from epoll after EMFILE/ENFILE
 	inbox      &Inbox = unsafe { nil }
 	posts      []&http1.WsPost // the inbox's last batch
+	kicks      []Kick          // wakes drained with that batch
 	touched    []&Conn         // connections a batch wrote to, to flush
 	hs         []int           // fds whose first handshake step waits, oldest first from hs_head
 	hs_head    int
@@ -195,7 +196,7 @@ fn (mut l Loop) fire() {
 				l.w.settle(mut c)
 				continue
 			}
-		} else if c.waiting {
+		} else if c.waiting && t.serial == c.pending.serial {
 			l.w.resume(mut c)
 		} else {
 			l.w.settle(mut c)
@@ -206,7 +207,7 @@ fn (mut l Loop) fire() {
 }
 
 // after_wait serves what was pipelined behind a deferred response and arms the
-// connection's next deadline. fd is the connection the timer or reply named.
+// connection's next deadline. fd is the connection the timer, kick or reply named.
 fn (mut l Loop) after_wait(mut c Conn, fd int) {
 	l.drain(mut c)
 	l.read_pending(mut c)
@@ -236,6 +237,26 @@ fn (mut l Loop) drain_inbox() {
 	mut n := u64(0)
 	C.read(l.inbox.efd, &n, 8)
 	l.inbox.take(mut l.posts)
+	l.inbox.take_kicks(mut l.kicks)
+	for i in 0 .. l.kicks.len {
+		k := l.kicks[i]
+		if k.fd < 0 || k.fd >= l.conns.len || isnil(l.conns[k.fd]) {
+			continue
+		}
+		mut c := l.conns[k.fd]
+		if c.fd != k.fd || c.gen != k.gen || !c.waiting || c.pending.serial != k.serial {
+			continue
+		}
+		// the timer that was going to answer this wait must not answer the next one
+		c.pending.serial++
+		if c.pending.serial == 0 {
+			c.pending.serial = 1
+		}
+		l.w.lend(mut c)
+		l.w.resume(mut c)
+		l.after_wait(mut c, k.fd)
+	}
+	l.kicks.clear()
 	for i in 0 .. l.posts.len {
 		l.w.deliver(l.posts[i], mut l.conns, mut l.touched)
 		l.posts[i] = unsafe { nil } // let the message go

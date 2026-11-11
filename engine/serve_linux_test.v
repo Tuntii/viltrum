@@ -37,6 +37,22 @@ fn h_delay(mut c http1.Ctx) {
 	c.after(int(ms), h_delay_done, u64(ms))
 }
 
+fn h_wake_done(mut c http1.Ctx, arg u64) {
+	c.text_int(200, i64(arg))
+}
+
+fn h_wake(mut c http1.Ctx) {
+	c.suspend(1, 5000, h_wake_done, 42)
+}
+
+fn h_wake_early(mut c http1.Ctx) {
+	c.suspend(u64(3) | (u64(1) << 32), 5000, h_wake_done, 9)
+}
+
+fn h_wake_timeout(mut c http1.Ctx) {
+	c.suspend(4, 40, h_wake_done, 7)
+}
+
 fn ws_echo(mut s http1.Ws, m http1.WsMessage) {
 	if m.binary {
 		s.send_binary(m.data)
@@ -168,6 +184,9 @@ fn make_router() &router.Router {
 	r.add(.get, '/big', [http1.Handler(h_big)]) or { panic(err) }
 	r.add(.get, '/file', [http1.Handler(h_file)]) or { panic(err) }
 	r.add(.get, '/delay/:ms', [http1.Handler(h_delay)]) or { panic(err) }
+	r.add(.get, '/wake', [http1.Handler(h_wake)]) or { panic(err) }
+	r.add(.get, '/wake-early', [http1.Handler(h_wake_early)]) or { panic(err) }
+	r.add(.get, '/wake-timeout', [http1.Handler(h_wake_timeout)]) or { panic(err) }
 	return r
 }
 
@@ -286,6 +305,72 @@ fn read_until_eof(mut conn net.TcpConn) (int, bool) {
 		total += n
 	}
 	return total, true
+}
+
+fn test_wake_answers_before_the_timeout() {
+	h := new_hub()
+	addr, mut stop := start(Options{
+		hub: h
+	})
+	defer {
+		stop.request()
+	}
+	spawn fn [h] () {
+		time.sleep(40 * time.millisecond)
+		h.wake(1)
+	}()
+	mut c := dial(addr)
+	sw := time.new_stopwatch()
+	c.write('GET /wake HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'.bytes()) or { panic(err) }
+	mut r := Reader{}
+	st, body := r.response(mut c) or { panic(err) }
+	elapsed := sw.elapsed().milliseconds()
+	assert st == 200
+	assert body == '42'
+	assert elapsed < 1000
+	c.close() or {}
+}
+
+fn test_wake_before_park_answers_immediately() {
+	h := new_hub()
+	addr, mut stop := start(Options{
+		hub: h
+	})
+	defer {
+		stop.request()
+	}
+	h.wake(u64(3) | (u64(1) << 32))
+	mut c := dial(addr)
+	sw := time.new_stopwatch()
+	c.write('GET /wake-early HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'.bytes()) or {
+		panic(err)
+	}
+	mut r := Reader{}
+	st, body := r.response(mut c) or { panic(err) }
+	elapsed := sw.elapsed().milliseconds()
+	assert st == 200
+	assert body == '9'
+	assert elapsed < 1000
+	c.close() or {}
+}
+
+fn test_suspend_timeout_answers_without_a_wake() {
+	addr, mut stop := start(Options{})
+	defer {
+		stop.request()
+	}
+	mut c := dial(addr)
+	sw := time.new_stopwatch()
+	c.write('GET /wake-timeout HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'.bytes()) or {
+		panic(err)
+	}
+	mut r := Reader{}
+	st, body := r.response(mut c) or { panic(err) }
+	elapsed := sw.elapsed().milliseconds()
+	assert st == 200
+	assert body == '7'
+	assert elapsed < 1000
+	c.close() or {}
 }
 
 fn test_pipelined_burst_with_bodies() {

@@ -122,6 +122,7 @@ of 146 over TLS. [Autobahn|Testsuite](benches/AUTOBAHN.md) reports no failures i
 | Static files | `app.static_files`, `c.file`: ETag, Last-Modified, 304, byte ranges, precompressed `.br`/`.gz`, `sendfile` ([Static files](docs/files.md)) |
 | Forms | `c.form_value`, `c.form_file`, `c.form_parts`: urlencoded and multipart, parsed in place ([Forms](docs/forms.md)) |
 | Deferred responses | `c.after(ms, cb, arg)`: answer later from a per-worker timer without holding a thread |
+| HTTP client | `c.fetch(upstream, method, target, cb, arg)`: call another HTTP service from a handler without holding the worker; keep-alive pools per worker, no allocation per fetch ([Client](docs/client.md)) |
 | Testing | `app.handle_raw(raw)` serves a raw request in-process |
 
 > **Panics.** V cannot catch a panic: it exits the process. `recover` turns a handler that wrote nothing into a 500
@@ -190,11 +191,12 @@ The guides live in [`docs/`](docs/README.md) and are mirrored to the [wiki](http
 | Tuning workers, limits and timeouts | [Connections](docs/connection.md) |
 | Serving HTTPS or HTTP/2 | [TLS](docs/tls.md), [HTTP/2](docs/http2.md) |
 | Real-time features | [WebSocket](docs/ws.md), [Streaming and SSE](docs/streaming.md) |
+| Calling other services | [Client](docs/client.md) |
 | Going to production | [Deploy](docs/deploy.md) |
 
 Design notes for the larger pieces: [TLS](docs/design/1.x-tls.md),
 [the TLS 1.3 handshake](docs/design/1.x-tls-handshake.md), [HTTP/2](docs/design/1.x-http2.md),
-[streaming](docs/design/1.x-streaming.md).
+[streaming](docs/design/1.x-streaming.md), [the HTTP client](docs/design/1.x-client.md).
 
 ## Roadmap
 

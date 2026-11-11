@@ -81,6 +81,18 @@ pub type StreamId = http1.StreamId
 //   heartbeat (SSE) sends a comment when nothing else went out for that long.
 pub type StreamHandler = http1.StreamHandler
 
+// Upstream names a server Ctx.fetch can ask (App.upstream).
+pub type Upstream = http1.Upstream
+
+// UpstreamOptions tunes an upstream: connections and queued fetches per worker, the
+// reply timeout, the idle timeout of pooled connections, the largest reply.
+pub type UpstreamOptions = engine.UpstreamOptions
+
+// Fetched is the reply in a fetch callback (Ctx.fetched); FetchError says how the
+// fetch ended.
+pub type Fetched = http1.Fetched
+pub type FetchError = http1.FetchError
+
 struct PendingRoute {
 	method   Method
 	pattern  string
@@ -90,10 +102,11 @@ struct PendingRoute {
 @[heap]
 pub struct App {
 mut:
-	global []Handler
-	routes []PendingRoute
-	opts   engine.Options
-	hub    &engine.Hub = engine.new_hub()
+	global    []Handler
+	routes    []PendingRoute
+	opts      engine.Options
+	hub       &engine.Hub = engine.new_hub()
+	upstreams []engine.UpstreamSpec
 }
 
 pub fn new() &App {
@@ -162,6 +175,16 @@ pub fn (app &App) publish_event(topic string, name string, data string) {
 // server_options replaces the engine options (workers, limits, timeouts, Date, Server).
 pub fn (mut app App) server_options(opts Options) {
 	app.opts = opts
+}
+
+// upstream declares a server handlers can fetch from (Ctx.fetch), as
+// `http://host[:port]`, before the app serves. The host is resolved now, once; every
+// worker keeps its own pool of keep-alive connections to it.
+pub fn (mut app App) upstream(url string, opts UpstreamOptions) !Upstream {
+	app.upstreams << engine.new_upstream(url, opts)!
+	return Upstream{
+		id: app.upstreams.len - 1
+	}
 }
 
 // use adds global middleware. It runs before every route, and before the 404 and
@@ -364,7 +387,8 @@ pub fn (app &App) listen(addr string) ! {
 fn (app &App) engine_options() engine.Options {
 	return engine.Options{
 		...app.opts
-		hub: app.hub
+		hub:       app.hub
+		upstreams: app.upstreams
 	}
 }
 

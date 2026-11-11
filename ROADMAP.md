@@ -1,6 +1,6 @@
 # Viltrum Roadmap
 
-Last updated: 2026-10-27 · current release: **v1.13.1**
+Last updated: 2026-11-09 · current release: **v1.15.4**
 
 Viltrum is a small HTTP framework for [V](https://vlang.io) with its **own** HTTP/1.1 engine: one `SO_REUSEPORT`
 epoll worker per CPU, pipelining, and no allocation per request inside the framework. Not a thin wrapper.
@@ -164,13 +164,24 @@ Decided on 2026-10-26, after HttpArena's memory-efficiency view put viltrum seco
       static-h2 request down to 2.1, 45% less system time over h2c (static-h2 spent 163 us CPU a request against
       39-66 for the leaders)
 
+## Phase 9 — HTTP client
+
+Decided on 2026-11-09: a handler calls another HTTP service without holding its worker. Design:
+[docs/design/1.x-client.md](docs/design/1.x-client.md). Unblocks upstream calls, a reverse proxy on top, and
+Sharkbench.
+
+- [x] 9a: `app.upstream` (resolved at startup) and `c.fetch` / `c.fetched`: cleartext HTTP/1.1 upstreams,
+      keep-alive connections pooled per worker with a bounded queue, timeouts, one retry of an idempotent
+      request on a pooled connection found closed; from HTTP/1.1 and HTTP/2 requests. Zero-allocation gate on a
+      warm pool ([docs/client.md](docs/client.md))
+- [ ] 9b: `https://` upstreams: mbedtls in client mode, SNI, certificates checked against the system CA bundle
+
 ## Feature backlog
 
 Candidates for the phases after 7, in no order; each needs its own decision before it starts.
 
 | Feature | What it takes, and why |
 |---------|------------------------|
-| Async HTTP client | Non-blocking requests from handlers, on the same epoll workers, with keep-alive pooling and TLS. Unblocks Sharkbench, reverse proxying and upstream calls; existed on 0.x |
 | WebSocket over HTTP/2 | RFC 8441 (extended CONNECT) and permessage-deflate. Today an upgrade over HTTP/2 answers 501 |
 | Observability | `/metrics` in the Prometheus format (requests, latency histogram, connections), request IDs, structured access logs |
 

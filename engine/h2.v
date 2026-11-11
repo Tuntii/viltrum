@@ -965,6 +965,14 @@ fn (mut w Worker) h2_defer(mut c Conn, id u32, send_win i64) {
 	s.arg = x.defer_arg
 	s.method = x.head.method
 	h.waiting++
+	if x.fetching {
+		w.fetch_start(Waiter{
+			fd:     c.fd
+			gen:    c.gen
+			stream: id
+		})
+		return
+	}
 	w.timers.push(time.sys_mono_now() + u64(x.defer_ms) * 1_000_000, c.fd, c.gen, id)
 }
 
@@ -990,6 +998,7 @@ fn (mut w Worker) h2_resume(mut c Conn, id u32) bool {
 	x.out = w.h2out
 	x.begin_resumed(method, 1, true)
 	cb(mut x, arg)
+	w.reply_done()
 	w.h2_finish(mut c, id, 0, send_win)
 	return true
 }

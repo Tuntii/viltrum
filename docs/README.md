@@ -19,6 +19,7 @@ Questions the docs do not answer: ask on [Discord](https://discord.gg/mY7JBbGhp)
 | [http2.md](./http2.md) | HTTP/2 cleartext (h2c) beside HTTP/1.1, what handlers see, limits |
 | [ws.md](./ws.md) | WebSocket routes, callbacks, closing, limits |
 | [streaming.md](./streaming.md) | Streaming responses and Server-Sent Events: timers, sends from any thread, generated bodies |
+| [client.md](./client.md) | Calling other HTTP services from a handler (`c.fetch`): upstreams, pooling, errors, timeouts |
 | [deploy.md](./deploy.md) | Caddy/nginx, Host, timeouts, supervisor |
 | [releasing.md](./releasing.md) | Semantic-release and commit conventions |
 
@@ -27,7 +28,7 @@ Also: [../CHANGELOG.md](../CHANGELOG.md), [../benches/RESULTS.md](../benches/RES
 
 ## Not on the 1.x core yet
 
-Generic upgrade and hijack, the HTTP client, non-Linux platforms. They return on the new core.
+Generic upgrade and hijack, `https://` upstreams for the HTTP client, non-Linux platforms.
 
 ## v0.13 reference (not 1.x)
 

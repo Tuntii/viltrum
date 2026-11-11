@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.16.0](https://github.com/Tuntii/viltrum/compare/v1.15.4...v1.16.0) (2026-11-11)
+
+### Features
+
+* **client:** call upstream HTTP services from handlers with c.fetch ([74d0142](https://github.com/Tuntii/viltrum/commit/74d0142b68892ea1c26731d22f7361360602524f))
+
+### Performance Improvements
+
+* **client:** call kick only when fetches wait to start ([acb27f3](https://github.com/Tuntii/viltrum/commit/acb27f33cbe3f9daacb6947ff775efab9ed7963a))
+
 ## [1.15.4](https://github.com/Tuntii/viltrum/compare/v1.15.3...v1.15.4) (2026-11-03)
 
 ### Performance Improvements

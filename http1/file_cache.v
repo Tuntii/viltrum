@@ -61,7 +61,7 @@ fn (mut c Ctx) cache_fd(fd int, info &C.viltrum_file_info, slot int) int {
 	if s < 0 {
 		c.fcache << CachedFile{} // cold: once per file
 		s = c.fcache.len - 1
-		c.fcache_idx[str_view(c.pbuf, 0, c.pbuf.len).clone()] = s + 1
+		c.fcache_idx[str_view(c.pbuf, 0, c.pbuf.len).clone()] = s + 1 // cold: once per file
 	}
 	mut e := &c.fcache[s]
 	if e.data.cap < n {

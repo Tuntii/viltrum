@@ -8,6 +8,11 @@ import viltrum.http1
 // This file is the part that touches no socket: pools, queues, writing requests.
 // The event loop drives the sockets (client_linux.c.v).
 
+// What a pool's queue may hold in bytes besides max_queue's count (a queued fetch
+// carries its whole request, body included), and the buffer size kept once it is empty.
+const queue_max_bytes = 16 * 1024 * 1024
+const queue_keep_bytes = 64 * 1024
+
 // Waiter is what a fetch answers: an HTTP/1.1 connection, or one stream of an
 // HTTP/2 one. A connection closed meanwhile has another gen, or none.
 struct Waiter {
@@ -35,6 +40,7 @@ mut:
 	head        bool // the request is HEAD: its reply has no body
 	idem        bool // the request may be sent again on a new connection
 	retried     bool
+	interims    int // 1xx heads dropped for this request
 	waiter      Waiter
 	busy        bool
 	connecting  bool
@@ -105,7 +111,9 @@ fn (mut w Worker) fetch_start(wt Waiter) {
 		w.ready << peer
 		return
 	}
-	if p.queued() >= p.spec.opts.max_queue {
+	// one request always fits, whatever its size; past that the queue's bytes are bounded
+	if p.queued() >= p.spec.opts.max_queue
+		|| (p.q.len > 0 && p.q.len + x.fetch_body.len > queue_max_bytes) {
 		w.fails << Fail{wt, .busy}
 		return
 	}
@@ -140,6 +148,7 @@ fn (mut peer Peer) begin(wt Waiter, head bool, idem bool) {
 	peer.head = head
 	peer.idem = idem
 	peer.retried = false
+	peer.interims = 0
 	peer.busy = true
 	peer.woff = 0
 	peer.frame.reset()
@@ -175,6 +184,9 @@ fn (mut p Pool) compact() {
 			p.items.len = 0
 		}
 		p.qhead = 0
+		if p.q.cap > queue_keep_bytes {
+			p.q = []u8{} // cold: a burst of large requests, given back
+		}
 		return
 	}
 	if p.qhead * 2 < p.items.len {

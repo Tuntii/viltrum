@@ -111,7 +111,7 @@ of 146 over TLS. [Autobahn|Testsuite](benches/AUTOBAHN.md) reports no failures i
 | Area | |
 |------|---|
 | HTTP/1.1 | keep-alive, pipelining (responses batched into one write), `Expect: 100-continue`, HEAD. Ambiguous framing (TE+CL, duplicate or non-digit CL, obs-fold, bare CR/LF) answers **400** |
-| Engine | one `SO_REUSEPORT` epoll worker per CPU (cpuset-aware), backpressure, read/idle/write timeouts, `max_conns`, buffers lent per event so an idle connection holds none, graceful SIGINT/SIGTERM |
+| Engine | one `SO_REUSEPORT` epoll worker per CPU (cpuset-aware), backpressure, read/idle/write timeouts, `max_conns`, buffers lent per event so an idle connection holds none, SIGINT/SIGTERM stop accepting and close open connections within a second |
 | Routing | `:param`, trailing `*rest`, groups, global and per-route middleware (`c.next()`) |
 | Middleware | `recover`, `gzip` (on Viltrum's own DEFLATE encoder), `cors`, `logger` |
 | JSON | `c.json(200, value)`: encoder generated per type at compile time, no reflection |
@@ -128,7 +128,7 @@ of 146 over TLS. [Autobahn|Testsuite](benches/AUTOBAHN.md) reports no failures i
 > **Panics.** V cannot catch a panic: it exits the process. `recover` turns a handler that wrote nothing into a 500
 > and closes the connection. Run the server under a supervisor such as systemd with `Restart=always`.
 
-Not on the 1.x core yet: an HTTP client, and serving off Linux.
+Not on the 1.x core yet: `https://` upstreams for the HTTP client, and serving off Linux.
 
 ## Benchmarks
 
@@ -200,8 +200,8 @@ Design notes for the larger pieces: [TLS](docs/design/1.x-tls.md),
 
 ## Roadmap
 
-Open work is on the [project board](https://github.com/users/Tuntii/projects/3): the HTTP/2 share of the
-per-connection memory work, an async HTTP client, WebSocket over HTTP/2, and metrics. Each feature gets its own
+Open work is on the [project board](https://github.com/users/Tuntii/projects/3): `https://` upstreams for the
+HTTP client, WebSocket over HTTP/2, and metrics. Each feature gets its own
 decision before it starts; the plan, its principles and what Viltrum will not do are in [ROADMAP.md](ROADMAP.md).
 
 ## Contributing

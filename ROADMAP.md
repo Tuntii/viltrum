@@ -59,7 +59,8 @@ Success looks like:
 | Static files (`static_files`, `c.file`): validators, ranges, `sendfile` | done (Phase 4) |
 | Forms and uploads (`form_value`, `form_file`, `form_parts`) | done (Phase 4) |
 | Streaming responses and Server-Sent Events (`c.stream`, `c.sse`), HTTP/1.1 and HTTP/2 | done (Phase 7) |
-| Generic upgrade, HTTP client | **not on the 1.0 core yet** (they existed on 0.x) |
+| HTTP client: `app.upstream`, `c.fetch`, cleartext HTTP/1.1 upstreams | done (Phase 9a); `https://` upstreams open (9b) |
+| Generic upgrade | **not on the 1.0 core yet** (it existed on 0.x) |
 
 Independent results: the [HttpArena](https://www.http-arena.com) entry lives in
 [benches/httparena](benches/httparena). In the 2026-10-26 results (v1.10.0) viltrum is first of 19 on HTTP/1.1

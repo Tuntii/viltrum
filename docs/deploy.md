@@ -66,8 +66,9 @@ location /ws {
 
 ## Process model
 
-- One process, one listen address (multi-listener is backlog).
-- Graceful stop: SIGINT/SIGTERM closes the listener; existing conns are not given a long drain window in 0.3.x.
+- One process; several listen addresses with `app.serve` (cleartext and TLS side by side).
+- Stop: SIGINT/SIGTERM stop accepting, and open connections are closed within a second. Responses not sent by
+  then are lost (deferred ones included), so drain at the load balancer before stopping.
 - Run under your supervisor (`systemd` with `Restart=always`, container restart policy, etc.): a panic exits the process.
 
 ## Trust and headers

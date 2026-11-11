@@ -128,6 +128,25 @@ fn test_text_int_json_bytes() {
 	assert out_of(d).starts_with('HTTP/1.1 201 Created\r\nContent-Type: application/octet-stream\r\nContent-Length: 2\r\n')
 }
 
+fn late_cb(mut c Ctx, arg u64) {
+	c.text(200, 'late')
+}
+
+// A request handed to after() or fetch() is answered by its callback alone: a
+// response written meanwhile would be a second one on the wire.
+fn test_no_response_once_deferred() {
+	mut c := test_ctx('GET / HTTP/1.1\r\nHost: h\r\n\r\n')!
+	c.after(50, late_cb, 0)
+	c.text(200, 'early')
+	c.json(200, Msg{ message: 'early' })
+	assert out_of(c) == ''
+	assert c.deferred && !c.responded
+	mut d := test_ctx('GET / HTTP/1.1\r\nHost: h\r\n\r\n')!
+	d.fetch(Upstream{ id: 0 }, .get, '/x', late_cb, 0)
+	d.text(200, 'early')
+	assert out_of(d) == ''
+}
+
 fn test_invalid_headers_are_dropped() {
 	mut c := test_ctx('GET / HTTP/1.1\r\nHost: h\r\n\r\n')!
 	c.set_header('X-A', 'v\r\nSet-Cookie: x=1')

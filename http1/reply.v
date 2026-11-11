@@ -65,6 +65,9 @@ pub fn frame_reply(buf []u8, mut f ReplyFrame, head bool, eof bool, max int) !in
 			f.scanned = if buf.len > 3 { buf.len - 3 } else { 0 }
 			return -1
 		}
+		if end > max {
+			return refuse(413, 'reply too large')
+		}
 		f.head_end = end
 		h := view(buf, 0, end)
 		if !clean_head(h) {
@@ -82,6 +85,9 @@ pub fn frame_reply(buf []u8, mut f ReplyFrame, head bool, eof bool, max int) !in
 		mut cl := Span{}
 		mut ex := Span{}
 		framing_fields(h, mut te, mut cl, mut ex)
+		if repeated_framing(h) {
+			return refuse(502, 'repeated framing field')
+		}
 		conn := header_value(h, 'connection')
 		f.keep = if minor == 0 {
 			conn.found() && has_token(h, conn, 'keep-alive')
@@ -100,7 +106,7 @@ pub fn frame_reply(buf []u8, mut f ReplyFrame, head bool, eof bool, max int) !in
 			n := parse_content_length(view(h, cl.start, cl.len)) or {
 				return refuse(502, 'bad content-length')
 			}
-			if n > max {
+			if n > max - end {
 				return refuse(413, 'reply too large')
 			}
 			f.content_length = int(n)
@@ -184,6 +190,44 @@ fn clean_head(h []u8) bool {
 				return false
 			}
 		} else if c == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// repeated_framing is whether a reply head has more than one Content-Length or more
+// than one Transfer-Encoding field: framing_fields reads only the first of each, and
+// a reply framed two ways must not be guessed at.
+@[direct_array_access]
+fn repeated_framing(head []u8) bool {
+	mut ncl := 0
+	mut nte := 0
+	mut i := crlf_at(head, 0) + 2
+	for i + 1 < head.len {
+		j := crlf_at(head, i)
+		if j == i {
+			break
+		}
+		c := head[i] | 0x20
+		if c == `c` && field_named(head, i, j, 'content-length') {
+			ncl++
+		} else if c == `t` && field_named(head, i, j, 'transfer-encoding') {
+			nte++
+		}
+		i = j + 2
+	}
+	return ncl > 1 || nte > 1
+}
+
+// field_named is whether the line head[i..j] is a field named name_lower.
+@[direct_array_access]
+fn field_named(head []u8, i int, j int, name_lower string) bool {
+	if j - i <= name_lower.len || head[i + name_lower.len] != `:` {
+		return false
+	}
+	for k in 0 .. name_lower.len {
+		if lower(head[i + k]) != name_lower[k] {
 			return false
 		}
 	}

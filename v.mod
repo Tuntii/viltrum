@@ -1,7 +1,7 @@
 Module {
 	name: 'viltrum'
 	description: 'HTTP framework for V with its own engine'
-	version: '1.16.1'
+	version: '1.17.0'
 	license: 'MIT'
 	dependencies: []
 }

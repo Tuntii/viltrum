@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/Tuntii/viltrum/compare/v1.16.1...v1.17.0) (2026-11-11)
+
+### Features
+
+* add HttpArena async-db, static-tls and gateway-64 ([33d6612](https://github.com/Tuntii/viltrum/commit/33d6612d8e7d3f3ed3c8cad1da4aa7aec7372e78))
+* **httparena:** our own Postgres client for async-db, no libpq ([0db5d65](https://github.com/Tuntii/viltrum/commit/0db5d65cde58cf9189f3070aa9a3198ce1142793))
+
 ## [1.16.1](https://github.com/Tuntii/viltrum/compare/v1.16.0...v1.16.1) (2026-11-11)
 
 ### Bug Fixes

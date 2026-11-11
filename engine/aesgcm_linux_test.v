@@ -81,8 +81,11 @@ fn test_gcm_matches_mbedtls() {
 	if !aesgcm_supported {
 		return
 	}
+	// up to a few 128-byte chunks byte by byte, then full TLS records (16384 + type byte)
+	mut lens := []int{len: 600, init: index}
+	lens << [1023, 1024, 1025, 4096, 16383, 16384, 16385]
 	for key_len in [16, 32] {
-		for n in 0 .. 600 {
+		for n in lens {
 			key := rand.bytes(key_len)!
 			iv := rand.bytes(12)!
 			aad := rand.bytes(n % 23)!
@@ -108,6 +111,15 @@ fn test_gcm_matches_mbedtls() {
 			assert C.viltrum_gcm_open(g, iv.data, aad.data, u64(aad.len), buf.data, buf.data,
 				u64(n), tag.data) == 0
 			assert buf == pt
+			// a record: content and type sealed together, the content read in place
+			mut rec_pt := pt.clone()
+			rec_pt << u8(23)
+			rct2, rtag2 := seal(g, iv, aad, rec_pt)
+			mut rec := []u8{len: n + 1}
+			mut rec_tag := []u8{len: 16}
+			C.viltrum_gcm_seal_record(g, iv.data, aad.data, u64(aad.len), pt.data, u64(n), 23,
+				rec.data, rec_tag.data)
+			assert rec == rct2 && rec_tag == rtag2, 'record length ${n}'
 			// tampering
 			mut out := []u8{len: n, init: 0xee}
 			mut bad_tag := tag.clone()

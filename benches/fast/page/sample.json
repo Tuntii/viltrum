@@ -1,0 +1,8 @@
+{"setup":"1","commits":[
+{"hash":"ff5d8f0a1b2c3d4e5f60718293a4b5c6d7e8f901","date":"2026-10-30T13:01:00+03:00","subject":"Merge pull request #110 from Tuntii/feat/jsonenc-types","version":"v1.14.0","status":"ok","ir":{"baseline":4847,"json":409978,"pipelined":2937},"rps":{"baseline":29375,"json":10831,"pipelined":296373}},
+{"hash":"f77aa54a1b2c3d4e5f60718293a4b5c6d7e8f902","date":"2026-10-30T09:12:00+03:00","subject":"Merge pull request #109 from Tuntii/docs/readme-oss","status":"ok","ir":{"baseline":4847,"json":402100,"pipelined":2937},"rps":{"baseline":27011,"json":10950,"pipelined":281002}},
+{"hash":"b9a226fa1b2c3d4e5f60718293a4b5c6d7e8f903","date":"2026-10-29T18:40:00+03:00","subject":"Merge pull request #108 from Tuntii/fix/v-master-jsonenc","version":"v1.13.5","status":"build_failed"},
+{"hash":"071aa35a1b2c3d4e5f60718293a4b5c6d7e8f904","date":"2026-10-29T11:02:00+03:00","subject":"Merge pull request #106 from Tuntii/perf/pool-stack","version":"v1.13.4","status":"ok","ir":{"baseline":4850,"json":402500,"pipelined":2940},"rps":{"baseline":28102,"json":10700,"pipelined":290211}},
+{"hash":"d3c88fea1b2c3d4e5f60718293a4b5c6d7e8f905","date":"2026-10-28T20:15:00+03:00","subject":"Merge pull request #105 from Tuntii/fix/security-hardening","version":"v1.13.3","status":"ok","ir":{"baseline":5120,"json":404800,"pipelined":3105},"rps":{"baseline":24990,"json":10411,"pipelined":270800}},
+{"hash":"2b7087ea1b2c3d4e5f60718293a4b5c6d7e8f906","date":"2026-10-26T16:30:00+03:00","subject":"Merge pull request #101 from Tuntii/perf/lend-buffers","version":"v1.13.1","status":"ok","ir":{"baseline":5100,"json":404700,"pipelined":3090},"rps":{"baseline":25500,"json":10380,"pipelined":272000}}
+]}

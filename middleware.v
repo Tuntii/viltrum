@@ -19,16 +19,20 @@ pub fn gzip(mut c Ctx) {
 	http1.gzip_middleware(mut c)
 }
 
-// cors allows cross-origin requests from origin and answers preflight requests.
+// cors allows cross-origin requests from origin and answers preflight requests
+// (OPTIONS with Access-Control-Request-Method). Any other OPTIONS reaches the routes.
 pub fn cors(origin string) Handler {
 	return fn [origin] (mut c Ctx) {
 		c.set_header('Access-Control-Allow-Origin', origin)
 		if c.method() == .options {
-			c.set_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
-			c.set_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-			c.set_header('Access-Control-Max-Age', '86400')
-			c.no_content(204)
-			return
+			if _ := c.header('Access-Control-Request-Method') {
+				c.set_header('Access-Control-Allow-Methods',
+					'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+				c.set_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+				c.set_header('Access-Control-Max-Age', '86400')
+				c.no_content(204)
+				return
+			}
 		}
 		c.next()
 	}

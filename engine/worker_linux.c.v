@@ -62,6 +62,7 @@ mut:
 	touched    []&Conn         // connections a batch wrote to, to flush
 	hs         []int           // fds whose first handshake step waits, oldest first from hs_head
 	hs_head    int
+	peers      []&Peer // connections to upstreams (client_linux.c.v), indexed by fd
 }
 
 fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opts Options, hub &Hub, mut stop Stop, mut count ConnCount) {
@@ -134,6 +135,9 @@ fn (mut l Loop) run() {
 			}
 		}
 		l.fire()
+		if l.w.ready.len > 0 || l.w.fails.len > 0 {
+			l.kick() // only with fetches to start: the call alone cost 32 Ir a turn
+		}
 		if l.now - l.last_sweep >= 1000 {
 			l.sweep()
 			l.last_sweep = l.now
@@ -146,6 +150,7 @@ fn (mut l Loop) run() {
 			l.close(mut c)
 		}
 	}
+	l.close_peers()
 	C.close(l.epfd)
 }
 
@@ -202,7 +207,7 @@ fn (mut l Loop) fire() {
 }
 
 // after_wait serves what was pipelined behind a deferred response and arms the
-// connection's next deadline. fd is the connection the timer or kick named.
+// connection's next deadline. fd is the connection the timer, kick or reply named.
 fn (mut l Loop) after_wait(mut c Conn, fd int) {
 	l.drain(mut c)
 	l.read_pending(mut c)
@@ -362,6 +367,10 @@ fn (mut l Loop) conn_for(fd int) &Conn {
 
 fn (mut l Loop) on_event(fd int, ev u32) {
 	if fd >= l.conns.len || isnil(l.conns[fd]) || l.conns[fd].fd != fd {
+		if fd < l.peers.len && !isnil(l.peers[fd]) {
+			mut peer := l.peers[fd]
+			l.on_peer(mut peer, ev)
+		}
 		return
 	}
 	mut c := l.conns[fd]
@@ -586,6 +595,9 @@ fn (mut l Loop) drain(mut c Conn) {
 
 fn (mut l Loop) flush(mut c Conn) {
 	l.w.lend(mut c) // HTTP/2 output held in slots, and streams, write into wbuf here
+	if !isnil(c.h2) {
+		l.w.lend_big(mut c)
+	}
 	mut drained := 0 // what on_drain wrote in this flush
 	mut ended := false // and whether it ended its stream
 	mut moved := false // whether the socket took anything: write progress
@@ -607,6 +619,20 @@ fn (mut l Loop) flush(mut c Conn) {
 			c.wbuf.len = 0
 		}
 		c.woff = 0
+		// TLS 1.3 takes what it seals: records the socket has not taken wait in the
+		// session, and wbuf, empty, goes back to the pool meanwhile (Worker.settle)
+		if !isnil(c.tls) && c.tls.out_pending() {
+			r := c.tls.push()
+			if r == -1 {
+				l.arm_out(mut c, moved)
+				return
+			}
+			if r == -2 {
+				l.close(mut c)
+				return
+			}
+			moved = true
+		}
 		if c.file_fd >= 0 {
 			if !l.send_file(mut c, moved) {
 				return
@@ -872,6 +898,7 @@ fn (mut l Loop) sweep() {
 			srv.reload()
 		}
 	}
+	l.sweep_peers()
 	for i in 0 .. l.conns.len {
 		if isnil(l.conns[i]) || l.conns[i].fd < 0 {
 			continue

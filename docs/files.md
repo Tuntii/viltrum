@@ -57,8 +57,8 @@ Compressed copies made ahead of time are another matter. With `precompressed: tr
 `gzip_static` and `brotli_static`), a request for `app.css` whose `Accept-Encoding` takes `br` gets
 `app.css.br` if it exists, else one taking `gzip` gets `app.css.gz`, else `app.css` itself. The copy goes out
 with the original's `Content-Type`, `Content-Encoding: br` or `gzip`, and its own ETag, and every answer from
-such a route carries `Vary: Accept-Encoding` so caches keep the forms apart. Copies are read from disk on each
-request like the files themselves: replace one and the next answer has the new bytes. Making them is up to
+such a route carries `Vary: Accept-Encoding` so caches keep the forms apart. Copies follow the disk like the
+files themselves (see below): replace one and the next answer has the new bytes. Making them is up to
 you (`brotli -k`, `gzip -k` at build time); viltrum never compresses a file.
 
 ```v
@@ -73,8 +73,17 @@ with `sendfile` on cleartext connections (from the page cache to the socket, no 
 through the write buffer one piece at a time over TLS. Requests pipelined behind a file wait for all of it;
 a client that stops reading is cut by `write_timeout`, and the file is closed with the connection.
 
-Opening a file is a blocking `open` and `fstat` on the worker, as in every event-loop server that serves from
+`static_files` keeps the files it sends inline (and their `.br` / `.gz` copies) in memory, one copy per worker,
+up to 4 MiB per worker (`http1.file_cache_max`); past that, files are read from disk as before. Each request
+still runs one `stat` on the file it serves, and the copy is used only while size, mtime, inode and ctime are
+what they were when it was read, so a file rewritten in place or replaced by a rename is read again by the next
+request. A hit costs that one `stat` instead of `open`, `fstat`, `read` and `close`. One case escapes it: a
+rewrite that keeps the size and lands within the filesystem's timestamp granularity (a few milliseconds) of the
+write the copy was read after. On Windows, where `stat` has neither nanoseconds nor an inode, nothing is cached.
+`Ctx.file` always reads from disk.
+
+Opening or stat'ing a file is a blocking call on the worker, as in every event-loop server that serves from
 disk; on a local filesystem that is microseconds. Do not serve from a network filesystem that can stall.
 
-Serving a file allocates nothing once the worker's buffers have grown (CI checks a small file, a 304, a range,
-a directory index and a streamed file).
+Serving a file allocates nothing once the worker's buffers and cache have grown (CI checks a small file, a
+304, a range, a directory index and a streamed file).

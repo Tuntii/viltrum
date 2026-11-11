@@ -46,6 +46,17 @@ pub mut:
 	defer_cb    Resume = unsafe { nil }
 	defer_arg   u64
 	defer_token u64 // App.wake resumes this request; 0 is after() with only its timer
+	// fetch: a deferred response that the upstream's reply ends, not a timer
+	fetching     bool
+	fetch_up     int
+	fetch_method Method
+	fetch_target string
+	fetch_body   []u8
+	fetch_hdrs   [8]HeaderPair
+	nfetch_hdrs  int
+	// the reply a fetch callback reads (fetched), and its head (fetched_header)
+	reply      Fetched
+	reply_head []u8
 	// WebSocket upgrade (ws_upgrade): the engine takes the connection over after a 101
 	ws       &WsHandler = unsafe { nil }
 	ws_proto int
@@ -85,6 +96,10 @@ mut:
 	// what stat said of the file being answered and of a compressed copy of it; kept
 	// here rather than in locals, which V -prod would pin around every call
 	finfo [2]C.viltrum_file_info
+	// small files static_file_at has read, by path (file_cache.v)
+	fcache       []CachedFile
+	fcache_idx   map[string]int // slot + 1
+	fcache_bytes int
 }
 
 pub fn Ctx.new() Ctx {
@@ -105,6 +120,7 @@ pub fn (mut c Ctx) begin(msg []u8) {
 	c.responded = false
 	c.deferred = false
 	c.defer_token = 0
+	c.fetching = false
 	c.ws = unsafe { nil }
 	c.st = unsafe { nil }
 	c.capture = false
@@ -369,6 +385,97 @@ pub fn (mut c Ctx) suspend(token u64, timeout_ms int, cb Resume, arg u64) {
 	if c.deferred && token != 0 {
 		c.defer_token = token
 	}
+}
+
+// fetch answers this request once an upstream (App.upstream) replies, without holding
+// the worker: the handler returns, the request goes out to up as `method target`, and
+// cb(mut c, arg) runs on this worker with the reply in c.fetched(), or with the error
+// that ended the wait. As with after, the request is gone by then: pass what cb needs
+// in arg. Before the handler returns, fetch_body and fetch_header add to the request;
+// target, body and header values may be views of this request, they are copied when
+// the handler returns.
+pub fn (mut c Ctx) fetch(up Upstream, method Method, target string, cb Resume, arg u64) {
+	if c.responded || c.deferred {
+		$if viltrum_debug ? {
+			panic('viltrum: fetch() on a request that already has a response')
+		}
+		return
+	}
+	c.deferred = true
+	c.defer_ms = 0
+	c.defer_cb = cb
+	c.defer_arg = arg
+	c.fetching = true
+	c.fetch_up = up.id
+	c.fetch_method = method
+	c.fetch_target = target
+	c.fetch_body = view(c.buf, 0, 0)
+	c.nfetch_hdrs = 0
+}
+
+// fetch_body sets the body of the request fetch sends (Content-Length is added).
+pub fn (mut c Ctx) fetch_body(data []u8) {
+	if c.fetching {
+		c.fetch_body = data
+	}
+}
+
+// fetch_header adds a header to the request fetch sends; at most 8. Host and
+// Content-Length are written by the engine. A field that is not a valid header is
+// dropped.
+pub fn (mut c Ctx) fetch_header(name string, value string) {
+	if c.fetching && c.nfetch_hdrs < c.fetch_hdrs.len && valid_name(name) && valid_value(value) {
+		c.fetch_hdrs[c.nfetch_hdrs] = HeaderPair{name, value}
+		c.nfetch_hdrs++
+	}
+}
+
+// fetched is the reply in a fetch callback: err, status and body. body is valid
+// until the callback returns.
+pub fn (c &Ctx) fetched() Fetched {
+	return c.reply
+}
+
+// fetched_header is the first field of the reply named name (any case).
+pub fn (c &Ctx) fetched_header(name string) ?string {
+	return reply_header(c.reply_head, name)
+}
+
+// fetch_valid is whether the request fetch asked for can go out: a known method and
+// a target with no space or control byte, which would split the request line.
+pub fn (c &Ctx) fetch_valid() bool {
+	if c.fetch_method == .other {
+		return false
+	}
+	for b in c.fetch_target {
+		if b <= 0x20 || b == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// write_fetch appends the request fetch asked for to out: request line, Host,
+// Content-Length, the added headers, the body.
+pub fn (c &Ctx) write_fetch(mut out []u8, host string) {
+	append_str(mut out, c.fetch_method.name())
+	out << ` `
+	append_str(mut out, if c.fetch_target.len > 0 { c.fetch_target } else { '/' })
+	append_str(mut out, ' HTTP/1.1\r\nHost: ')
+	append_str(mut out, host)
+	m := c.fetch_method
+	if c.fetch_body.len > 0 || m == .post || m == .put || m == .patch {
+		append_str(mut out, '\r\nContent-Length: ')
+		append_int(mut out, c.fetch_body.len)
+	}
+	for i in 0 .. c.nfetch_hdrs {
+		append_str(mut out, '\r\n')
+		append_str(mut out, c.fetch_hdrs[i].name)
+		append_str(mut out, ': ')
+		append_str(mut out, c.fetch_hdrs[i].value)
+	}
+	append_str(mut out, '\r\n\r\n')
+	append_bytes(mut out, c.fetch_body)
 }
 
 // close asks the engine to close the connection after this response. Call it

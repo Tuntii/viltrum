@@ -33,7 +33,12 @@ jobs:
       - name: Install V
         run: |
           curl -fsSL -o "$RUNNER_TEMP/v.zip" https://github.com/vlang/v/releases/download/0.5.2/${{ matrix.v_zip }}
-          unzip -q "$RUNNER_TEMP/v.zip" -d "$RUNNER_TEMP"
+          if [ "$RUNNER_OS" = macOS ]; then
+            # Info-ZIP unzip on the runner image fails on the zip's symlinks ("symlink error")
+            tar -xf "$RUNNER_TEMP/v.zip" -C "$RUNNER_TEMP"
+          else
+            unzip -q "$RUNNER_TEMP/v.zip" -d "$RUNNER_TEMP"
+          fi
           echo "$RUNNER_TEMP/v" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/v/v" version
           mkdir -p ~/.vmodules

@@ -11,6 +11,11 @@ pub const write_buf_size = 16 * 1024
 // buffers one large request or response grew past these are given back when done
 const shrink_rbuf_above = 64 * 1024
 const shrink_wbuf_above = 256 * 1024
+// Write buffers grown past write_buf_size a worker keeps for output that needs one
+// (HTTP/2 answers a read's requests into one), apart from the rest: every connection
+// takes a write buffer at some point, the handshake's read-ahead included, so a pool
+// of grown buffers would end up a grown buffer per connection ever busy at once.
+const big_pool_max = 32
 
 // Conn is one client connection. A worker keeps the Conn after the connection
 // closes and reuses it, buffers included, for its next accepted connection.
@@ -137,6 +142,7 @@ pub mut:
 	// read and write buffers no connection holds (lend, settle)
 	rpool BufPool
 	wpool BufPool
+	bpool BufPool // grown write buffers, at most big_pool_max (lend_big)
 	// TLS 1.3 record buffers no connection holds (tls13_linux.c.v)
 	tin_pool  BufPool
 	tout_pool BufPool
@@ -149,6 +155,12 @@ pub mut:
 	h2body []u8
 	h2out  []u8
 	h2blk  []u8
+	// the HTTP client (client.v): a pool per upstream, peers to connect or write on
+	// this turn, fetches to answer at once, and closed peers kept for reuse
+	pools     []Pool
+	ready     []&Peer
+	fails     []Fail
+	peer_free []&Peer
 }
 
 pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
@@ -163,6 +175,11 @@ pub fn new_worker(r &router.Router, opts Options, index int) &Worker {
 	w.ctx.worker = index
 	w.ws.worker = index
 	w.st.worker = index
+	for spec in opts.upstreams {
+		w.pools << Pool{
+			spec: spec
+		}
+	}
 	return w
 }
 
@@ -234,13 +251,14 @@ pub fn (mut w Worker) lend(mut c Conn) {
 }
 
 // settle takes back c's buffers that are empty: rbuf with no request in part, wbuf
-// with all output out.
+// with nothing left in it, even while the socket is full (what waits then is in the
+// TLS session's records, or a file, which do not need wbuf; flush lends it again).
 @[inline]
 pub fn (mut w Worker) settle(mut c Conn) {
 	if c.rbuf.len == 0 && c.rbuf.cap > 0 {
 		w.give_back(mut c, true)
 	}
-	if c.wbuf.len == 0 && c.wbuf.cap > 0 && !c.out_armed {
+	if c.wbuf.len == 0 && c.wbuf.cap > 0 {
 		w.give_back(mut c, false)
 	}
 	if !isnil(c.tls) {
@@ -249,9 +267,10 @@ pub fn (mut w Worker) settle(mut c Conn) {
 	}
 }
 
-// give_back returns c's read (or write) buffer to the pool, emptied. One that a large
-// request or response grew past what is worth keeping goes to the GC instead. The
-// arrays move under unsafe because V master copies an array stored as a plain value.
+// give_back returns c's read (or write) buffer to the pool, emptied: a grown write
+// buffer to bpool while it has room. One that a large request or response grew past
+// what is worth keeping goes to the GC instead. The arrays move under unsafe because
+// V master copies an array stored as a plain value.
 @[inline]
 fn (mut w Worker) give_back(mut c Conn, read bool) {
 	if read {
@@ -263,14 +282,28 @@ fn (mut w Worker) give_back(mut c Conn, read bool) {
 		}
 		c.rbuf = unsafe { w.rpool.empty }
 	} else {
-		if c.wbuf.cap <= shrink_wbuf_above {
-			unsafe {
-				c.wbuf.len = 0
-			}
+		unsafe {
+			c.wbuf.len = 0
+		}
+		if c.wbuf.cap <= write_buf_size {
 			w.wpool.put(c.wbuf)
+		} else if c.wbuf.cap <= shrink_wbuf_above && w.bpool.n < big_pool_max {
+			w.bpool.put(c.wbuf)
 		}
 		c.wbuf = unsafe { w.wpool.empty }
 		c.woff = 0
+	}
+}
+
+// lend_big swaps c's empty write buffer for a grown one, if bpool has one: for output
+// that would grow it (HTTP/2), so it is not grown again for every read.
+@[inline]
+fn (mut w Worker) lend_big(mut c Conn) {
+	if c.wbuf.len == 0 && c.wbuf.cap <= write_buf_size && w.bpool.n > 0 {
+		if c.wbuf.cap > 0 {
+			w.wpool.put(c.wbuf)
+		}
+		c.wbuf = w.bpool.take(0)
 	}
 }
 
@@ -443,6 +476,7 @@ pub fn (mut w Worker) resume(mut c Conn) {
 	x.out = c.wbuf
 	x.begin_resumed(c.pending.method, c.pending.minor, !c.pending.close)
 	c.pending.cb(mut x, c.pending.arg)
+	w.reply_done()
 	w.finish(mut c, 0)
 }
 
@@ -476,6 +510,9 @@ pub fn (mut w Worker) process_waiting(mut c Conn) {
 		}
 	}
 	w.timers = Timers{}
+	// no event loop here to reach an upstream: a fetch is answered .timeout at once
+	w.ready.clear()
+	w.fails.clear()
 }
 
 // inline_file appends what is left of a streamed file to wbuf, for process_waiting:
@@ -529,8 +566,16 @@ fn (mut w Worker) finish(mut c Conn, idx int) {
 				c.pending.due = time.sys_mono_now() // wake already arrived
 			}
 		}
-		w.timers.push_serial(c.pending.due, c.fd, c.gen, 0, c.pending.serial)
 		c.wbuf = x.out
+		if x.fetching {
+			// the reply, or the peer's timeout, answers it (Loop.answer); no timer
+			w.fetch_start(Waiter{
+				fd:  c.fd
+				gen: c.gen
+			})
+			return
+		}
+		w.timers.push_serial(c.pending.due, c.fd, c.gen, 0, c.pending.serial)
 		return
 	}
 	w.answer_default(idx)

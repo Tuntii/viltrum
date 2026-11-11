@@ -17,7 +17,7 @@ This entry runs viltrum with its default configuration (standard mode).
 | async-db | `GET /async-db?min=&max=&limit=` | our own Postgres client (wire protocol, SCRAM-SHA-256), one thread per connection, sized from `DATABASE_MAX_CONN`; the worker parks with `c.suspend` until `app.wake` |
 | gateway-64 | `/static/*`, `/json/:count`, `/async-db`, `/baseline2` on 8443 | stock nginx terminates TLS and HTTP/2, serves `/static/*` from disk, and proxies the rest to viltrum on 8085 |
 | baseline-h2 | `GET /baseline2` on 8443 | HTTP/2 over TLS, chosen by ALPN; the same handler and `Ctx` as HTTP/1.1 |
-| static-h2 | `GET /static/*` on 8443 | `app.static_files` with `precompressed: true`: the `.br` or `.gz` copy on disk to a client that accepts it, read from disk on each request |
+| static-h2 | `GET /static/*` on 8443 | `app.static_files` with `precompressed: true`: the `.br` or `.gz` copy on disk to a client that accepts it, from the handler's per-worker cache, which stats the file on each request |
 | baseline-h2c | `GET /baseline2` on 8082 | HTTP/2 with prior knowledge; the listener serves HTTP/1.1 too |
 | json-h2c | `GET /json/:count?m=` on 8082 | the json-comp handler over h2c |
 

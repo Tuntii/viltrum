@@ -16,7 +16,12 @@ import viltrum.http2
 const h2_max_streams = 128 // SETTINGS_MAX_CONCURRENT_STREAMS we announce
 const h2_max_continuations = 32 // CONTINUATION frames one header block may take
 const h2_flood = 1000 // control frames with no request answered in between, before ENHANCE_YOUR_CALM
-const h2_pump_max = 256 * 1024 // output h2_pump stages in wbuf at a time
+// Output staged in wbuf before it is flushed: by h2_pump, and by h2_process answering
+// the requests of one read. Past it the frames wait in rbuf for the next round. With
+// a response on top it still fits the TLS records one send takes (tls13_out_records),
+// so the write buffer is all sealed and can go back while the socket is full, and it
+// stays 64 KiB: a 64 KiB batch was no faster and needed 128 KiB buffers.
+const h2_pump_max = 32 * 1024
 
 // H2Stream is a stream still in progress: its request's body is coming, or its
 // response is held back by flow control. Streams that finish where they start (most)
@@ -232,6 +237,7 @@ fn (mut w Worker) h2_fail(mut c Conn, code u32) {
 fn (mut w Worker) h2_process(mut c Conn) {
 	mut h := c.h2
 	mut off := 0
+	w.lend_big(mut c)
 	if !h.preface {
 		// checked here as well as on a cleartext listener: after ALPN the connection is
 		// HTTP/2 before its first byte
@@ -250,7 +256,7 @@ fn (mut w Worker) h2_process(mut c Conn) {
 		off = http2.preface.len
 		h.preface = true
 	}
-	for !c.close_after && c.wbuf.len < w.opts.max_pending {
+	for !c.close_after && c.wbuf.len < w.opts.max_pending && c.wbuf.len < h2_pump_max {
 		avail := c.rbuf.len - off
 		if avail < http2.frame_header_len {
 			break
@@ -959,6 +965,14 @@ fn (mut w Worker) h2_defer(mut c Conn, id u32, send_win i64) {
 	s.arg = x.defer_arg
 	s.method = x.head.method
 	h.waiting++
+	if x.fetching {
+		w.fetch_start(Waiter{
+			fd:     c.fd
+			gen:    c.gen
+			stream: id
+		})
+		return
+	}
 	w.timers.push(time.sys_mono_now() + u64(x.defer_ms) * 1_000_000, c.fd, c.gen, id)
 }
 
@@ -984,6 +998,7 @@ fn (mut w Worker) h2_resume(mut c Conn, id u32) bool {
 	x.out = w.h2out
 	x.begin_resumed(method, 1, true)
 	cb(mut x, arg)
+	w.reply_done()
 	w.h2_finish(mut c, id, 0, send_win)
 	return true
 }

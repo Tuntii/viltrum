@@ -143,11 +143,19 @@ fn fields[T](mut out []u8, val T, was_first bool) bool {
 		$if field.is_embed {
 			first = fields(mut out, val.$(field.name), first)
 		} $else {
-			name, skip, omitempty, keep_null := field_attrs(field.name, field.attrs)
-			if !skip && keep(val.$(field.name), omitempty, keep_null) {
-				_ = key(mut out, name, first)
+			// No attributes, not an option or pointer: always written, as before #110. The
+			// checks are constants in the generated C; the general path cost json/50 +25% Ir.
+			if field.attrs.len == 0 && !field.is_option && field.indirections == 0 {
+				_ = key(mut out, field.name, first)
 				first = false
 				_ = encode(mut out, val.$(field.name))
+			} else {
+				name, skip, omitempty, keep_null := field_attrs(field.name, field.attrs)
+				if !skip && keep(val.$(field.name), omitempty, keep_null) {
+					_ = key(mut out, name, first)
+					first = false
+					_ = encode(mut out, val.$(field.name))
+				}
 			}
 		}
 	}
@@ -156,7 +164,7 @@ fn fields[T](mut out []u8, val T, was_first bool) bool {
 
 // field_attrs reads a field's (or enum value's) attributes as x.json2 does: its key,
 // and whether to skip it, leave it out when empty, or write null for none. A field
-// without attributes costs a length check.
+// without attributes never gets here: fields() writes it directly.
 fn field_attrs(name string, attrs []string) (string, bool, bool, bool) {
 	mut key_name := name
 	mut omitempty := false

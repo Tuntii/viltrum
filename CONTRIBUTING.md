@@ -2,6 +2,8 @@
 
 Everyone taking part in this project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
+Questions, ideas or not sure where to start? Ask on [Discord](https://discord.gg/mY7JBbGhp).
+
 ## Setup
 
 ```bash
@@ -26,6 +28,10 @@ v -o /tmp/viltrum-hello examples/hello
 ```
 
 The engine tests serve on Linux only. On macOS and Windows the unit tests still run and the examples build.
+
+[perf.yml](.github/workflows/perf.yml) measures callgrind instructions per request for the PR's base and head
+and fails when a scenario is more than 1% slower ([benches/fast](benches/fast/README.md#the-pr-gate)). If the
+cost is deliberate, say why in the PR and add the `perf-ok` label.
 
 Optional benches (local only):
 

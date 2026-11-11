@@ -55,6 +55,32 @@ fn test_chunk_errors_carry_status() {
 	assert status_of(head + '5;' + 'e'.repeat(5000) + '\r\nhello\r\n0\r\n\r\n') == 400
 }
 
+// The body and trailer caps add up over chunks and trailer lines that are each under
+// them, also when the message arrives one byte at a time.
+fn test_chunk_caps_add_up_across_reads() {
+	head := 'POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n'
+	small := Limits{
+		max_body_bytes: 10
+	}
+	for msg, want in {
+		head + '8\r\n12345678\r\n8\r\n12345678\r\n0\r\n\r\n':        413
+		head + '0\r\n' + 'X-T: aaaaaaaaaa\r\n'.repeat(600) + '\r\n': 431
+	} {
+		raw := msg.bytes()
+		mut whole := Frame{}
+		assert frame(raw, mut whole, small) or { err.code() } == want
+		mut f := Frame{}
+		mut got := 0
+		for n in 1 .. raw.len + 1 {
+			frame(view(raw, 0, n), mut f, small) or {
+				got = err.code()
+				break
+			}
+		}
+		assert got == want
+	}
+}
+
 fn test_expect_continue_is_flagged_once_head_is_complete() {
 	mut f := Frame{}
 	raw := 'POST / HTTP/1.1\r\nExpect: 100-Continue\r\nContent-Length: 2\r\n\r\n'.bytes()

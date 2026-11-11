@@ -43,3 +43,13 @@ fn test_date_write_allocates_nothing() {
 	}
 	assert allocated_bytes() - before == 0
 }
+
+// write above stays in one second; format runs once per second per worker.
+fn test_date_format_allocates_nothing() {
+	mut d := DateCache{}
+	before := allocated_bytes()
+	for ts := i64(0); ts < 4102444800; ts += 839_999 {
+		d.format(ts)
+	}
+	assert allocated_bytes() - before == 0
+}

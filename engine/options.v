@@ -22,6 +22,7 @@ pub:
 	handle_signals bool  = true
 	stop           &Stop = unsafe { nil } // stop a server without signals (tests, embedding)
 	hub            &Hub  = unsafe { nil } // WebSocket publish and send from any thread (viltrum.App sets it)
+	upstreams      []UpstreamSpec // what Ctx.fetch can reach, by Upstream.id (viltrum.App sets it)
 }
 
 // TlsOptions names the PEM files a TLS listener serves. Both are read again when

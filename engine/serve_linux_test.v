@@ -960,7 +960,8 @@ fn test_websocket_publish_across_workers() {
 	mut conns := []&net.TcpConn{}
 	mut readers := []&Reader{}
 	mut workers := map[string]bool{}
-	for _ in 0 .. 8 {
+	// SO_REUSEPORT hashes connections, so a fixed 8 all land on one worker ~1 run in 128: dial until both have one.
+	for conns.len < 8 || (workers.len < 2 && conns.len < 64) {
 		mut c := dial(addr)
 		mut r := &Reader{}
 		ws_open_path(mut c, mut r, '/chat')!
@@ -975,7 +976,7 @@ fn test_websocket_publish_across_workers() {
 	}
 	assert workers.len == 2, 'subscribers on both workers'
 	conns[0].write(ws_cframe(http1.ws_text, 'pub:room:hi all'.bytes()))!
-	for i in 1 .. 8 {
+	for i in 1 .. conns.len {
 		_, got := ws_read(mut conns[i], mut readers[i])!
 		assert got.bytestr() == 'hi all'
 	}
@@ -983,7 +984,7 @@ fn test_websocket_publish_across_workers() {
 		hub.post(http1.ws_post('room', http1.WsId{}, http1.WsId{}, http1.ws_text, c'from a thread',
 			13))
 	}()
-	for i in 0 .. 8 {
+	for i in 0 .. conns.len {
 		_, got := ws_read(mut conns[i], mut readers[i])!
 		assert got.bytestr() == 'from a thread', '${i}'
 	}

@@ -27,18 +27,31 @@ pub fn str_view(buf []u8, start int, len int) string {
 	return unsafe { tos(&u8(buf.data) + start, len) }
 }
 
+// put appends p[0..n] as push_many does, copying straight into spare capacity when
+// there is some: push_many's checks and call cost ~58 Ir, most of a small WebSocket echo.
 @[inline]
-pub fn append_str(mut out []u8, s string) {
-	if s.len > 0 {
-		unsafe { out.push_many(s.str, s.len) }
+pub fn put(mut out []u8, p &u8, n int) {
+	if n <= 0 {
+		return
+	}
+	if out.cap - out.len >= n && !out.flags.has(.is_slice) {
+		unsafe {
+			C.memcpy(&u8(out.data) + out.len, p, n) // vmemcpy's extra pointer checks cost ~12 Ir
+			out.len += n
+		}
+	} else {
+		unsafe { out.push_many(p, n) }
 	}
 }
 
 @[inline]
+pub fn append_str(mut out []u8, s string) {
+	put(mut out, s.str, s.len)
+}
+
+@[inline]
 pub fn append_bytes(mut out []u8, b []u8) {
-	if b.len > 0 {
-		unsafe { out.push_many(b.data, b.len) }
-	}
+	put(mut out, b.data, b.len)
 }
 
 // append_int writes n in decimal (n.str() would allocate).
@@ -59,7 +72,7 @@ pub fn append_int(mut out []u8, n i64) {
 	if neg {
 		out << `-`
 	}
-	unsafe { out.push_many(&tmp[i], 20 - i) }
+	put(mut out, &tmp[i], 20 - i)
 }
 
 @[inline]

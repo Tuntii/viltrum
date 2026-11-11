@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.1](https://github.com/Tuntii/viltrum/compare/v1.16.0...v1.16.1) (2026-11-11)
+
+### Bug Fixes
+
+* **client:** drop framing headers passed to fetch_header, refuse a response after after()/fetch() ([0153f55](https://github.com/Tuntii/viltrum/commit/0153f55fdf416e5b542b3558733ceebc8b673a2a))
+* **client:** end early, oversized, repeated-1xx and ambiguously framed replies ([b92ec87](https://github.com/Tuntii/viltrum/commit/b92ec879fc76938f264447a1eb77f12946d8ff0f))
+* **h2:** count a reset stream's deferred work against the stream limit; bound the fetch queue in bytes ([fecdf85](https://github.com/Tuntii/viltrum/commit/fecdf85ad4fcbf4d1f9d70ed5d2ff070ca2612c0))
+
 ## [1.16.0](https://github.com/Tuntii/viltrum/compare/v1.15.4...v1.16.0) (2026-11-11)
 
 ### Features

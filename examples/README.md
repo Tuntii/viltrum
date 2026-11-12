@@ -7,6 +7,7 @@ Link the module first (from the repo root): `bash scripts/install.sh`.
 | `hello` | 8080 | text responses, a `:param` |
 | `rest` | 8081 | JSON in and out, shared state behind a mutex (handlers run on every worker thread) |
 | `features` | 8082 | global middleware (logger, cors), groups, decoded query params, gzip, `worker_id`, static files (`/static/`), a form with a file upload (`/upload`) |
+| `todo_api` | 8086 | CRUD JSON API, grouped routes, status codes, mutex-protected in-memory state, `handle_raw` tests |
 | `https` | 8080, 8443 | cleartext and HTTPS listeners on the same workers (`bash scripts/dev-cert.sh` first) |
 | `ws_chat` | 8084 | WebSocket rooms: `:param` and query in `on_open`, state in `s.data`, `subscribe` / `publish` across workers, publishing from another thread |
 | `sse` | 8085 | Server-Sent Events: a clock from a timer on each stream, a chat topic published from a handler, a CSV body generated as the client takes it (`on_drain`) |
@@ -15,6 +16,14 @@ Link the module first (from the repo root): `bash scripts/install.sh`.
 v run examples/features
 curl -s 'http://127.0.0.1:8082/search?q=caf%C3%A9'
 curl -s --compressed -H 'Accept-Encoding: gzip' http://127.0.0.1:8082/big | head -c 40
+```
+
+```bash
+v run examples/todo_api
+curl -s http://127.0.0.1:8086/todos
+curl -s -X POST http://127.0.0.1:8086/todos -H 'Content-Type: application/json' -d '{"title":"write tests"}'
+curl -s -X PUT http://127.0.0.1:8086/todos/1 -H 'Content-Type: application/json' -d '{"title":"write tests","completed":true}'
+curl -i -X DELETE http://127.0.0.1:8086/todos/1
 ```
 
 ```bash

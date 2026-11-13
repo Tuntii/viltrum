@@ -27,6 +27,14 @@ mut:
 	next  int = 1
 }
 
+fn todo_id(mut c viltrum.Ctx) ?int {
+	id := c.param_int('id') or { return none }
+	if id <= 0 {
+		return none
+	}
+	return int(id)
+}
+
 fn build_app() &viltrum.App {
 	mut store := &Store{}
 	mut app := viltrum.new()
@@ -35,11 +43,8 @@ fn build_app() &viltrum.App {
 	todos.get('/', fn [mut store] (mut c viltrum.Ctx) {
 		mut result := []Todo{}
 		store.mu.lock()
-		for id in 1 .. store.next {
-			todo := store.todos[id] or { Todo{} }
-			if todo.id != 0 {
-				result << todo
-			}
+		for _, todo in store.todos {
+			result << todo
 		}
 		store.mu.unlock()
 		c.json(200, result)
@@ -65,29 +70,22 @@ fn build_app() &viltrum.App {
 		c.json(201, todo)
 	})
 	todos.get('/:id', fn [mut store] (mut c viltrum.Ctx) {
-		id := c.param_int('id') or {
-			c.text(400, 'invalid todo id')
-			return
-		}
-		if id <= 0 {
+		id := todo_id(mut c) or {
 			c.text(400, 'invalid todo id')
 			return
 		}
 		store.mu.lock()
-		todo := store.todos[int(id)] or { Todo{} }
-		store.mu.unlock()
-		if todo.id == 0 {
+		if id !in store.todos {
+			store.mu.unlock()
 			c.text(404, 'todo not found')
 			return
 		}
+		todo := store.todos[id]
+		store.mu.unlock()
 		c.json(200, todo)
 	})
 	todos.put('/:id', fn [mut store] (mut c viltrum.Ctx) {
-		id := c.param_int('id') or {
-			c.text(400, 'invalid todo id')
-			return
-		}
-		if id <= 0 {
+		id := todo_id(mut c) or {
 			c.text(400, 'invalid todo id')
 			return
 		}
@@ -105,41 +103,33 @@ fn build_app() &viltrum.App {
 		}
 
 		store.mu.lock()
-		mut todo := store.todos[int(id)] or { Todo{} }
-		if todo.id != 0 {
-			todo = Todo{
-				id:        int(id)
-				title:     input.title
-				completed: completed
-			}
-			store.todos[int(id)] = todo
-		}
-		store.mu.unlock()
-		if todo.id == 0 {
+		if id !in store.todos {
+			store.mu.unlock()
 			c.text(404, 'todo not found')
 			return
 		}
+		todo := Todo{
+			id:        id
+			title:     input.title
+			completed: completed
+		}
+		store.todos[id] = todo
+		store.mu.unlock()
 		c.json(200, todo)
 	})
 	todos.delete('/:id', fn [mut store] (mut c viltrum.Ctx) {
-		id := c.param_int('id') or {
-			c.text(400, 'invalid todo id')
-			return
-		}
-		if id <= 0 {
+		id := todo_id(mut c) or {
 			c.text(400, 'invalid todo id')
 			return
 		}
 		store.mu.lock()
-		todo := store.todos[int(id)] or { Todo{} }
-		if todo.id != 0 {
-			store.todos.delete(int(id))
-		}
-		store.mu.unlock()
-		if todo.id == 0 {
+		if id !in store.todos {
+			store.mu.unlock()
 			c.text(404, 'todo not found')
 			return
 		}
+		store.todos.delete(id)
+		store.mu.unlock()
 		c.no_content(204)
 	})
 	return app

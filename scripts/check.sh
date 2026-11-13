@@ -13,6 +13,10 @@ run_tests() {
 	for d in $test_dirs; do
 		v test "$d/"
 	done
+	# examples that ship handler tests (handle_raw), e.g. todo_api
+	for t in examples/*/*_test.v; do
+		if [ -e "$t" ]; then v test "$(dirname "$t")/"; fi
+	done
 }
 
 build_examples() {

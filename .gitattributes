@@ -1,0 +1,2 @@
+# bash fails on CRLF (`set: pipefail\r`), so keep scripts LF in Windows checkouts too
+*.sh text eol=lf

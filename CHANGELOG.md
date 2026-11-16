@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.1](https://github.com/Tuntii/viltrum/compare/v1.18.0...v1.18.1) (2026-11-16)
+
+### Bug Fixes
+
+* **examples:** reject todo ids above max_i32 instead of wrapping them ([#134](https://github.com/Tuntii/viltrum/issues/134)) ([4c2187d](https://github.com/Tuntii/viltrum/commit/4c2187dc3f1705131b4cddbc9967eb925a36b4f0))
+
 ## [1.18.0](https://github.com/Tuntii/viltrum/compare/v1.17.0...v1.18.0) (2026-11-16)
 
 ### Features

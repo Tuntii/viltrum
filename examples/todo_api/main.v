@@ -29,7 +29,8 @@ mut:
 
 fn todo_id(mut c viltrum.Ctx) ?int {
 	id := c.param_int('id') or { return none }
-	if id <= 0 {
+	// above max_i32, int(id) would wrap onto another todo's id
+	if id <= 0 || id > max_i32 {
 		return none
 	}
 	return int(id)

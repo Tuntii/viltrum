@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.0](https://github.com/Tuntii/viltrum/compare/v1.17.0...v1.18.0) (2026-11-16)
+
+### Features
+
+* **examples:** add todo_api, a CRUD JSON example with handler tests ([#131](https://github.com/Tuntii/viltrum/issues/131)) ([0bfba3f](https://github.com/Tuntii/viltrum/commit/0bfba3fbe8172d6e564b533035ec001d5e7540c0))
+
 ## [1.17.0](https://github.com/Tuntii/viltrum/compare/v1.16.1...v1.17.0) (2026-11-11)
 
 ### Features

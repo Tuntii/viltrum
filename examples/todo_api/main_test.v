@@ -38,6 +38,8 @@ fn test_get_todo_returns_bad_request_or_not_found() {
 	app := build_app()
 	invalid_id := send(app, 'GET', '/todos/nope', '')!
 	assert invalid_id.starts_with('HTTP/1.1 400 ')
+	too_big := send(app, 'GET', '/todos/4294967297', '')!
+	assert too_big.starts_with('HTTP/1.1 400 ')
 	missing := send(app, 'GET', '/todos/1', '')!
 	assert missing.starts_with('HTTP/1.1 404 ')
 }

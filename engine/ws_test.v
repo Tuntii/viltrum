@@ -254,6 +254,27 @@ fn test_fragments_with_ping_between() {
 	assert c.ws_frag == 0 && c.ws_msg.len == 0
 }
 
+// Fragments being joined count against the worker's ws_held_max, all connections
+// together; a message that would pass it closes with 1013, and what a connection held
+// is given back when it completes its message or goes away.
+fn test_fragments_share_a_budget() {
+	mut w, mut c, _ := fresh('/ws', '')
+	feed(mut w, mut c, cframe(http1.ws_text, false, 'abc'.bytes()))
+	assert w.ws_held == 3
+	feed(mut w, mut c, cframe(0, true, 'de'.bytes()))
+	assert w.ws_held == 0 && sframes(c.wbuf)[0].data.bytestr() == 'abcde'
+	unsafe {
+		c.wbuf.len = 0
+	}
+	w.ws_held = ws_held_max - 4 // what other connections are joining
+	feed(mut w, mut c, cframe(http1.ws_text, false, 'abcd'.bytes()))
+	assert !c.close_after && w.ws_held == ws_held_max
+	feed(mut w, mut c, cframe(0, false, 'e'.bytes()))
+	f := sframes(c.wbuf)
+	assert f.len == 1 && f[0].op == http1.ws_close
+	assert c.close_after && c.ws_code == 1013
+}
+
 fn test_pong_is_absorbed() {
 	mut w, mut c, _ := fresh('/ws', '')
 	feed(mut w, mut c, cframe(http1.ws_pong, true, []u8{}))

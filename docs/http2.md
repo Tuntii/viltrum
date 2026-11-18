@@ -95,11 +95,12 @@ deferred work.
 | Request body | `Limits.max_body_bytes` (1 MiB) | **413**, and the stream is reset |
 | Bodies held at once | each stream's window starts at 64 KiB and reopens as its body is read; while the bodies held pass `max_body_bytes`, only the oldest stream's window reopens | the other streams wait, never fail |
 | Bodies arriving at once | as many streams as fit `max_body_bytes` with their starting windows (16 at the defaults) | a request with a body past that is refused (REFUSED_STREAM, which clients retry) |
-| Responses waiting on the client's windows | `Options.max_pending` (1 MiB) of bodies, 32 files | new streams are refused (REFUSED_STREAM, which clients retry) |
+| Responses waiting on the client's windows | `Options.max_pending` (1 MiB) of bodies, 64 KiB when the client's `SETTINGS_INITIAL_WINDOW_SIZE` is under 16 KiB; 32 files | new streams are refused (REFUSED_STREAM, which clients retry) |
 | One streaming response's output waiting on the client's windows | four times `Options.max_pending` | that stream is reset (CANCEL) |
 | A client that never opens its windows | `Options.write_timeout`, counted from when the waiting output last moved | the connection is closed |
 | Frame size | 16 KiB (the default; we never raise it) | the connection ends (FRAME_SIZE_ERROR) |
 | Frames that answer nothing between answered requests (PING, SETTINGS, PRIORITY, RST_STREAM, GOAWAY, empty DATA, DATA and WINDOW_UPDATE on closed streams, malformed requests, unknown types) | 1000 | the connection ends (ENHANCE_YOUR_CALM) |
+| Streams that end in a reset: the client's RST_STREAM, ours for its errors, a zero WINDOW_UPDATE (Rapid Reset, MadeYouReset) | 200, once they are more than half of the requests answered on the connection | the connection ends (ENHANCE_YOUR_CALM) |
 | HPACK dynamic table | 4096 bytes, both ways | |
 
 A malformed request (pseudo-headers missing, repeated or after a regular field, an uppercase or connection-

@@ -69,6 +69,10 @@ and `check_origin`.
   sends to an id whose connection has closed.
 - **Slow subscribers are dropped.** A client that lets more than four times `max_pending` of output pile up
   is closed with 1008 rather than buffering without bound.
+- **Fragmented messages share a budget.** A message sent in fragments is joined in a buffer the connection
+  keeps, up to `max_message`; the fragments a worker is joining at once, all its connections together, are
+  capped at 64 MiB. A fragment past that closes its connection with 1013 (try again later), so clients
+  that send fragments without ever ending the message cannot hold `max_message` each.
 - **Ping is answered with Pong automatically.** Unsolicited Pongs are ignored.
 - **Closing.** A client's Close is answered with the same code and the connection closes once that is sent.
   `s.close` sends ours; messages that arrive after it are dropped and the connection closes when the

@@ -21,9 +21,19 @@
 - Timeouts: `read_timeout` 30 s from a request's first byte, `idle_timeout` 60 s between requests,
   `write_timeout` 30 s without write progress.
 - Framing and parse errors answer 4xx after any earlier pipelined responses, then close. A request too large
-  for the limits answers 413 whether its `Content-Length` says so or a chunked body grows past them.
+  for the limits answers 413 whether its `Content-Length` says so or a chunked body grows past them; a
+  `Content-Length` past what an i64 holds is malformed (400). A head past `max_header_bytes` answers 400 when
+  its request line has no space yet (no method), 414 when the request line is still unfinished, 431 otherwise.
+- The parser holds requests to RFC 9112 where a front proxy and the server could read one differently, and
+  answers 400 for: a request line that is not ASCII (raw UTF-8 in the target must be percent-encoded); a
+  version that is not `HTTP/` DIGIT `.` DIGIT (a well-formed one other than 1.x is 505); asterisk-form with a
+  method other than OPTIONS; a `Host` that is empty or not uri-host [":" port] (userinfo, a path, a list);
+  whitespace between a chunk size and its CRLF, chunk extensions that are not `;name[=token or
+  "quoted"]`. A chunked body whose framing passes 16 KiB and outweighs its data (1-byte chunks) is 413. `OPTIONS *` answers 200 with no body. HttpArena's compliance column runs Http11Probe against
+  these rules.
 - Lingering close: when the client may still be sending (a refused request, requests pipelined behind a
   close), the engine sends the response, shuts its side, and reads and drops input until the client closes,
-  5 s pass without input, or 30 s in all. Closing at once would answer the unread input with a reset, which
+  5 s pass without input, or 30 s in all; meanwhile the socket's receive buffer is cut to 16 KiB, so a
+  client that floods slows to what is read instead of filling kernel memory. Closing at once would answer the unread input with a reset, which
   can destroy the response before a client still writing its upload reads it.
 - SIGINT/SIGTERM stop accepting; open connections are closed within a second.

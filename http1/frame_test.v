@@ -1,7 +1,7 @@
 module http1
 
 const chunked_req = 'POST /c HTTP/1.1\r\nHost: x\r\ntransfer-encoding: Chunked\r\n\r\n' +
-	'4;name=val\r\nWiki\r\n5 \r\npedia\r\nE\r\n in\r\n\r\nchunks.\r\n0\r\nX-Trailer: 1\r\n\r\n'
+	'4;name=val\r\nWiki\r\n5 ; a = "q\\"x"\r\npedia\r\nE\r\n in\r\n\r\nchunks.\r\n0\r\nX-Trailer: 1\r\n\r\n'
 
 fn frame_all(raw string) !int {
 	mut f := Frame{}
@@ -28,11 +28,12 @@ fn test_framing_errors_carry_status() {
 	assert status_of('POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello') == 400
 	assert status_of('POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\n') == 400
 	assert status_of('POST / HTTP/1.1\r\nTransfer-Encoding: chunked, chunked\r\n\r\n0\r\n\r\n') == 400
-	for cl in ['abc', '+5', '-1', '5, 5', '5 5', ''] {
+	// a length past i64 is malformed, not too large
+	for cl in ['abc', '+5', '-1', '5, 5', '5 5', '', '99999999999999999999'] {
 		assert status_of('POST / HTTP/1.1\r\nContent-Length: ${cl}\r\n\r\nhello') == 400, cl
 	}
-	// lengths past the limit, however long, are too large rather than malformed
-	for cl in ['2000000', '4294967301', '99999999999999999999'] {
+	// lengths past the limit are too large rather than malformed
+	for cl in ['2000000', '4294967301', '9223372036854775807'] {
 		assert status_of('POST / HTTP/1.1\r\nContent-Length: ${cl}\r\n\r\n') == 413, cl
 	}
 	lead := 'POST / HTTP/1.1\r\nContent-Length: 00000000002\r\n\r\n20'
@@ -40,13 +41,18 @@ fn test_framing_errors_carry_status() {
 	big := 'GET / HTTP/1.1\r\nX: ' + 'a'.repeat(70000)
 	assert status_of(big) == 431
 	assert status_of(big + '\r\n\r\n') == 431
+	// past the head limit before the request line ends: no method (400), a long target (414)
+	assert status_of('G'.repeat(100000) + ' / HTTP/1.1\r\n\r\n') == 400
+	assert status_of('GET /' + 'a'.repeat(100000)) == 414
 }
 
 fn test_chunk_errors_carry_status() {
 	head := 'POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n'
 	for body in ['0x5\r\nhello\r\n0\r\n\r\n', '-5\r\nhello\r\n0\r\n\r\n',
 		'000000005\r\nhello\r\n0\r\n\r\n', '5\r\nhelloX0\r\n\r\n', '5\nhello\r\n0\r\n\r\n',
-		'5 x\r\nhello\r\n0\r\n\r\n', '0\r\nBad Trailer\r\n\r\n'] {
+		'5 x\r\nhello\r\n0\r\n\r\n', '0\r\nBad Trailer\r\n\r\n', '5 \r\nhello\r\n0\r\n\r\n',
+		'5;\r\nhello\r\n0\r\n\r\n', '5;a=\r\nhello\r\n0\r\n\r\n', '5;a b\r\nhello\r\n0\r\n\r\n',
+		'5;a@b\r\nhello\r\n0\r\n\r\n', '5;a="x\r\nhello\r\n0\r\n\r\n', '5;a;\r\nhello\r\n0\r\n\r\n'] {
 		assert status_of(head + body) == 400, body
 	}
 	assert status_of(head + 'ffffff\r\n') == 413
@@ -79,6 +85,19 @@ fn test_chunk_caps_add_up_across_reads() {
 		}
 		assert got == want
 	}
+}
+
+// A body of 1-byte chunks is too large once its framing passes 16 KiB and outweighs its
+// data; small chunks with real data in them are not.
+fn test_tiny_chunks_are_refused() {
+	head := 'POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n'
+	assert status_of(head + '1\r\na\r\n'.repeat(4000)) == 413
+	assert frame_all(head + '1\r\na\r\n'.repeat(2000) + '0\r\n\r\n')! > 0
+	// 16-byte chunks: 6 bytes of framing each, under the data
+	body := '10\r\n' + 'x'.repeat(16) + '\r\n'
+	msg := head + body.repeat(30000) + '0\r\n\r\n'
+	mut f := Frame{}
+	assert frame(msg.bytes(), mut f, Limits{ max_body_bytes: 1 << 20 })! == msg.len
 }
 
 fn test_expect_continue_is_flagged_once_head_is_complete() {

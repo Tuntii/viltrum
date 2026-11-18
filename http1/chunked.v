@@ -7,6 +7,7 @@ module http1
 const max_chunk_size_digits = 8 // 0xffffffff; the body limit cuts in long before
 const max_chunk_trailer_bytes = 8192
 const max_chunk_line_bytes = 4096 // size line including extensions
+const max_chunk_overhead = 16 * 1024 // framing bytes allowed past the data they carry
 
 // ChunkScan is resumable framing state. pos is an offset into the buffer passed to
 // scan_chunked and only moves past complete units, so a client sending one byte at
@@ -16,6 +17,7 @@ pub mut:
 	pos int
 mut:
 	total         int
+	overhead      int // size lines and CRLFs of the chunks so far
 	in_trailers   bool
 	trailer_bytes int
 }
@@ -52,6 +54,7 @@ pub fn scan_chunked(buf []u8, mut st ChunkScan, max_body int) !bool {
 		if digits == 0 {
 			return refuse(400, 'bad chunk size')
 		}
+		ws := i
 		for i < buf.len && (buf[i] == ` ` || buf[i] == `\t`) {
 			i++
 		}
@@ -61,9 +64,11 @@ pub fn scan_chunked(buf []u8, mut st ChunkScan, max_body int) !bool {
 			}
 			return false
 		}
-		if buf[i] != `\r` && buf[i] != `;` {
+		// whitespace may only come before an extension's ";" (BWS), not before the CRLF
+		if buf[i] != `;` && (buf[i] != `\r` || i > ws) {
 			return refuse(400, 'bad chunk size')
 		}
+		ext := i
 		i = chunk_line_end(buf, i)!
 		if i < 0 {
 			if buf.len - st.pos > max_chunk_line_bytes {
@@ -73,6 +78,9 @@ pub fn scan_chunked(buf []u8, mut st ChunkScan, max_body int) !bool {
 		}
 		if i - st.pos > max_chunk_line_bytes {
 			return refuse(400, 'chunk line too long')
+		}
+		if buf[ext] == `;` && !chunk_ext_ok(buf, ext, i - 2) {
+			return refuse(400, 'bad chunk extension')
 		}
 		if size == 0 {
 			st.pos = i
@@ -90,6 +98,12 @@ pub fn scan_chunked(buf []u8, mut st ChunkScan, max_body int) !bool {
 			return refuse(400, 'bad chunk data')
 		}
 		st.total += n
+		st.overhead += i - st.pos + 2
+		// a body of tiny chunks costs the framing more than it carries: the whole message
+		// is buffered, so a megabyte of data in 1-byte chunks would hold six
+		if st.overhead > max_chunk_overhead && st.overhead > st.total {
+			return refuse(413, 'payload too large')
+		}
 		st.pos = i + n + 2
 	}
 	// trailer-section: field lines until an empty line. Trailers are dropped.
@@ -173,6 +187,67 @@ fn chunk_line_end(buf []u8, from int) !int {
 		i++
 	}
 	return -1
+}
+
+// chunk_ext_ok checks buf[from..end], which starts at a ";", against chunk-ext:
+// *( BWS ";" BWS name [ BWS "=" BWS ( token / quoted-string ) ] ). Extensions are
+// dropped, but one we would read differently from a proxy is refused.
+@[direct_array_access]
+fn chunk_ext_ok(buf []u8, from int, end int) bool {
+	mut i := from
+	for i < end {
+		i = skip_bws(buf, i, end)
+		if i >= end {
+			return true
+		}
+		if buf[i] != `;` {
+			return false
+		}
+		i = skip_bws(buf, i + 1, end)
+		s := i
+		for i < end && tchars[buf[i]] {
+			i++
+		}
+		if i == s {
+			return false
+		}
+		j := skip_bws(buf, i, end)
+		if j >= end || buf[j] != `=` {
+			i = j
+			continue
+		}
+		i = skip_bws(buf, j + 1, end)
+		if i < end && buf[i] == `"` {
+			i++
+			for i < end && buf[i] != `"` {
+				if buf[i] == `\\` {
+					i++
+				}
+				i++
+			}
+			if i >= end {
+				return false
+			}
+			i++
+		} else {
+			v := i
+			for i < end && tchars[buf[i]] {
+				i++
+			}
+			if i == v {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+fn skip_bws(buf []u8, from int, end int) int {
+	mut i := from
+	for i < end && (buf[i] == ` ` || buf[i] == `\t`) {
+		i++
+	}
+	return i
 }
 
 fn hex_value(c u8) int {

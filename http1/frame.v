@@ -69,13 +69,13 @@ pub fn frame(buf []u8, mut f Frame, lim Limits) !int {
 		end := find_head_end(buf, f.scanned)
 		if end < 0 {
 			if buf.len > lim.max_header_bytes {
-				return refuse(431, 'headers too large')
+				return oversized_head(buf, lim.max_header_bytes)
 			}
 			f.scanned = if buf.len > 3 { buf.len - 3 } else { 0 }
 			return -1
 		}
 		if end > lim.max_header_bytes {
-			return refuse(431, 'headers too large')
+			return oversized_head(buf, lim.max_header_bytes)
 		}
 		f.head_end = end
 		head := view(buf, 0, end)
@@ -257,6 +257,27 @@ fn field_at(head []u8, i int, j int, name_lower string, mut s Span) {
 	}
 }
 
+// oversized_head names what made a head pass max bytes: a request line with no space
+// in it is no request line (400), one still unfinished is a target too long (414),
+// otherwise the header fields are (431).
+fn oversized_head(buf []u8, max int) IError {
+	n := if buf.len < max { buf.len } else { max }
+	for k in 0 .. n {
+		if buf[k] == ` ` {
+			for j in k + 1 .. n {
+				if buf[j] == `\n` {
+					return refuse(431, 'headers too large')
+				}
+			}
+			return refuse(414, 'uri too long')
+		}
+		if buf[k] == `\n` {
+			break
+		}
+	}
+	return refuse(400, 'bad request line')
+}
+
 // parse_content_length accepts 1*DIGIT only (RFC 9112 section 6.3): no sign or list.
 // A value past what an int holds stops growing there, so it is refused with 413 like
 // any other length over the limit rather than taken for a malformed one.
@@ -270,9 +291,12 @@ fn parse_content_length(b []u8) ?i64 {
 		if c < `0` || c > `9` {
 			return none
 		}
-		if n <= max_i32 {
-			n = n * 10 + i64(c - `0`)
+		d := i64(c - `0`)
+		// a value past i64 is malformed (400), not merely too large (413)
+		if n > (max_i64 - d) / 10 {
+			return none
 		}
+		n = n * 10 + d
 	}
 	return n
 }

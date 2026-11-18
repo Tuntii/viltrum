@@ -136,6 +136,7 @@ pub mut:
 	timers   Timers // deferred responses, earliest first
 	gen      u32    // last Conn.gen handed out
 	ws       http1.Ws
+	ws_held  int // bytes of fragmented WebSocket messages being joined, all connections
 	st       http1.Stream
 	hub      &Hub = unsafe { nil } // where publish and send go; nil drops them (handle_raw)
 	topics   map[string]&Topic // this worker's subscribers per topic
@@ -454,6 +455,11 @@ fn (mut w Worker) run_chain(mut x http1.Ctx) int {
 	} else if idx == router.method_not_allowed {
 		x.chain = w.r.on_405
 		x.allow = w.r.allowed(x.path())
+	} else if x.head.method == .options && x.path() == '*' {
+		// OPTIONS * asks about the server, not a resource (RFC 9110 9.3.7); the parser
+		// lets "*" through only with OPTIONS
+		x.no_content(200)
+		return idx
 	} else {
 		x.chain = w.r.on_404
 	}

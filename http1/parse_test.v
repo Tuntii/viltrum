@@ -62,6 +62,30 @@ fn test_unsupported_version_is_505() {
 	assert false, 'HTTP/2.0 accepted'
 }
 
+fn parse_status(raw string) int {
+	parse_msg(raw) or { return err.code() }
+	return 0
+}
+
+// What Http11Probe (HttpArena's compliance column) holds a server to.
+fn test_malformed_request_lines_are_400() {
+	for line in ['GET / HTTP/1', 'GET / HTTP/01.01', 'GET / http/1.1', 'GET / HTTP/1.1.1',
+		'GET * HTTP/1.1', 'GET /caf\xc3\xa9 HTTP/1.1', 'GET /\xc0\xaf HTTP/1.1'] {
+		assert parse_status(line + '\r\nHost: x\r\n\r\n') == 400, line
+	}
+	assert parse_status('GET / HTTP/3.0\r\nHost: x\r\n\r\n') == 505
+	assert parse_status('OPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n') == 0
+}
+
+fn test_host_values() {
+	for v in ['', 'user@x', 'x/path', 'a, b', 'a b', 'x?y', 'x#y'] {
+		assert parse_status('GET / HTTP/1.1\r\nHost: ${v}\r\n\r\n') == 400, v
+	}
+	for v in ['localhost', 'localhost:8080', '127.0.0.1:1', '[::1]:8443', 'xn--d1a.example'] {
+		assert parse_status('GET / HTTP/1.1\r\nHost: ${v}\r\n\r\n') == 0, v
+	}
+}
+
 fn test_too_many_fields_is_431() {
 	mut raw := 'GET / HTTP/1.1\r\nHost: x\r\n'
 	for i in 0 .. 32 {

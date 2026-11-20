@@ -16,6 +16,9 @@ import viltrum.http2
 const h2_max_streams = 128 // SETTINGS_MAX_CONCURRENT_STREAMS we announce
 const h2_max_continuations = 32 // CONTINUATION frames one header block may take
 const h2_flood = 1000 // control frames with no request answered in between, before ENHANCE_YOUR_CALM
+const h2_cancels = 200 // reset streams before h2_cancelled looks at the share of them
+const h2_small_window = 16 * 1024 // a SETTINGS_INITIAL_WINDOW_SIZE below this holds a stream's response back
+const h2_max_held = 64 * 1024 // what the windows of such a client may hold back before new streams are refused
 // Output staged in wbuf before it is flushed: by h2_pump, and by h2_process answering
 // the requests of one read. Past it the frames wait in rbuf for the next round. With
 // a response on top it still fits the TLS records one send takes (tls13_out_records),
@@ -91,6 +94,8 @@ mut:
 	files      int // file answers held back
 	pump_next  int // the slot h2_pump starts its next pass at
 	flood      int
+	cancels    int     // streams the client reset, or we reset for its errors
+	served     int     // requests answered
 	resets     [16]u32 // the last streams we reset, whose frames in flight are ignored
 	reset_pos  int
 	// what the stall timeout reads: DATA sent from held streams, and when it last moved
@@ -161,6 +166,8 @@ fn (mut w Worker) h2_open(mut c Conn) {
 	h.files = 0
 	h.pump_next = 0
 	h.flood = 0
+	h.cancels = 0
+	h.served = 0
 	h.resets = [16]u32{}
 	h.reset_pos = 0
 	h.sent = 0
@@ -210,6 +217,20 @@ fn (mut w Worker) h2_reset(mut c Conn, id u32, code u32) {
 	h.reset_pos = (h.reset_pos + 1) % h.resets.len
 	http2.write_frame_header(mut c.wbuf, 4, http2.frame_rst_stream, 0, id)
 	http2.put_u32(mut c.wbuf, code)
+	w.h2_cancelled(mut c)
+}
+
+// h2_cancelled counts a stream that ended in a reset, either way. Answering a request
+// resets the flood count, so a client that opens streams and resets them at once
+// (Rapid Reset, CVE-2023-44487), or makes us reset them (MadeYouReset, CVE-2025-8671),
+// would never trip it: past h2_cancels such streams, and when they are more than half
+// of what was served, the connection ends.
+fn (mut w Worker) h2_cancelled(mut c Conn) {
+	mut h := c.h2
+	h.cancels++
+	if h.cancels > h2_cancels && h.cancels * 2 > h.served {
+		w.h2_fail(mut c, http2.err_enhance_your_calm)
+	}
 }
 
 // was_reset is whether we reset stream id lately.
@@ -688,10 +709,16 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 		return
 	}
 	// a stream more than we announced, or one more while what is held back waiting on
-	// the client's windows is already as much as an HTTP/1.1 connection may hold
+	// the client's windows is already as much as an HTTP/1.1 connection may hold; a
+	// client whose streams start with (next to) no window gets h2_max_held of that, or
+	// one that never opens them (CVE-2019-9517) makes every connection hold max_pending
 	// (streams reset while their deferred response was out count until it is due)
-	if h.open + h.orphans >= h2_max_streams || h.held >= w.opts.max_pending
-		|| h.files >= h2_max_files {
+	held_max := if h.peer_window < h2_small_window && h2_max_held < w.opts.max_pending {
+		h2_max_held
+	} else {
+		w.opts.max_pending
+	}
+	if h.open + h.orphans >= h2_max_streams || h.held >= held_max || h.files >= h2_max_files {
 		w.h2_reset(mut c, id, http2.err_refused_stream)
 		return
 	}
@@ -928,6 +955,7 @@ fn (mut w Worker) h2_serve(mut c Conn, id u32, body []u8, send_win i64) {
 	idx := w.run_chain(mut x)
 	w.requests++
 	c.h2.flood = 0
+	c.h2.served++
 	w.h2_finish(mut c, id, idx, send_win)
 }
 
@@ -1455,6 +1483,9 @@ fn (mut w Worker) h2_on_window_update(mut c Conn, fh http2.FrameHeader, payload 
 				w.h2_fail(mut c, http2.err_protocol) // a stream never opened
 			}
 			h.flood++ // a closed stream: nothing to move
+			if inc == 0 {
+				w.h2_cancelled(mut c) // MadeYouReset on a stream already answered
+			}
 			return
 		}
 		if inc == 0 {
@@ -1491,6 +1522,7 @@ fn (mut w Worker) h2_on_rst(mut c Conn, fh http2.FrameHeader) {
 		h.release(i)
 		w.h2_credit_all(mut c)
 	}
+	w.h2_cancelled(mut c)
 }
 
 fn (mut w Worker) h2_on_priority(mut c Conn, fh http2.FrameHeader, payload []u8) {

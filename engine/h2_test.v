@@ -576,8 +576,7 @@ fn test_window_given_during_the_body_reaches_the_response() {
 // max_pending, new streams are refused (and the client may retry them).
 fn test_held_output_is_bounded() {
 	mut w := new_worker(h2_router(), Options{
-		send_date:   false
-		max_pending: 250000
+		send_date: false
 	}, 0)
 	mut c := open(mut w, [[u32(http2.settings_initial_window_size), 0]])
 	mut cl := Client{}
@@ -587,14 +586,65 @@ fn test_held_output_is_bounded() {
 	}
 	feed(mut w, mut c, b)
 	r := cl.responses(parse(take(mut w, mut c)))
-	assert r[1].status == '200' && r[5].status == '200'
-	assert r[7].reset == http2.err_refused_stream
-	assert c.h2.held == 3 * big_body.len && c.h2.sending == 3
+	// h2_max_held: the first body waits on the closed window, the rest are refused
+	assert r[1].status == '200'
+	for id in [u32(3), 5, 7] {
+		assert r[id].reset == http2.err_refused_stream
+	}
+	assert c.h2.held == big_body.len && c.h2.sending == 1
 	// a reset gives its share back
 	mut p := []u8{}
 	http2.put_u32(mut p, http2.err_cancel)
 	feed(mut w, mut c, frame(http2.frame_rst_stream, 0, 1, p))
-	assert c.h2.held == 2 * big_body.len && c.h2.sending == 2
+	assert c.h2.held == 0 && c.h2.sending == 0
+}
+
+// Rapid Reset: streams opened and reset at once are answered (the request is in the
+// same read), so the flood count never grows; past h2_cancels resets that are half of
+// what was served, the connection ends. MadeYouReset gets there by making us reset.
+fn test_rapid_reset_ends_the_connection() {
+	mut p := []u8{}
+	http2.put_u32(mut p, http2.err_cancel)
+	for made in [false, true] {
+		mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+		mut c := open(mut w, [])
+		mut cl := Client{}
+		mut b := []u8{}
+		for i in 0 .. h2_cancels + 1 {
+			id := u32(2 * i + 1)
+			b << cl.get(id, '/baseline2?a=1&b=1')
+			b << if made { window_update(id, 0) } else { frame(http2.frame_rst_stream, 0, id, p) }
+		}
+		assert goaway_code(parse(feed_all(mut w, mut c, b))) == http2.err_enhance_your_calm, 'made=${made}'
+	}
+	// a client that cancels now and then is served
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	mut b := []u8{}
+	for i in 0 .. 6 * h2_cancels {
+		id := u32(2 * i + 1)
+		b << cl.get(id, '/baseline2?a=1&b=1')
+		if i % 3 == 0 {
+			b << frame(http2.frame_rst_stream, 0, id, p)
+		}
+	}
+	r := cl.responses(parse(feed_all(mut w, mut c, b)))
+	assert !c.close_after && r.len == 6 * h2_cancels
+}
+
+// feed_all feeds b and takes the output a batch at a time until all of b is read.
+fn feed_all(mut w Worker, mut c Conn, b []u8) []u8 {
+	c.rbuf << b
+	mut out := []u8{}
+	for _ in 0 .. 10000 {
+		w.process(mut c)
+		out << take(mut w, mut c)
+		if c.rbuf.len == 0 || c.close_after {
+			break
+		}
+	}
+	return out
 }
 
 // The answers to one read go out a batch at a time: wbuf stays small enough to go back
@@ -972,7 +1022,8 @@ fn test_reset_streams_keep_counting_until_due() {
 	mut c := open(mut w, [])
 	mut cl := Client{}
 	mut b := []u8{}
-	for k in 0 .. 300 {
+	// 150 cancels and refusals in all: under h2_cancels, so the connection stays
+	for k in 0 .. 150 {
 		id := u32(2 * k + 1)
 		b << cl.get(id, '/defer')
 		b << rst(id)
@@ -985,7 +1036,7 @@ fn test_reset_streams_keep_counting_until_due() {
 	// the streams past the limit were refused
 	fs := parse(take(mut w, mut c))
 	refused := fs.filter(it.typ == http2.frame_rst_stream)
-	assert refused.len == 300 - h2_max_streams
+	assert refused.len == 150 - h2_max_streams
 	// once the timers are due the connection takes requests again
 	assert fire(mut w, mut c) == 0
 	assert c.h2.orphans == 0

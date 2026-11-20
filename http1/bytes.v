@@ -108,6 +108,22 @@ fn make_tchars() [256]bool {
 	return t
 }
 
+// hostchars marks the bytes of a Host value, uri-host [":" port] (RFC 3986 3.2.2):
+// reg-name, IP literal and port characters. Not the comma (a list of hosts), "@"
+// (userinfo) or "/" (a path), which a front proxy and we could read differently.
+const hostchars = make_hostchars()
+
+fn make_hostchars() [256]bool {
+	mut t := [256]bool{}
+	for c in 0 .. 256 {
+		b := u8(c)
+		t[c] = (b >= `a` && b <= `z`) || (b >= `A` && b <= `Z`)
+			|| (b >= `0` && b <= `9`)
+			|| b in [`-`, `.`, `_`, `~`, `!`, `$`, `&`, `'`, `(`, `)`, `*`, `+`, `;`, `=`, `:`, `[`, `]`, `%`]
+	}
+	return t
+}
+
 // is_tchar reports whether c may appear in an RFC 9110 token.
 @[inline]
 pub fn is_tchar(c u8) bool {

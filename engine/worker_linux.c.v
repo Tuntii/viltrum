@@ -39,6 +39,7 @@ const max_wait_ns = i64(1_000_000_000)
 const sendfile_max = i64(1024 * 1024 * 1024) // per call; Linux moves at most ~2 GiB in one
 const linger_idle_ms = 5000 // a lingering client quiet this long is closed
 const linger_max_ms = 30000 // and any lingering client after this long
+const linger_rcvbuf = 16 * 1024 // the socket's receive buffer while lingering
 const busy_msg = 'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\nConnection: close\r\n\r\nservice unavailable'
 
 struct Loop {
@@ -783,8 +784,13 @@ fn (mut l Loop) send_file(mut c Conn, moved bool) bool {
 // makes the kernel answer with RST, and a client still writing its body may then
 // lose the response before reading it. So the write side is shut (FIN after the
 // response) and input is read and dropped until the client closes, stays quiet for
-// linger_idle_ms, or linger_max_ms pass, as nginx's lingering close does.
+// linger_idle_ms, or linger_max_ms pass, as nginx's lingering close does. The socket's
+// receive buffer shrinks first: a client that floods meanwhile would otherwise get
+// megabytes queued in the kernel for it before the worker reads them, on every such
+// connection at once; TCP flow control slows it to what is read instead.
 fn (mut l Loop) linger(mut c Conn) {
+	small := i32(linger_rcvbuf)
+	C.setsockopt(c.fd, C.SOL_SOCKET, C.SO_RCVBUF, &small, sizeof(i32))
 	if !isnil(c.tls) {
 		l.w.lend(mut c) // close_notify is sealed in the record buffer
 		c.tls.close() // close_notify; what the client sends next is not decrypted
@@ -876,6 +882,10 @@ fn (mut l Loop) close(mut c Conn) {
 	}
 	if c.wbuf.cap > 0 {
 		l.w.give_back(mut c, false)
+	}
+	l.w.ws_held -= c.ws_msg.len // a fragmented message cut short
+	unsafe {
+		c.ws_msg.len = 0
 	}
 	if c.ws_msg.cap > shrink_rbuf_above {
 		c.ws_msg = []u8{} // cold: a large fragmented message

@@ -8,6 +8,12 @@ import viltrum.http1
 // copied, into a buffer the Conn keeps. Sends append to the write buffer, which the
 // event loop flushes as it does responses.
 
+// ws_held_max caps the fragmented messages a worker joins at once, all connections
+// together: each may reach max_message, so many clients sending fragments without FIN
+// (CVE-2026-48779) would otherwise hold max_message each. Past it a message closes with
+// 1013 (try again later).
+const ws_held_max = 64 * 1024 * 1024
+
 // ws_open takes the connection over after the upgrade response; the Ctx still holds
 // the upgrade request for on_open.
 fn (mut w Worker) ws_open(mut c Conn) {
@@ -86,11 +92,16 @@ pub fn (mut w Worker) ws_process(mut c Conn) {
 				if fin {
 					w.ws_deliver(mut c, op, http1.view(c.rbuf, off - int(n), int(n)))
 				} else {
+					if w.ws_held + int(n) > ws_held_max {
+						w.ws_fail(mut c, 1013, 'try again later')
+						break
+					}
 					c.ws_frag = op
 					unsafe {
 						c.ws_msg.len = 0
 						c.ws_msg.push_many(data, int(n)) // cold: fragmented messages only
 					}
+					w.ws_held += int(n)
 				}
 			}
 			0 {
@@ -98,11 +109,17 @@ pub fn (mut w Worker) ws_process(mut c Conn) {
 					w.ws_fail(mut c, 1002, 'unexpected continuation')
 					break
 				}
+				if w.ws_held + int(n) > ws_held_max {
+					w.ws_fail(mut c, 1013, 'try again later')
+					break
+				}
 				unsafe { c.ws_msg.push_many(data, int(n)) } // cold: fragmented messages only
+				w.ws_held += int(n)
 				if fin {
 					kind := c.ws_frag
 					c.ws_frag = 0
 					w.ws_deliver(mut c, kind, http1.view(c.ws_msg, 0, c.ws_msg.len))
+					w.ws_held -= c.ws_msg.len
 					unsafe {
 						c.ws_msg.len = 0
 					}

@@ -101,10 +101,25 @@ pub fn parse_head(buf []u8, head_end int, mut h Head) ! {
 		for ve > vs && (buf[ve - 1] == ` ` || buf[ve - 1] == `\t`) {
 			ve--
 		}
-		for k in vs .. ve {
-			c := buf[k]
-			if (c < 0x20 && c != `\t`) || c == 0x7f {
-				return refuse(400, 'bad header value')
+		nm := str_view(buf, p, colon - p)
+		// only four names matter here, and their lengths tell them apart
+		is_host := nm.len == 4 && eq_ci(nm, 'host')
+		if is_host {
+			// the host table has no control bytes, so this one pass is the value check too
+			if ve == vs {
+				return refuse(400, 'empty host')
+			}
+			for k in vs .. ve {
+				if !hostchars[buf[k]] {
+					return refuse(400, 'bad host')
+				}
+			}
+		} else {
+			for k in vs .. ve {
+				c := buf[k]
+				if (c < 0x20 && c != `\t`) || c == 0x7f {
+					return refuse(400, 'bad header value')
+				}
 			}
 		}
 		if h.nfields == max_fields {
@@ -118,9 +133,6 @@ pub fn parse_head(buf []u8, head_end int, mut h Head) ! {
 			start: vs
 			len:   ve - vs
 		}
-		nm := str_view(buf, name.start, name.len)
-		// only four names matter here, and their lengths tell them apart
-		is_host := nm.len == 4 && eq_ci(nm, 'host')
 		if is_host || (nm.len == 14 && eq_ci(nm, 'content-length')) {
 			for k in 0 .. h.nfields {
 				if eq_ci_span(buf, h.fields[k].name, nm) {
@@ -159,7 +171,8 @@ fn parse_request_line(buf []u8, le int, mut h Head) ! {
 	mut sp2 := -1
 	for k in 0 .. le {
 		c := buf[k]
-		if c < 0x20 || c == 0x7f {
+		// a request line is ASCII: raw UTF-8 in the target must be percent-encoded
+		if c < 0x20 || c >= 0x7f {
 			return refuse(400, 'bad request line')
 		}
 		if c == ` ` {
@@ -190,7 +203,10 @@ fn parse_request_line(buf []u8, le int, mut h Head) ! {
 		h.minor = 1
 	} else if ver == 'HTTP/1.0' {
 		h.minor = 0
-	} else if has_prefix_ci(ver, 'http/') {
+	} else if ver.len == 8 && ver.starts_with('HTTP/') && ver[5].is_digit() && ver[6] == `.`
+		&& ver[7].is_digit() {
+		// well-formed but not 1.x; anything else (lowercase, missing or extra digits)
+		// is not an HTTP-version at all
 		return refuse(505, 'http version not supported')
 	} else {
 		return refuse(400, 'bad version')
@@ -201,6 +217,10 @@ fn parse_request_line(buf []u8, le int, mut h Head) ! {
 		len:   sp2 - ts
 	}
 	if sp2 - ts == 1 && buf[ts] == `*` {
+		// asterisk-form is for OPTIONS only (RFC 9112 3.2.4)
+		if h.method != .options {
+			return refuse(400, 'asterisk-form without OPTIONS')
+		}
 		h.path = Span{
 			start: ts
 			len:   1

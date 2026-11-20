@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.2](https://github.com/Tuntii/viltrum/compare/v1.18.1...v1.18.2) (2026-11-20)
+
+### Bug Fixes
+
+* pass Http11Probe and survive HttpArena's resilience floods ([#136](https://github.com/Tuntii/viltrum/issues/136)) ([9db6a04](https://github.com/Tuntii/viltrum/commit/9db6a048689590b6fc2ae04b926710f754e24017))
+
 ## [1.18.1](https://github.com/Tuntii/viltrum/compare/v1.18.0...v1.18.1) (2026-11-16)
 
 ### Bug Fixes

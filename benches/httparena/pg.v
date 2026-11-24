@@ -38,7 +38,7 @@ struct PgSlot {
 mut:
 	state u8 // 0 free, 1 queued or running, 2 answered, 3 the request gave up
 	gen   u32 = 1
-	kind  u8  // q_items or q_fortunes
+	kind  u8 // q_items or q_fortunes
 	min   int
 	max   int
 	limit int
@@ -544,7 +544,7 @@ fn (mut c PgConn) fortunes(mut b []u8, mut rows []Fortune) !bool {
 	return ok
 }
 
-const row_keys =['{"id":', ',"name":', ',"category":', ',"price":', ',"quantity":', ',"active":',
+const row_keys = ['{"id":', ',"name":', ',"category":', ',"price":', ',"quantity":', ',"active":',
 	',"tags":', ',"rating":{"score":', ',"count":']
 
 // row_json writes one DataRow of pg_sql as an item. Text columns are quoted, the

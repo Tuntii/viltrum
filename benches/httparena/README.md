@@ -60,4 +60,5 @@ to a veb context, so `fortunes.html` calls `html.escape` (V's `encoding.html`) o
 rather than relying on an escaping default.
 
 `main.v` also has the routes the reference and gateway profiles use (`static-tls` on 8081, the
-`gateway-64` server behind `compose.gateway.yml`), but the entry does not subscribe to them.
+`gateway-64` server behind `benches/httparena/compose.gateway.yml` in the viltrum repo), but the entry
+does not subscribe to them.

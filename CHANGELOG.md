@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.3](https://github.com/Tuntii/viltrum/compare/v1.18.2...v1.18.3) (2026-11-24)
+
+### Performance Improvements
+
+* **h2:** replay header blocks the tables would encode and decode the same way ([#139](https://github.com/Tuntii/viltrum/issues/139)) ([0e57a4e](https://github.com/Tuntii/viltrum/commit/0e57a4e2c95f7f64a224b6b64e6a10409a2cb29d))
+* **http1:** measure DEFLATE matches a word at a time, read dist_sym directly ([#138](https://github.com/Tuntii/viltrum/issues/138)) ([e005656](https://github.com/Tuntii/viltrum/commit/e005656efe24ccad0cb47d9701cb28cf09f2ee95))
+
 ## [1.18.2](https://github.com/Tuntii/viltrum/compare/v1.18.1...v1.18.2) (2026-11-20)
 
 ### Bug Fixes

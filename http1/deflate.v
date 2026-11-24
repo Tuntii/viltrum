@@ -1,5 +1,7 @@
 module http1
 
+import math.bits
+
 // DEFLATE (RFC 1951) and gzip (RFC 1952), compression only, written for what a
 // response body is: one buffer of a few KB, compressed in one call. That shape is
 // where a general streaming compressor spends most of its time on things that do not
@@ -189,7 +191,7 @@ fn load64(p &u8) u64 {
 	return v
 }
 
-@[inline]
+@[direct_array_access; inline]
 fn dist_sym(dist int) int {
 	return if dist <= 256 { dist_sym_lo[dist - 1] } else { dist_sym_hi[(dist - 1) >> 7] }
 }
@@ -316,13 +318,7 @@ fn find(head &u16, prev &u16, src &u8, n int, i int, shift int, depth_max int) (
 		}
 		m := unsafe { src + c }
 		if unsafe { m[best] == cur[best] } && load32(m) == first {
-			mut l := 4
-			for l + 8 <= max_len && unsafe { load64(m + l) == load64(cur + l) } {
-				l += 8
-			}
-			for l < max_len && unsafe { m[l] == cur[l] } {
-				l++
-			}
+			l := match_len(m, cur, max_len)
 			if l > best {
 				best = l
 				best_dist = dist
@@ -338,6 +334,28 @@ fn find(head &u16, prev &u16, src &u8, n int, i int, shift int, depth_max int) (
 		return 0, 0
 	}
 	return best, best_dist
+}
+
+// match_len is how far m and cur agree, from their known 4 bytes up to max_len: eight
+// bytes at a time, and where a word differs its lowest differing byte, from the xor.
+@[inline]
+fn match_len(m &u8, cur &u8, max_len int) int {
+	mut l := 4
+	for l + 8 <= max_len {
+		x := unsafe { load64(m + l) ^ load64(cur + l) }
+		if x != 0 {
+			$if big_endian {
+				return l + bits.leading_zeros_64(x) / 8
+			} $else {
+				return l + bits.trailing_zeros_64(x) / 8
+			}
+		}
+		l += 8
+	}
+	for l < max_len && unsafe { m[l] == cur[l] } {
+		l++
+	}
+	return l
 }
 
 // block writes the chunk's sequences as one block of whichever type is smallest.
@@ -392,10 +410,26 @@ fn (mut d Deflater) block(src &u8, n int, ns int, last bool) {
 		}
 	}
 	mut fixed := u64(3) + extra
-	for s in 0 .. 286 {
+	// the fixed code's lengths by range (RFC 1951 3.2.6), so no per-symbol branch
+	for s in 0 .. 144 {
 		f := u64(d.lit_freq[s])
 		dyn += f * d.lit_len[s]
-		fixed += f * fixed_lit_len(s)
+		fixed += f * 8
+	}
+	for s in 144 .. 256 {
+		f := u64(d.lit_freq[s])
+		dyn += f * d.lit_len[s]
+		fixed += f * 9
+	}
+	for s in 256 .. 280 {
+		f := u64(d.lit_freq[s])
+		dyn += f * d.lit_len[s]
+		fixed += f * 7
+	}
+	for s in 280 .. 286 {
+		f := u64(d.lit_freq[s])
+		dyn += f * d.lit_len[s]
+		fixed += f * 8
 	}
 	for s in 0 .. 30 {
 		dyn += u64(d.dist_freq[s]) * d.dist_len[s]
@@ -454,24 +488,31 @@ fn (mut d Deflater) block(src &u8, n int, ns int, last bool) {
 			}
 		}
 	}
+	// the tables through locals, as in chunk: through d every output byte store would
+	// make the compiler reload them
+	seq := d.seq
+	lc := &d.lit_code[0]
+	ll := &d.lit_len[0]
+	dc := &d.dist_code[0]
+	dl := &d.dist_len[0]
 	for k in 0 .. ns {
-		e := unsafe { d.seq[k] }
+		e := unsafe { seq[k] }
 		if e >> 31 == 0 {
-			_ = w.put(d.lit_code[e], d.lit_len[e])
+			_ = w.put(unsafe { lc[e] }, unsafe { ll[e] })
 			continue
 		}
 		len := int((e >> 16) & 0x1ff)
-		ls := len_sym[len]
-		lbits := d.lit_len[257 + ls]
-		_ = w.put(u32(d.lit_code[257 + ls]) | u32(len - int(len_base[ls])) << lbits, lbits +
+		ls := int(len_sym[len])
+		lbits := unsafe { ll[257 + ls] }
+		_ = w.put(u32(unsafe { lc[257 + ls] }) | u32(len - int(len_base[ls])) << lbits, lbits +
 			len_xbits[ls])
 		dist := int(e & 0xffff)
 		ds := int((e >> 25) & 31)
-		dbits := d.dist_len[ds]
-		_ = w.put(u32(d.dist_code[ds]) | u32(dist - int(dist_base[ds])) << dbits, dbits +
+		dbits := unsafe { dl[ds] }
+		_ = w.put(u32(unsafe { dc[ds] }) | u32(dist - int(dist_base[ds])) << dbits, dbits +
 			dist_xbits[ds])
 	}
-	_ = w.put(d.lit_code[256], d.lit_len[256])
+	_ = w.put(unsafe { lc[256] }, unsafe { ll[256] })
 	d.w = w
 }
 

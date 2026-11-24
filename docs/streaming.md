@@ -154,7 +154,7 @@ spawn fn [app, id] () {
   `on_close` runs, its timers are dropped, it leaves its topics.
 - **HEAD and bodiless statuses.** A `HEAD` request, or a status without a body (`204`, `304`), gets the head
   alone; the callbacks do not run.
-- **Middleware.** Middleware that rewrites bodies leaves a stream alone. `gzip` does not compress it.
+- **Middleware.** Middleware that rewrites bodies leaves a stream alone. `gzip` and `compress` do not compress it.
 - **Timeouts.** A stream runs as long as its handler likes; the idle and read timeouts do not apply, since the
   client is expected to stay quiet. The write timeout does apply: output that stops moving for that long closes
   the connection (over HTTP/2, output its windows hold back as well as a full socket).

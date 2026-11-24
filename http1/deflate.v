@@ -112,9 +112,18 @@ mut:
 	cl_code   [19]u16
 	rle       [320]u16 // code length symbols, extra value << 5 | symbol
 	nrle      int
-	// Huffman scratch
-	keys [288]u32
+	// Huffman scratch, here rather than on the stack so no call zeroes it
+	keys  [704]u32
+	hwork [704]u32
+	htmp  [704]u32
+	br    BrState // brotli's tables (brotli.v), on the same matcher and output buffer
 }
+
+// The largest alphabet huff_lengths takes is brotli's insert-and-copy lengths (704,
+// spelled out in the array types: V does not unify [704] with a constant's size); a
+// key holds the symbol in its low huff_sym_bits.
+const huff_sym_bits = 10
+const huff_syms_mask = u32(1 << huff_sym_bits) - 1
 
 pub fn new_deflater() &Deflater {
 	return unsafe {
@@ -343,8 +352,8 @@ fn find(head &u16, prev &u16, src &u8, n int, i int, shift int, depth_max int) (
 // block writes the chunk's sequences as one block of whichever type is smallest.
 @[direct_array_access]
 fn (mut d Deflater) block(src &u8, n int, ns int, last bool) {
-	huff_lengths(mut d.keys, &d.lit_freq[0], 286, 15, &d.lit_len[0])
-	huff_lengths(mut d.keys, &d.dist_freq[0], 30, 15, &d.dist_len[0])
+	huff_lengths(mut d.keys, mut d.hwork, mut d.htmp, &d.lit_freq[0], 286, 15, &d.lit_len[0])
+	huff_lengths(mut d.keys, mut d.hwork, mut d.htmp, &d.dist_freq[0], 30, 15, &d.dist_len[0])
 	mut hlit := 286
 	for hlit > 257 && d.lit_len[hlit - 1] == 0 {
 		hlit--
@@ -366,7 +375,7 @@ fn (mut d Deflater) block(src &u8, n int, ns int, last bool) {
 	for k in 0 .. d.nrle {
 		d.cl_freq[d.rle[k] & 31]++
 	}
-	huff_lengths(mut d.keys, &d.cl_freq[0], 19, 7, &d.cl_len[0])
+	huff_lengths(mut d.keys, mut d.hwork, mut d.htmp, &d.cl_freq[0], 19, 7, &d.cl_len[0])
 	mut hclen := 19
 	for hclen > 4 && d.cl_len[cl_order[hclen - 1]] == 0 {
 		hclen--
@@ -580,7 +589,7 @@ fn (mut w BitWriter) flush() bool {
 // Katajainen), then lengths over max_bits are folded back the way zlib does. A code
 // always gets at least two symbols, as decoders expect a complete code.
 @[direct_array_access]
-fn huff_lengths(mut keys [288]u32, freq &u32, n int, max_bits int, lens &u8) {
+fn huff_lengths(mut keys [704]u32, mut a [704]u32, mut tmp [704]u32, freq &u32, n int, max_bits int, lens &u8) {
 	mut m := 0
 	for s in 0 .. n {
 		unsafe {
@@ -589,13 +598,13 @@ fn huff_lengths(mut keys [288]u32, freq &u32, n int, max_bits int, lens &u8) {
 		f := unsafe { freq[s] }
 		if f != 0 {
 			// frequency above the symbol: sorting the keys sorts by (freq, sym)
-			keys[m] = f << 9 | u32(s)
+			keys[m] = f << huff_sym_bits | u32(s)
 			m++
 		}
 	}
 	if m < 2 {
 		// one or no symbol: two codes of length 1, the used one and another
-		used := if m == 1 { int(keys[0] & 0x1ff) } else { 0 }
+		used := if m == 1 { int(keys[0] & (huff_syms_mask)) } else { 0 }
 		other := if used == 0 { 1 } else { 0 }
 		unsafe {
 			lens[used] = 1
@@ -603,11 +612,10 @@ fn huff_lengths(mut keys [288]u32, freq &u32, n int, max_bits int, lens &u8) {
 		}
 		return
 	}
-	sort_keys(mut keys, m)
+	sort_keys(mut keys, mut tmp, m)
 	// a holds weights, then parent links, then depths (Moffat-Katajainen)
-	mut a := [288]u32{}
 	for k in 0 .. m {
-		a[k] = keys[k] >> 9
+		a[k] = keys[k] >> huff_sym_bits
 	}
 	a[0] += a[1]
 	mut root := 0
@@ -679,7 +687,7 @@ fn huff_lengths(mut keys [288]u32, freq &u32, n int, max_bits int, lens &u8) {
 	for l := max_bits; l >= 1; l-- {
 		for _ in 0 .. count[l] {
 			unsafe {
-				lens[keys[k] & 0x1ff] = u8(l)
+				lens[keys[k] & huff_syms_mask] = u8(l)
 			}
 			k++
 		}
@@ -691,7 +699,7 @@ fn huff_lengths(mut keys [288]u32, freq &u32, n int, max_bits int, lens &u8) {
 // JSON page's block: a literal alphabet uses about 80 symbols. Past a few dozen keys
 // this is an LSD radix sort, a byte per pass, as many passes as the largest key needs.
 @[direct_array_access]
-fn sort_keys(mut keys [288]u32, m int) {
+fn sort_keys(mut keys [704]u32, mut tmp [704]u32, m int) {
 	if m <= 24 {
 		for k in 1 .. m {
 			v := keys[k]
@@ -708,7 +716,6 @@ fn sort_keys(mut keys [288]u32, m int) {
 	for k in 0 .. m {
 		top |= keys[k]
 	}
-	mut tmp := [288]u32{}
 	mut shift := u32(0)
 	for shift < 32 && (top >> shift) != 0 {
 		mut count := [257]int{}

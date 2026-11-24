@@ -104,7 +104,7 @@ timeout still answers.
 
 ## Middleware
 
-`recover`, `gzip`, `cors` and `logger` are plain `fn (mut c Ctx)` middleware. `gzip` compresses text and JSON bodies of 256 bytes or more with viltrum's own DEFLATE encoder (`http1/deflate.v`, no C library), tuned for response-sized bodies. V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).
+`recover`, `gzip`, `compress`, `cors` and `logger` are plain `fn (mut c Ctx)` middleware. `gzip` compresses text and JSON bodies of 256 bytes or more with viltrum's own DEFLATE encoder (`http1/deflate.v`, no C library), tuned for response-sized bodies. `compress` does the same with Brotli as well (`http1/brotli.v`, also viltrum's own): `br` to clients whose `Accept-Encoding` takes it, unless they give `gzip` a higher q-value, `gzip` to the rest. On JSON pages Brotli comes out about 11% smaller than gzip and costs about twice the CPU to make (see [design/brotli.md](design/brotli.md)); pick `gzip` where CPU matters more than bytes. V cannot catch panics: a panic exits the process. `recover` only turns a handler that wrote no response into 500 and closes the connection. Run the server under a supervisor (e.g. systemd `Restart=always`).
 
 ## Handlers and `-prod`
 

@@ -50,7 +50,7 @@ A missing, unreadable or non-regular file answers 404.
   `Last-Modified` keeps the range; anything else sends the whole file.
 - HEAD gets the same head and no body.
 
-File answers bypass `gzip`: the body is not read into memory to be compressed, and a compressed body would no
+File answers bypass `gzip` and `compress`: the body is not read into memory to be compressed, and a compressed body would no
 longer match `Content-Range`.
 
 Compressed copies made ahead of time are another matter. With `precompressed: true` (as nginx's

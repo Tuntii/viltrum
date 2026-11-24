@@ -19,6 +19,14 @@ pub fn gzip(mut c Ctx) {
 	http1.gzip_middleware(mut c)
 }
 
+// compress is gzip with Brotli as well: br (viltrum's own encoder) for clients that
+// accept it, unless they weight gzip higher, gzip for the rest. Same rules otherwise:
+// text and JSON bodies of 256 bytes or more, Vary on every response it could have
+// compressed. Register it before the handlers it should cover.
+pub fn compress(mut c Ctx) {
+	http1.compress_middleware(mut c)
+}
+
 // cors allows cross-origin requests from origin and answers preflight requests
 // (OPTIONS with Access-Control-Request-Method). Any other OPTIONS reaches the routes.
 pub fn cors(origin string) Handler {

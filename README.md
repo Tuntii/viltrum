@@ -113,7 +113,7 @@ of 146 over TLS. [Autobahn|Testsuite](benches/AUTOBAHN.md) reports no failures i
 | HTTP/1.1 | keep-alive, pipelining (responses batched into one write), `Expect: 100-continue`, HEAD. Ambiguous framing (TE+CL, duplicate or non-digit CL, obs-fold, bare CR/LF) answers **400** |
 | Engine | one `SO_REUSEPORT` epoll worker per CPU (cpuset-aware), backpressure, read/idle/write timeouts, `max_conns`, buffers lent per event so an idle connection holds none, SIGINT/SIGTERM stop accepting and close open connections within a second |
 | Routing | `:param`, trailing `*rest`, groups, global and per-route middleware (`c.next()`) |
-| Middleware | `recover`, `gzip` (on Viltrum's own DEFLATE encoder), `cors`, `logger` |
+| Middleware | `recover`, `gzip` (on Viltrum's own DEFLATE encoder), `compress` (Brotli or gzip by `Accept-Encoding`, both encoders Viltrum's own), `cors`, `logger` |
 | JSON | `c.json(200, value)`: encoder generated per type at compile time, no reflection |
 | TLS | `app.listen_tls`, or `app.serve` for cleartext and TLS listeners together: TLS 1.3, certificates reloaded from disk without a restart ([TLS](docs/tls.md)) |
 | HTTP/2 | `Listener{ addr, http2: true }`: over TLS (ALPN) and cleartext h2c, beside HTTP/1.1 on the same port; flow control and the RFC 9113 limits ([HTTP/2](docs/http2.md)) |

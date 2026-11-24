@@ -54,6 +54,23 @@ fn test_accepts_gzip() {
 	}
 }
 
+fn test_coding_q() {
+	cases := {
+		'gzip, br':               [1000, 1000]
+		'br;q=0.8, gzip':         [1000, 800]
+		'br;q=0.125, gzip;q=0.5': [500, 125]
+		'gzip;q=0., br;q=0':      [0, 0]
+		'*;q=0.3':                [300, 300]
+		'gzip;q=1.000, *;q=0.2':  [1000, 200]
+		'gzip;q=0.5x':            [1000, 0]
+		'':                       [0, 0]
+	}
+	for v, want in cases {
+		assert coding_q(v, 'gzip') == want[0], v
+		assert coding_q(v, 'br') == want[1], v
+	}
+}
+
 fn test_compressible() {
 	for t in ['text/plain; charset=utf-8', 'application/json', 'application/javascript',
 		'image/svg+xml', 'application/xml', 'Text/HTML'] {

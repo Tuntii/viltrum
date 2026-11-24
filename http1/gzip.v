@@ -11,7 +11,14 @@ pub fn accepts_gzip(v string) bool {
 // accepts_coding is accepts_gzip for any content coding (lowercase): its explicit
 // entry wins over *, and either counts only with a q-value above zero.
 pub fn accepts_coding(v string, coding string) bool {
-	mut star := false
+	return coding_q(v, coding) > 0
+}
+
+// coding_q is the weight, in thousandths, that the Accept-Encoding value v gives
+// coding (lowercase): its explicit entry, else *, else 0. A q-value that does not
+// parse counts as 1.
+fn coding_q(v string, coding string) int {
+	mut star := 0
 	mut i := 0
 	for i < v.len {
 		for i < v.len && (v[i] == ` ` || v[i] == `\t` || v[i] == `,`) {
@@ -22,7 +29,7 @@ pub fn accepts_coding(v string, coding string) bool {
 			i++
 		}
 		ce := i
-		mut q_zero := false
+		mut q := 1000
 		for i < v.len && v[i] != `,` {
 			if v[i] == `;` {
 				i++
@@ -35,17 +42,17 @@ pub fn accepts_coding(v string, coding string) bool {
 					for i < v.len && v[i] != `,` && v[i] != `;` && v[i] != ` ` && v[i] != `\t` {
 						i++
 					}
-					q_zero = is_q_zero(v, qs, i)
+					q = parse_q(v, qs, i)
 				}
 				continue
 			}
 			i++
 		}
 		if ce - cs == coding.len && coding_is(v, cs, coding) {
-			return !q_zero
+			return q
 		}
 		if ce - cs == 1 && v[cs] == `*` {
-			star = !q_zero
+			star = q
 		}
 	}
 	return star
@@ -61,21 +68,23 @@ fn coding_is(v string, s int, coding string) bool {
 	return true
 }
 
-// is_q_zero matches "0", "0.", "0.0", "0.00" and "0.000".
-fn is_q_zero(v string, s int, e int) bool {
-	if e <= s || v[s] != `0` {
-		return false
+// parse_q reads the q-value v[s..e] in thousandths: "0", "0.", "0.8", "0.125", "1",
+// "1.000". Anything that is not a "0" form, malformed ones included, counts as 1000,
+// so only a q-value of zero turns a coding off.
+fn parse_q(v string, s int, e int) int {
+	if e <= s || v[s] != `0` || (e > s + 1 && v[s + 1] != `.`) {
+		return 1000
 	}
-	for k in s + 1 .. e {
-		if k == s + 1 {
-			if v[k] != `.` {
-				return false
-			}
-		} else if v[k] != `0` {
-			return false
+	mut q := 0
+	mut scale := 100
+	for k in s + 2 .. e {
+		if v[k] < `0` || v[k] > `9` || scale == 0 {
+			return 1000
 		}
+		q += int(v[k] - `0`) * scale
+		scale /= 10
 	}
-	return true
+	return q
 }
 
 // compressible is true for text, JSON, JavaScript, XML and SVG content types.
@@ -109,6 +118,16 @@ fn contains_ci(s string, lower_lit string) bool {
 // smaller body is the same for every client. Register it before the handlers whose
 // bodies it should compress.
 pub fn gzip_middleware(mut c Ctx) {
+	compress_with(mut c, false)
+}
+
+// compress_middleware is gzip_middleware with Brotli too: br for clients that accept
+// it, unless they give gzip a higher q-value, and gzip for the rest.
+pub fn compress_middleware(mut c Ctx) {
+	compress_with(mut c, true)
+}
+
+fn compress_with(mut c Ctx, br bool) {
 	c.capture = true
 	c.next()
 	c.capture = false
@@ -124,7 +143,26 @@ pub fn gzip_middleware(mut c Ctx) {
 		return
 	}
 	c.set_header('Vary', 'Accept-Encoding')
-	if !isnil(c.deflater) && accepts_gzip(c.header('accept-encoding') or { '' }) {
+	if isnil(c.deflater) {
+		c.send_captured(body, '')
+		return
+	}
+	ae := c.header('accept-encoding') or { '' }
+	qgz := coding_q(ae, 'gzip')
+	if br {
+		qbr := coding_q(ae, 'br')
+		if qbr > 0 && qbr >= qgz {
+			packed := c.deflater.brotli(body) or {
+				c.send_captured(body, '')
+				return
+			}
+			if packed.len < body.len {
+				c.send_captured(packed, 'br')
+				return
+			}
+		}
+	}
+	if qgz > 0 {
 		packed := c.deflater.gzip(body) or {
 			c.send_captured(body, '')
 			return

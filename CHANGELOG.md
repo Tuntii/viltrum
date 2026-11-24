@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.4](https://github.com/Tuntii/viltrum/compare/v1.18.3...v1.18.4) (2026-11-24)
+
+### Performance Improvements
+
+* **h2:** parse a remembered request head once per connection ([#142](https://github.com/Tuntii/viltrum/issues/142)) ([39f9ba7](https://github.com/Tuntii/viltrum/commit/39f9ba713308ecb97763b9fa8d3d03f6fb47e058))
+
 ## [1.18.3](https://github.com/Tuntii/viltrum/compare/v1.18.2...v1.18.3) (2026-11-24)
 
 ### Performance Improvements

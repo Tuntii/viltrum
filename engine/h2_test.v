@@ -345,8 +345,8 @@ fn test_repeated_blocks_follow_the_table() {
 	again := cl.block(fields) // all indexed now: decoding it changes nothing
 	assert again.len == 4
 	for id in [u32(3), 5, 7] {
-		feed(mut w, mut c, frame(http2.frame_headers, http2.flag_end_headers | http2.flag_end_stream,
-			id, again))
+		feed(mut w, mut c, frame(http2.frame_headers,
+			http2.flag_end_headers | http2.flag_end_stream, id, again))
 	}
 	mut r := cl.responses(parse(take(mut w, mut c)))
 	for id in [u32(1), 3, 5, 7] {

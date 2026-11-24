@@ -1,5 +1,6 @@
 module main
 
+import encoding.html
 import net
 import os
 import viltrum
@@ -56,9 +57,19 @@ fn main() {
 	app.get('/baseline11', baseline)
 	app.post('/baseline11', baseline)
 	app.get('/async-db', fn [mut pg, pg_done] (mut c viltrum.Ctx) {
-		token := pg.submit(db_i(mut c, 'min', 10), db_i(mut c, 'max', 50), db_limit(mut c))
+		token := pg.submit(q_items, db_i(mut c, 'min', 10), db_i(mut c, 'max', 50), db_limit(mut c))
 		if token == 0 {
 			c.bytes(200, 'application/json', db_empty)
+			return
+		}
+		c.suspend(token, 30000, pg_done, token)
+	})
+	// fortunes: the same pool and parking as async-db; the page is rendered on the
+	// worker when the rows are in (fortunes_answer)
+	app.get('/fortunes', fn [mut pg, pg_done] (mut c viltrum.Ctx) {
+		token := pg.submit(q_fortunes, 0, 0, 0)
+		if token == 0 {
+			c.text(503, 'database unavailable')
 			return
 		}
 		c.suspend(token, 30000, pg_done, token)
@@ -209,6 +220,31 @@ fn first(a []Item, n int) []Item {
 		v.len = n
 	}
 	return v
+}
+
+// fortunes_answer adds the request-time row, sorts by message in byte order and
+// renders fortunes.html. rows are the slot's, owned by this request until release.
+fn fortunes_answer(mut c viltrum.Ctx, mut rows []Fortune) {
+	if rows.len == 0 {
+		c.text(503, 'database unavailable')
+		return
+	}
+	rows << Fortune{0, 'Additional fortune added at request time.'}
+	rows.sort(a.message < b.message)
+	c.html(200, fortunes_page(rows))
+}
+
+// fortunes_page runs the compile-time template. V's $tmpl does not escape on its own
+// (only $veb.html does, and that writes to a veb.Context), so the template escapes
+// the message itself with esc.
+fn fortunes_page(rows []Fortune) string {
+	return $tmpl('fortunes.html')
+}
+
+// esc is encoding.html's escape, named here because a template sees the function's
+// scope, not the file's imports.
+fn esc(s string) string {
+	return html.escape(s)
 }
 
 fn delay_done(mut c viltrum.Ctx, ms u64) {

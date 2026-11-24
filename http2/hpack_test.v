@@ -268,6 +268,81 @@ fn test_encoder_size_updates() {
 	assert out.len == 0
 }
 
+// enc_block encodes fields (name, value pairs) through cached/keep, the way h2_respond
+// does with text standing for the response head; true when the block was replayed.
+fn enc_block(mut e Encoder, text string, fields []string, mut out []u8) bool {
+	out.clear()
+	if e.cached(text.str, text.len, mut out) {
+		return true
+	}
+	for k := 0; k < fields.len; k += 2 {
+		e.field(mut out, fields[k], fields[k + 1], .incremental)
+	}
+	e.keep(text.str, text.len, out.data, out.len)
+	return false
+}
+
+// A block is replayed only when encoding it again would write the same bytes: its own
+// encoding left the table alone and nothing changed it since. A decoder in step reads
+// the replayed block as it read the first.
+fn test_encoder_replays_unchanged_blocks() {
+	mut e := new_encoder(default_table_size)
+	mut d := new_decoder(default_table_size)
+	mut out := []u8{}
+	mut dec := []u8{}
+	mut fs := Fields{}
+	head := ['content-type', 'text/plain', 'date', 'Mon']
+	head_text := '200 OK|text/plain|Mon'
+	// first: adds entries, so not remembered; second: all indexed, remembered; third: replayed
+	mut blocks := [][]u8{}
+	for want in [false, false, true] {
+		assert enc_block(mut e, head_text, head, mut out) == want
+		blocks << out.clone()
+		dec.clear()
+		assert d.decode(out, mut dec, mut fs, 1 << 20) == hpack_ok
+		assert list(dec, fs) == ['content-type: text/plain', 'date: Mon']
+	}
+	assert blocks[1] == blocks[2]
+	// another text is encoded, not replayed
+	other := ['content-type', 'text/plain', 'date', 'Tue']
+	assert !enc_block(mut e, 'other', other, mut out)
+	dec.clear()
+	assert d.decode(out, mut dec, mut fs, 1 << 20) == hpack_ok
+	// Tue was added: the table changed, so the first text is encoded again
+	assert !enc_block(mut e, head_text, head, mut out)
+	dec.clear()
+	assert d.decode(out, mut dec, mut fs, 1 << 20) == hpack_ok
+	assert list(dec, fs) == ['content-type: text/plain', 'date: Mon']
+	assert enc_block(mut e, head_text, head, mut out)
+	// a size update owed: begin writes it, so no replay, and the update reaches the decoder
+	e.set_limit(1024)
+	assert !enc_block(mut e, head_text, head, mut out)
+	assert out[0] & 0xe0 == 0x20
+	dec.clear()
+	assert d.decode(out, mut dec, mut fs, 1 << 20) == hpack_ok
+	assert d.t.max == 1024 && d.t.size == e.t.size
+	// and a reset forgets the block
+	e.reset()
+	assert !enc_block(mut e, head_text, head, mut out)
+}
+
+fn test_decoder_generation() {
+	mut e := new_encoder(default_table_size)
+	mut d := new_decoder(default_table_size)
+	mut b := []u8{}
+	e.field(mut b, ':method', 'GET', .incremental) // static: no entry
+	mut dec := []u8{}
+	mut fs := Fields{}
+	g0 := d.generation()
+	assert d.decode(b, mut dec, mut fs, 1 << 20) == hpack_ok && d.generation() == g0
+	b.clear()
+	e.field(mut b, 'x', 'y', .incremental)
+	assert d.decode(b, mut dec, mut fs, 1 << 20) == hpack_ok && d.generation() != g0
+	g1 := d.generation()
+	d.reset()
+	assert d.generation() != g1
+}
+
 // random lists through an Encoder and back, the two tables in step after each block
 fn test_round_trip_fuzz() {
 	mut e := new_encoder(default_table_size)

@@ -618,26 +618,41 @@ fn build_huff_dec() []HuffStep {
 // valid encoding: EOS inside, or padding other than a run of at most 7 one bits.
 @[direct_array_access]
 fn huff_decode(src []u8, start int, end int, mut out []u8) bool {
+	// a code is at least 5 bits, so an input byte yields at most two symbols: room for
+	// them once, then plain stores instead of a push per symbol
+	out.ensure_cap(out.len + 2 * (end - start))
+	mut q := unsafe { &u8(out.data) + out.len }
 	mut node := 0
 	mut ok := true
 	for p in start .. end {
 		b := int(src[p])
 		hi := huff_dec[node * 16 + (b >> 4)]
 		if hi.flags & huff_fail != 0 {
-			return false
+			ok = false
+			break
 		}
 		if hi.flags & huff_sym != 0 {
-			out << hi.sym
+			unsafe {
+				*q = hi.sym
+				q++
+			}
 		}
 		lo := huff_dec[int(hi.next) * 16 + (b & 15)]
 		if lo.flags & huff_fail != 0 {
-			return false
+			ok = false
+			break
 		}
 		if lo.flags & huff_sym != 0 {
-			out << lo.sym
+			unsafe {
+				*q = lo.sym
+				q++
+			}
 		}
 		node = int(lo.next)
 		ok = lo.flags & huff_accept != 0
+	}
+	unsafe {
+		out.len = int(q - &u8(out.data))
 	}
 	return ok
 }

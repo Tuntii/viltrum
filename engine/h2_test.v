@@ -332,6 +332,36 @@ fn test_prior_knowledge_request() {
 	assert !c.close_after && c.rbuf.len == 0
 }
 
+// A repeated request is answered from the head h2_block remembered, and the same
+// bytes after the table changed are decoded again: they now mean another request.
+fn test_repeated_blocks_follow_the_table() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut c := open(mut w, [])
+	mut cl := Client{}
+	fields := [':method: GET', ':scheme: http', ':path: /baseline2?a=1&b=1', ':authority: x']
+	first := cl.block(fields) // adds :path and :authority to both tables
+	feed(mut w, mut c, frame(http2.frame_headers, http2.flag_end_headers | http2.flag_end_stream,
+		1, first))
+	again := cl.block(fields) // all indexed now: decoding it changes nothing
+	assert again.len == 4
+	for id in [u32(3), 5, 7] {
+		feed(mut w, mut c, frame(http2.frame_headers, http2.flag_end_headers | http2.flag_end_stream,
+			id, again))
+	}
+	mut r := cl.responses(parse(take(mut w, mut c)))
+	for id in [u32(1), 3, 5, 7] {
+		assert r[id].status == '200' && r[id].body == '2'.bytes(), 'stream ${id}'
+	}
+	assert c.h2.memo_bn == again.len // streams 5 and 7 came from it
+	// a new :path entry: the same four bytes now name it and :authority
+	feed(mut w, mut c, cl.get(9, '/baseline2?a=20&b=22'))
+	feed(mut w, mut c, frame(http2.frame_headers, http2.flag_end_headers | http2.flag_end_stream,
+		11, again))
+	r = cl.responses(parse(take(mut w, mut c)))
+	assert r[9].body == '42'.bytes()
+	assert r[11].status == '200' && r[11].body == '42'.bytes()
+}
+
 fn test_http1_on_an_h2_listener() {
 	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
 	mut c := new_conn()

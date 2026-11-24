@@ -20,6 +20,30 @@ fn round_trip(mut d Deflater, src []u8, label string) {
 	assert back == src, label
 }
 
+// match_len against a byte-by-byte count: a difference at every offset across the
+// 8-byte words, and none up to the limit.
+fn test_match_len() {
+	base := rand_bytes(64, 256, 9)
+	for diff in 4 .. 41 {
+		for lim in [diff, diff + 1, 40, 41, 64] {
+			if lim < 4 {
+				continue
+			}
+			mut other := base.clone()
+			if diff < 64 {
+				other[diff] ^= 0x5a
+			}
+			mut want := 4
+			for want < lim && base[want] == other[want] {
+				want++
+			}
+			assert match_len(&u8(base.data), &u8(other.data), lim) == want, 'diff ${diff} lim ${lim}'
+		}
+	}
+	same := rand_bytes(300, 256, 3)
+	assert match_len(&u8(same.data), &u8(same.data), 258) == 258
+}
+
 fn test_round_trips_edge_shapes() {
 	mut d := new_deflater()
 	round_trip(mut d, []u8{}, 'empty')

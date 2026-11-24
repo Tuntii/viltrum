@@ -14,9 +14,35 @@ run_tests() {
 		v test "$d/"
 	done
 	# examples that ship handler tests (handle_raw), e.g. todo_api
+	if known_v_bug_alias_generic; then
+		return
+	fi
 	for t in examples/*/*_test.v; do
 		if [ -e "$t" ]; then v test "$(dirname "$t")/"; fi
 	done
+}
+
+# known_v_bug_alias_generic: only in CI's V master job (VILTRUM_V_MASTER set). V master
+# passes a copy as the receiver of a generic method called through an alias named like
+# its struct (vlang/v#32402), so c.json through viltrum.Ctx answers 500 there and the
+# example handler tests fail for V's reason, not viltrum's. While the probe still shows
+# the bug they are skipped with a warning; once V is fixed they run again by themselves.
+# A probe that does not build fails the job.
+known_v_bug_alias_generic() {
+	[ -n "${VILTRUM_V_MASTER:-}" ] || return 1
+	probe=$(mktemp -d)
+	# set -e does not reach into a function called as an if condition: fail by hand
+	v -o "$probe/alias_generic" scripts/vbugs/alias_generic/ || {
+		echo "scripts/vbugs/alias_generic did not build" >&2
+		exit 1
+	}
+	if "$probe/alias_generic"; then
+		rm -rf "$probe"
+		return 1
+	fi
+	rm -rf "$probe"
+	echo "::warning::V master still copies generic receivers through a same-name alias (vlang/v#32402): example handler tests skipped"
+	return 0
 }
 
 build_examples() {

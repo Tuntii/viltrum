@@ -76,7 +76,10 @@ $ curl localhost:8080/hi/ada
 {"message":"hello","name":"ada"}
 ```
 
-Requires [V](https://vlang.io) 0.5.2 or V master; CI builds and tests on both. Serving needs Linux (the engine is
+Requires [V](https://vlang.io) 0.5.2; CI also builds and tests on V master. Avoid V master for now: since
+2026-11-16 it passes a copy as the receiver of a generic method called through `viltrum.Ctx`, so `c.json(...)`
+answers 500 there ([vlang/v#32402](https://github.com/vlang/v/issues/32402); `scripts/vbugs/alias_generic`
+shows it in a few lines). Serving needs Linux (the engine is
 epoll). On macOS and Windows the framework builds and its unit tests run, so handlers can be written and tested
 there with `app.handle_raw`.
 

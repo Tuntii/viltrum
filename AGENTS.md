@@ -23,7 +23,10 @@ bash scripts/install.sh            # links this checkout as ~/.vmodules/viltrum 
 bash scripts/check.sh              # what CI runs; Linux-only parts are skipped elsewhere
 ```
 
-V 0.5.2 is the pinned compiler; CI also runs the tests on V master.
+V 0.5.2 is the pinned compiler; CI also runs the tests on V master. There, the example handler
+tests are skipped with a warning while `scripts/vbugs/alias_generic` still shows vlang/v#32402 (a generic
+method called through an alias named like its struct gets a copy of the receiver); they come back by
+themselves once V is fixed.
 
 `*_linux.c.v` and `*_linux_test.v` build and run on Linux only: the engine serves on epoll. On macOS and
 Windows the remaining unit tests run and handlers can be exercised with `app.handle_raw`. If you cannot run

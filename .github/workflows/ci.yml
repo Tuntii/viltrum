@@ -74,7 +74,11 @@ jobs:
           mkdir -p ~/.vmodules
           ln -sfn "$GITHUB_WORKSPACE" ~/.vmodules/viltrum
 
+      # VILTRUM_V_MASTER: check.sh skips the example handler tests while V master shows
+      # vlang/v#32402 (scripts/vbugs/alias_generic), with a warning on the run
       - name: Unit tests
+        env:
+          VILTRUM_V_MASTER: 1
         run: bash scripts/check.sh tests
 
       - name: Build examples

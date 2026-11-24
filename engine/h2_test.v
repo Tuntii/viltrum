@@ -362,6 +362,31 @@ fn test_repeated_blocks_follow_the_table() {
 	assert r[11].status == '200' && r[11].body == '42'.bytes()
 }
 
+// The remembered head is parsed once and kept on its connection: another connection's
+// request in between leaves the worker's Ctx with that request's head, not this one's.
+fn test_remembered_head_outlives_other_requests() {
+	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
+	mut a := open(mut w, [])
+	mut b := open(mut w, [])
+	mut ca := Client{}
+	mut cb := Client{}
+	fields := [':method: GET', ':scheme: http', ':path: /baseline2?a=1&b=1', ':authority: x']
+	feed(mut w, mut a, frame(http2.frame_headers, http2.flag_end_headers | http2.flag_end_stream,
+		1, ca.block(fields)))
+	again := ca.block(fields)
+	feed(mut w, mut a, frame(http2.frame_headers, http2.flag_end_headers | http2.flag_end_stream,
+		3, again))
+	assert a.h2.memo_parsed
+	feed(mut w, mut b, cb.get(1, '/baseline2?a=20&b=22'))
+	feed(mut w, mut a, frame(http2.frame_headers, http2.flag_end_headers | http2.flag_end_stream,
+		5, again))
+	ra := ca.responses(parse(take(mut w, mut a)))
+	for id in [u32(1), 3, 5] {
+		assert ra[id].status == '200' && ra[id].body == '2'.bytes(), 'stream ${id}'
+	}
+	assert cb.responses(parse(take(mut w, mut b)))[1].body == '42'.bytes()
+}
+
 fn test_http1_on_an_h2_listener() {
 	mut w := new_worker(h2_router(), Options{ send_date: false }, 0)
 	mut c := new_conn()

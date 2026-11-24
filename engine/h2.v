@@ -103,13 +103,15 @@ mut:
 	sent_seen u64
 	progress  i64
 	// the last header block whose decoding left the table as it was, the request head
-	// it made and its content-length (see h2_block)
-	memo_blk [h2_memo_cap]u8
-	memo_bn  int // 0: none
-	memo_req [h2_memo_cap]u8
-	memo_rn  int
-	memo_len i64
-	memo_gen u32
+	// it made and its content-length (see h2_block), and that head parsed (see h2_serve)
+	memo_blk    [h2_memo_cap]u8
+	memo_bn     int // 0: none
+	memo_req    [h2_memo_cap]u8
+	memo_rn     int
+	memo_len    i64
+	memo_gen    u32
+	memo_head   http1.Head
+	memo_parsed bool
 }
 
 const h2_max_files = 32 // file answers held back at once on a connection
@@ -604,7 +606,7 @@ fn (mut w Worker) h2_request_done(mut c Conn, i int) {
 	}
 	h.release(i)
 	w.h2_credit_all(mut c)
-	w.h2_serve(mut c, id, http1.view(w.h2body, 0, w.h2body.len), send_win)
+	w.h2_serve(mut c, id, http1.view(w.h2body, 0, w.h2body.len), send_win, false)
 	if w.h2body.cap > shrink_rbuf_above {
 		w.h2body = []u8{} // cold: a large body
 	}
@@ -757,6 +759,7 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 		return
 	}
 	mut length := i64(0)
+	mut memo := hit // w.h2req is the remembered head
 	if hit {
 		unsafe {
 			w.h2req.len = 0
@@ -775,6 +778,8 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 			h.memo_rn = w.h2req.len
 			h.memo_len = length
 			h.memo_gen = gen
+			h.memo_parsed = false
+			memo = true
 		}
 	}
 	if length < -1 {
@@ -787,7 +792,7 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 			w.h2_reset(mut c, id, http2.err_protocol)
 			return
 		}
-		w.h2_serve(mut c, id, http1.view(w.h2req, 0, 0), h.peer_window)
+		w.h2_serve(mut c, id, http1.view(w.h2req, 0, 0), h.peer_window, memo)
 		return
 	}
 	i := h.take(id, h.peer_window)
@@ -969,14 +974,25 @@ fn h2_value_ok(buf []u8, off int, n int) bool {
 }
 
 // h2_serve runs the request whose HTTP/1.1 head is in w.h2req, with body, and sends
-// its response on stream id, which the client lets us send send_win on.
-fn (mut w Worker) h2_serve(mut c Conn, id u32, body []u8, send_win i64) {
+// its response on stream id, which the client lets us send send_win on. memo is whether
+// w.h2req holds the connection's remembered head: the same bytes parse to the same
+// Head, so it is parsed once and copied after that.
+fn (mut w Worker) h2_serve(mut c Conn, id u32, body []u8, send_win i64, memo bool) {
 	mut x := &w.ctx
 	msg := http1.view(w.h2req, 0, w.h2req.len)
-	http1.parse_head(msg, msg.len, mut x.head) or {
-		status := if err.code() >= 400 { err.code() } else { 400 }
-		w.h2_error(mut c, id, status, err.msg(), send_win)
-		return
+	mut h := c.h2
+	if memo && h.memo_parsed {
+		x.head = h.memo_head
+	} else {
+		http1.parse_head(msg, msg.len, mut x.head) or {
+			status := if err.code() >= 400 { err.code() } else { 400 }
+			w.h2_error(mut c, id, status, err.msg(), send_win)
+			return
+		}
+		if memo {
+			h.memo_head = x.head
+			h.memo_parsed = true
+		}
 	}
 	if x.head.nfields > w.opts.limits.max_headers {
 		w.h2_error(mut c, id, 431, 'too many header fields', send_win)

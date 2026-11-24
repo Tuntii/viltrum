@@ -66,6 +66,7 @@ mut:
 	vlen  [max_entries]u16
 	first int
 	count int
+	gen   u32 // bumped by every change to the entries or the limit
 }
 
 // slot is the ring position of entry i (1 is the newest).
@@ -75,6 +76,7 @@ fn (t &Table) slot(i int) int {
 }
 
 fn (mut t Table) evict() {
+	t.gen++
 	s := t.first
 	t.size -= int(t.nlen[s]) + int(t.vlen[s]) + entry_overhead
 	t.first = (t.first + 1) % max_entries
@@ -85,6 +87,7 @@ fn (mut t Table) evict() {
 }
 
 fn (mut t Table) set_max(n int) {
+	t.gen++
 	t.max = n
 	for t.size > t.max {
 		t.evict()
@@ -95,6 +98,7 @@ fn (mut t Table) set_max(n int) {
 // evicting the oldest ones to make room. An entry larger than the limit empties the
 // table and is not added (RFC 7541 4.4).
 fn (mut t Table) add(name &u8, nlen int, value &u8, vlen int, fold bool) {
+	t.gen++
 	need := nlen + vlen + entry_overhead
 	if need > t.max {
 		for t.count > 0 {
@@ -255,6 +259,13 @@ pub fn (mut d Decoder) reset() {
 	d.t.count = 0
 	d.t.wpos = 0
 	d.t.max = d.limit
+	d.t.gen++
+}
+
+// generation changes whenever the table does (an entry added or evicted, a new size,
+// a reset): a block decoded twice under one generation decodes the same both times.
+pub fn (d &Decoder) generation() u32 {
+	return d.t.gen
 }
 
 // name_of appends the name of table entry idx (static or dynamic) to out; false when
@@ -431,7 +442,18 @@ mut:
 	// limit since the last block, then the one in force; -1 when none
 	update_min int = -1
 	update     int = -1
+	// the last block whose encoding neither carried a size update nor changed the
+	// table, and the header text it came from (see cached)
+	memo_in    [memo_cap]u8
+	memo_n     int // 0: none
+	memo_out   [memo_cap]u8
+	memo_outn  int
+	memo_gen   u32
+	memo_clean bool // the block being encoded started without a size update
+	memo_gen0  u32  // the table's gen when it started
 }
+
+const memo_cap = 256 // longer header texts are not remembered
 
 // new_encoder is an Encoder whose table holds table_size (at most
 // default_table_size) from its first block on, with no size update owed.
@@ -448,8 +470,42 @@ pub fn (mut e Encoder) reset() {
 	e.t.count = 0
 	e.t.wpos = 0
 	e.t.max = default_table_size
+	e.t.gen++
 	e.update_min = -1
 	e.update = -1
+	e.memo_n = 0
+}
+
+// cached writes to out the block encoded last for the same header text (n bytes at
+// text), when that encoding neither carried a size update nor changed the table and
+// nothing has changed the table since: the encoder is then in the state it was in, so
+// encoding again would write the same bytes. Otherwise it begins a block (see begin)
+// and returns false; the caller writes the fields and calls keep.
+pub fn (mut e Encoder) cached(text &u8, n int, mut out []u8) bool {
+	if e.update < 0 && n > 0 && n == e.memo_n && e.memo_gen == e.t.gen
+		&& unsafe { vmemcmp(text, &e.memo_in[0], n) } == 0 {
+		unsafe { out.push_many(&e.memo_out[0], e.memo_outn) }
+		return true
+	}
+	e.memo_clean = e.update < 0
+	e.memo_gen0 = e.t.gen
+	e.begin(mut out)
+	return false
+}
+
+// keep remembers the block (blen bytes, written since cached returned false) as the
+// encoding of the n bytes of header text, if it may be replayed.
+pub fn (mut e Encoder) keep(text &u8, n int, block &u8, blen int) {
+	if !e.memo_clean || e.t.gen != e.memo_gen0 || n > memo_cap || blen > memo_cap {
+		return
+	}
+	unsafe {
+		vmemcpy(&e.memo_in[0], text, n)
+		vmemcpy(&e.memo_out[0], block, blen)
+	}
+	e.memo_n = n
+	e.memo_outn = blen
+	e.memo_gen = e.t.gen
 }
 
 // set_limit applies the peer's SETTINGS_HEADER_TABLE_SIZE. The table never grows

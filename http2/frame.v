@@ -74,12 +74,10 @@ pub fn read_frame_header(p &u8) FrameHeader {
 
 // write_frame_header appends a frame header.
 pub fn write_frame_header(mut out []u8, length int, typ u8, flags u8, stream u32) {
-	out << u8(length >> 16)
-	out << u8(length >> 8)
-	out << u8(length)
-	out << typ
-	out << flags
-	put_u32(mut out, stream)
+	// one append for the nine bytes: a push per byte was most of a small frame's cost
+	b := [u8(length >> 16), u8(length >> 8), u8(length), typ, flags, u8(stream >> 24),
+		u8(stream >> 16), u8(stream >> 8), u8(stream)]!
+	unsafe { out.push_many(&b[0], 9) }
 }
 
 // get_u32 reads a big-endian 32-bit integer.
@@ -92,8 +90,6 @@ pub fn get_u32(p &u8) u32 {
 
 // put_u32 appends a big-endian 32-bit integer.
 pub fn put_u32(mut out []u8, v u32) {
-	out << u8(v >> 24)
-	out << u8(v >> 16)
-	out << u8(v >> 8)
-	out << u8(v)
+	b := [u8(v >> 24), u8(v >> 16), u8(v >> 8), u8(v)]!
+	unsafe { out.push_many(&b[0], 4) }
 }

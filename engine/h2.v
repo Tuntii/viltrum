@@ -102,9 +102,18 @@ mut:
 	sent      u64
 	sent_seen u64
 	progress  i64
+	// the last header block whose decoding left the table as it was, the request head
+	// it made and its content-length (see h2_block)
+	memo_blk [h2_memo_cap]u8
+	memo_bn  int // 0: none
+	memo_req [h2_memo_cap]u8
+	memo_rn  int
+	memo_len i64
+	memo_gen u32
 }
 
 const h2_max_files = 32 // file answers held back at once on a connection
+const h2_memo_cap = 256 // longer header blocks or heads are not remembered
 
 // h2_preface_state is 1 when buf starts with the HTTP/2 preface, 0 while it could
 // still (too short to tell), -1 when it cannot (an HTTP/1.1 request), and -2 for a
@@ -685,8 +694,19 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 	unsafe {
 		w.h2dec.len = 0
 	}
+	// The same block under the same table decodes to the same fields, and h2_head turns
+	// them into the same head: a client repeating a request (all fields indexed, or
+	// literals it does not index) gets the head it got last time without the decode.
+	gen := h.dec.generation()
+	blk := h.hblock
+	hit := blk.len > 0 && blk.len == h.memo_bn && gen == h.memo_gen
+		&& unsafe { vmemcmp(blk.data, &h.memo_blk[0], blk.len) } == 0
 	// decoded even when the stream is refused, to keep the table in step
-	r := h.dec.decode(h.hblock, mut w.h2dec, mut w.h2fs, w.opts.limits.max_header_bytes)
+	r := if hit {
+		http2.hpack_ok
+	} else {
+		h.dec.decode(h.hblock, mut w.h2dec, mut w.h2fs, w.opts.limits.max_header_bytes)
+	}
 	if r == http2.hpack_bad {
 		w.h2_fail(mut c, http2.err_compression)
 		return
@@ -736,7 +756,27 @@ fn (mut w Worker) h2_block(mut c Conn, id u32) {
 		}
 		return
 	}
-	length := w.h2_head()
+	mut length := i64(0)
+	if hit {
+		unsafe {
+			w.h2req.len = 0
+			w.h2req.push_many(&h.memo_req[0], h.memo_rn)
+		}
+		length = h.memo_len
+	} else {
+		length = w.h2_head()
+		if length >= -1 && h.dec.generation() == gen && blk.len <= h2_memo_cap
+			&& w.h2req.len <= h2_memo_cap {
+			unsafe {
+				vmemcpy(&h.memo_blk[0], blk.data, blk.len)
+				vmemcpy(&h.memo_req[0], w.h2req.data, w.h2req.len)
+			}
+			h.memo_bn = blk.len
+			h.memo_rn = w.h2req.len
+			h.memo_len = length
+			h.memo_gen = gen
+		}
+	}
 	if length < -1 {
 		h.flood++ // decoded and refused: no request answered
 		w.h2_reset(mut c, id, http2.err_protocol) // a malformed request (RFC 9113 8.1.1)
@@ -1097,31 +1137,54 @@ fn (mut w Worker) h2_respond(mut c Conn, id u32, file_fd int, file_off i64, file
 	for p + 1 < out.len && !(out[p] == `\r` && out[p + 1] == `\n`) {
 		p++
 	}
+	// the head ends at the empty line; from the status code to there is the text the
+	// encoder can replay a block for (a route answers with the same head over and over)
+	// (our writer ends every line with CRLF: from one CR to the next, a line at a time)
+	mut hend := p
+	for hend + 3 < out.len && !(out[hend + 2] == `\r` && out[hend + 3] == `\n`) {
+		q := unsafe { C.memchr(&u8(out.data) + hend + 2, `\r`, u64(out.len - hend - 2)) }
+		if q == unsafe { nil } {
+			hend = out.len
+			break
+		}
+		hend = int(unsafe { &u8(q) - &u8(out.data) })
+	}
+	if hend + 4 > out.len {
+		// no empty line: not a head our writer makes
+		if has_file {
+			http1.close_file(file_fd)
+		}
+		w.h2_reset(mut c, id, http2.err_internal)
+		return false
+	}
 	unsafe {
 		w.h2blk.len = 0
 	}
-	h.enc.begin(mut w.h2blk)
-	h.enc.field(mut w.h2blk, ':status', http1.str_view(out, 9, 3), .incremental)
-	p += 2
-	for p + 1 < out.len && !(out[p] == `\r` && out[p + 1] == `\n`) {
-		ns := p
-		for out[p] != `:` {
-			p++
-		}
-		name := http1.str_view(out, ns, p - ns)
-		p += 2 // ": "
-		vs := p
-		for out[p] != `\r` {
-			p++
-		}
-		value := http1.str_view(out, vs, p - vs)
+	text := unsafe { &u8(out.data) + 9 }
+	if !h.enc.cached(text, hend - 9, mut w.h2blk) {
+		h.enc.field(mut w.h2blk, ':status', http1.str_view(out, 9, 3), .incremental)
 		p += 2
-		if h2_hop_by_hop(name) {
-			continue
+		for p + 1 < out.len && !(out[p] == `\r` && out[p + 1] == `\n`) {
+			ns := p
+			for out[p] != `:` {
+				p++
+			}
+			name := http1.str_view(out, ns, p - ns)
+			p += 2 // ": "
+			vs := p
+			for out[p] != `\r` {
+				p++
+			}
+			value := http1.str_view(out, vs, p - vs)
+			p += 2
+			if h2_hop_by_hop(name) {
+				continue
+			}
+			h.enc.field(mut w.h2blk, name, value, h2_index(name))
 		}
-		h.enc.field(mut w.h2blk, name, value, h2_index(name))
+		h.enc.keep(text, hend - 9, w.h2blk.data, w.h2blk.len)
 	}
-	p += 2
+	p = hend + 4 // past the last field's CRLF and the empty line
 	body_len := out.len - p
 	h2_headers_frames(mut c.wbuf, id, w.h2blk, body_len == 0 && !has_file && !open)
 	if body_len == 0 && !has_file {

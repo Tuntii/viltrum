@@ -11,26 +11,39 @@ import sync
 import time
 import viltrum
 
-// Postgres for GET /async-db, with no client library: the v3 wire protocol and
-// SCRAM-SHA-256 are written here. Each server connection has its own thread that
-// blocks on it, so an HTTP worker never waits on a query. The worker takes a slot,
-// queues it and parks the request (c.suspend); the thread writes the body into the
-// slot and calls app.wake, and the worker answers from the slot.
+// Postgres for GET /async-db and GET /fortunes, with no client library: the v3 wire
+// protocol and SCRAM-SHA-256 are written here. Each server connection has its own
+// thread that blocks on it, so an HTTP worker never waits on a query. The worker
+// takes a slot, queues it and parks the request (c.suspend); the thread writes the
+// result into the slot and calls app.wake, and the worker answers from the slot.
 
 const pg_slots = 4096 // requests in flight at once; below the engine's park_cap
 
 const pg_sql = r'SELECT id, name, category, price, quantity, active, tags::text, rating_score, rating_count FROM items WHERE price BETWEEN $1::int AND $2::int LIMIT $3::int'
 
+const pg_fortune_sql = 'SELECT id, message FROM fortune'
+
 const db_empty = '{"items":[],"count":0}'.bytes()
+
+const q_items = u8(0) // async-db
+
+const q_fortunes = u8(1)
+
+struct Fortune {
+	id      int
+	message string
+}
 
 struct PgSlot {
 mut:
 	state u8 // 0 free, 1 queued or running, 2 answered, 3 the request gave up
 	gen   u32 = 1
+	kind  u8 // q_items or q_fortunes
 	min   int
 	max   int
 	limit int
-	body  []u8
+	body  []u8      // q_items: the JSON page
+	rows  []Fortune // q_fortunes: the table's rows, as read
 }
 
 @[heap]
@@ -76,8 +89,8 @@ fn new_pg(app &viltrum.App, url string, conns int) &Pg {
 	return p
 }
 
-// submit queues a query. 0 when there is no database or no free slot.
-fn (mut p Pg) submit(min int, max int, limit int) u64 {
+// submit queues a query of kind. 0 when there is no database or no free slot.
+fn (mut p Pg) submit(kind u8, min int, max int, limit int) u64 {
 	if !p.on {
 		return 0
 	}
@@ -88,6 +101,7 @@ fn (mut p Pg) submit(min int, max int, limit int) u64 {
 	}
 	i := p.free.pop()
 	p.slots[i].state = 1
+	p.slots[i].kind = kind
 	p.slots[i].min = min
 	p.slots[i].max = max
 	p.slots[i].limit = limit
@@ -97,17 +111,30 @@ fn (mut p Pg) submit(min int, max int, limit int) u64 {
 	return token
 }
 
-// answer writes the response for token, on the worker that parked it.
+// answer writes the response for token, on the worker that parked it. An answered
+// slot belongs to this request until release, so the page is built outside the lock.
 fn (mut p Pg) answer(mut c viltrum.Ctx, token u64) {
 	i := int(u32(token)) - 1
 	p.mu.lock()
-	if p.slots[i].state == 2 {
-		c.bytes(200, 'application/json', p.slots[i].body)
-		p.release(i)
-	} else {
+	kind := p.slots[i].kind
+	if p.slots[i].state != 2 {
 		p.slots[i].state = 3 // timed out; the thread frees the slot when it ends
-		c.bytes(200, 'application/json', db_empty)
+		p.mu.unlock()
+		if kind == q_fortunes {
+			c.text(503, 'database unavailable')
+		} else {
+			c.bytes(200, 'application/json', db_empty)
+		}
+		return
 	}
+	p.mu.unlock()
+	if kind == q_fortunes {
+		fortunes_answer(mut c, mut p.slots[i].rows)
+	} else {
+		c.bytes(200, 'application/json', p.slots[i].body)
+	}
+	p.mu.lock()
+	p.release(i)
 	p.mu.unlock()
 }
 
@@ -148,6 +175,19 @@ fn pg_run(pp &Pg) {
 		}
 		for {
 			i := <-p.jobs
+			if p.slots[i].kind == q_fortunes {
+				// no rows (an error, or a connection without the table) answers 503
+				ok := c.fortunes(mut wb, mut p.slots[i].rows) or {
+					p.slots[i].rows.clear()
+					p.done(i)
+					break
+				}
+				if !ok {
+					p.slots[i].rows.clear()
+				}
+				p.done(i)
+				continue
+			}
 			ok := c.query(mut wb, p.slots[i].min, p.slots[i].max, p.slots[i].limit, mut
 				p.slots[i].body) or {
 				p.slots[i].body.clear()
@@ -315,6 +355,20 @@ fn pg_connect(p &Pg) !&PgConn {
 		c.sock.close() or {}
 		return err
 	}
+	// fortunes' query on its own Sync: a database without the table still serves async-db
+	b.clear()
+	at = msg(mut b, `P`)
+	put_cstr(mut b, 'fts')
+	put_cstr(mut b, pg_fortune_sql)
+	put16(mut b, 0)
+	seal(mut b, at)
+	at = msg(mut b, `S`)
+	seal(mut b, at)
+	c.sock.write(b) or {
+		c.sock.close() or {}
+		return err
+	}
+	c.wait() or {}
 	return c
 }
 
@@ -445,6 +499,48 @@ fn (mut c PgConn) query(mut b []u8, min int, max int, limit int, mut out []u8) !
 	add(mut out, '],"count":')
 	add_int(mut out, rows)
 	out << `}`
+	return ok
+}
+
+// fortunes runs the prepared fortune query into rows. false when the server
+// answered with an error.
+fn (mut c PgConn) fortunes(mut b []u8, mut rows []Fortune) !bool {
+	b.clear()
+	mut at := msg(mut b, `B`)
+	put_cstr(mut b, '')
+	put_cstr(mut b, 'fts')
+	put16(mut b, 0)
+	put16(mut b, 0)
+	put16(mut b, 0)
+	seal(mut b, at)
+	at = msg(mut b, `E`)
+	put_cstr(mut b, '')
+	put32(mut b, 0)
+	seal(mut b, at)
+	at = msg(mut b, `S`)
+	seal(mut b, at)
+	c.sock.write(b)!
+	rows.clear()
+	mut ok := true
+	for {
+		t, body := c.next()!
+		if t == `D` {
+			// two text columns: id, message
+			n := be32(body, 2)
+			mut id := 0
+			for k in 0 .. n {
+				id = id * 10 + int(body[6 + k] - `0`)
+			}
+			at2 := 6 + if n > 0 { n } else { 0 }
+			m := be32(body, at2)
+			msg_ := if m > 0 { body[at2 + 4..at2 + 4 + m].bytestr() } else { '' }
+			rows << Fortune{id, msg_}
+		} else if t == `E` {
+			ok = false
+		} else if t == `Z` {
+			break
+		}
+	}
 	return ok
 }
 

@@ -4,21 +4,16 @@ RUN apt-get -qq update && \
     apt-get -qy install --no-install-recommends ca-certificates curl unzip git gcc libc6-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# V 0.5.2 release (the version viltrum's CI pins).
+# V 0.5.2 release (the version viltrum's CI pins) and viltrum at a release tag.
 RUN curl -fsSL -o /tmp/v.zip https://github.com/vlang/v/releases/download/0.5.2/v_linux.zip && \
     unzip -q /tmp/v.zip -d /opt && rm /tmp/v.zip
 ENV PATH=/opt/v:$PATH
 
-# The entry parks /async-db on Ctx.suspend and App.wake, so this ref has to be a
-# viltrum that contains them (33d6612 does). After this merges, point it at the
-# release tag that includes it. A commit cannot be cloned with --branch, so the
-# ref is checked out after the clone.
-ARG VILTRUM_REF=33d6612d8e7d3f3ed3c8cad1da4aa7aec7372e78
-RUN git clone -q https://github.com/Tuntii/viltrum /root/.vmodules/viltrum && \
-    git -C /root/.vmodules/viltrum checkout -q ${VILTRUM_REF}
+ARG VILTRUM_REF=v1.18.2
+RUN git clone --depth 1 --branch ${VILTRUM_REF} https://github.com/Tuntii/viltrum /root/.vmodules/viltrum
 
 WORKDIR /app
-COPY main.v pg.v ./
+COPY main.v pg.v fortunes.html ./
 RUN v -cc gcc -prod -o server .
 
 FROM debian:bookworm-slim

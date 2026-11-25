@@ -94,6 +94,12 @@ fn (mut t TlsConn) hs13_step() int {
 				t.hs_out.len - t.hs_off, C.MSG_NOSIGNAL))
 			if m < 0 {
 				if C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK || C.errno == C.EINTR {
+					// the worker's flight buffer takes the next handshake's: what is left
+					// of this one waits in a copy of its own
+					if t.hs_out.data == t.srv.flight.data {
+						t.hs_out = t.hs_out[t.hs_off..].clone() // cold: a slow client
+						t.hs_off = 0
+					}
 					return hs_want_write
 				}
 				return hs_failed
@@ -101,6 +107,7 @@ fn (mut t TlsConn) hs13_step() int {
 			t.hs_off += m
 		}
 		t.hs13 = hs13_finished
+		t.hs_out = unsafe { t.srv.flight } // a copy kept for a slow client goes, if there was one
 	}
 	return t.hs13_finished()
 }
@@ -173,18 +180,22 @@ fn (mut t TlsConn) hs13_answer(rec_len int) int {
 	}
 	// the flight: the certificate chain and about a kilobyte, in records of 16 KB
 	need := p.cert_msg.len + 1024 + 22 * (p.cert_msg.len / tls13_max_plain + 4)
-	if t.hs_out.cap < need {
-		t.hs_out = []u8{cap: need} // cold: grows to the largest certificate chain
+	mut s := t.srv
+	if s.flight.cap < need {
+		s.flight = []u8{cap: need} // cold: grows to the largest certificate chain
 	}
 	mut out_len := u64(0)
 	if C.viltrum_hs13_flight(msg, u64(msg_len), &t.hello, p.cert_msg.data, u64(p.cert_msg.len),
-		&p.rsa, &t.srv.drbg, t.r13.tx, t.hs_out.data, u64(t.hs_out.cap), &out_len, &t.keys) != 0 {
+		&p.rsa, &s.drbg, t.r13.tx, s.flight.data, u64(s.flight.cap), &out_len, &t.keys) != 0 {
 		t.hs13_alert(alert_internal_error)
 		return hs_failed
 	}
 	unsafe {
-		t.hs_out.len = int(out_len)
+		s.flight.len = int(out_len)
 	}
+	// sent from the worker's buffer, so a connection keeps no flight once it is out (unsafe:
+	// V master copies an array stored as a plain value)
+	t.hs_out = unsafe { s.flight }
 	t.hs_off = 0
 	// the hello is hs13's: mbedtls never reads it. Anything after it is the client's
 	// next records, read under tls13's buffer from now on.

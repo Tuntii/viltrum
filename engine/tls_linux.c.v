@@ -93,6 +93,7 @@ mut:
 	bad_key   C.viltrum_file_id
 	logs      bool // one worker reports reload failures, not all of them
 	h2        bool // ALPN offers h2 before http/1.1
+	flight    []u8 // hs13 builds each server flight here; it goes out from here (hs13_step)
 }
 
 // new_tls_server sets up a worker's TLS state and loads the pair. cold: startup.
@@ -219,7 +220,7 @@ mut:
 	hs13        int // hs13_hello, hs13_flight, hs13_finished, or hs13_off once mbedtls has it
 	hello       C.viltrum_hs13_hello
 	keys        C.viltrum_hs13_keys
-	hs_out      []u8 // hs13's server flight
+	hs_out      []u8 // hs13's server flight: TlsServer.flight, or what a slow client left of it
 	hs_off      int  // bytes of it sent
 	h2          bool // ALPN chose h2: the connection speaks HTTP/2 once the handshake is done
 }

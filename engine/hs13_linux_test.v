@@ -411,6 +411,98 @@ fn test_hs13_parse_fuzz() {
 	assert iters == 0 || served > 0
 }
 
+fn C.socketpair(domain int, typ int, protocol int, sv &i32) int
+
+// hs13_conn is a TlsConn at its ClientHello on fd, as tls_start makes one.
+fn hs13_conn(srv &TlsServer, fd &int) &TlsConn {
+	mut t := &TlsConn{
+		srv:   unsafe { srv }
+		fd:    unsafe { fd }
+		hs13:  hs13_hello
+		inbuf: []u8{len: tls_read_ahead}
+	}
+	C.mbedtls_ssl_init(&t.ssl)
+	t.handshaking = true
+	t.r13.inb = []u8{cap: tls13_in_cap}
+	t.r13.out = []u8{cap: tls13_out_cap}
+	C.viltrum_tls_bio_init(&t.bio, voidptr(fd), int(sizeof(int)), t.inbuf.data, u64(t.inbuf.len))
+	return t
+}
+
+fn hello_record() []u8 {
+	m := hello()
+	mut r := [u8(ct_handshake), 3, 1, u8(m.len >> 8), u8(m.len)]
+	r << m
+	return r
+}
+
+// The server flight is built in the worker's buffer and sent from there. A client whose
+// socket is full when it goes out keeps a copy of what is left, so the next connection's
+// handshake, which rebuilds the buffer, does not change what this one receives.
+fn test_hs13_flight_waits_in_a_copy() {
+	if !hs13_supported {
+		return
+	}
+	srv := new_tls_server(TlsOptions{
+		cert_file: os.join_path(hs13_testdata, 'a.crt')
+		key_file:  os.join_path(hs13_testdata, 'a.key')
+	}, false, false) or { panic(err) }
+	mut fds := []int{len: 2}
+	mut sv := [2]i32{}
+	// a: its socket is full before the flight
+	assert C.socketpair(C.AF_UNIX, C.SOCK_STREAM, 0, &sv[0]) == 0
+	fds[0] = int(sv[0])
+	a_cli := int(sv[1])
+	C.fcntl(fds[0], C.F_SETFL, C.O_NONBLOCK)
+	junk := []u8{len: 4096, init: u8(`j`)}
+	mut filled := 0
+	for size in [4096, 256, 1] {
+		for {
+			m := int(C.send(fds[0], junk.data, size, C.MSG_NOSIGNAL))
+			if m <= 0 {
+				break
+			}
+			filled += m
+		}
+	}
+	rec := hello_record()
+	assert C.send(a_cli, rec.data, rec.len, C.MSG_NOSIGNAL) == rec.len
+	mut a := hs13_conn(srv, unsafe { &fds[0] })
+	assert a.hs13_step() == hs_want_write
+	sent := srv.flight.clone() // a's flight; what did not go out waits in a's copy
+	assert a.hs_out.data != srv.flight.data && a.hs_out.len > 0
+	assert a.hs_out == sent[sent.len - a.hs_out.len..]
+	// b: a handshake whose flight goes out at once
+	assert C.socketpair(C.AF_UNIX, C.SOCK_STREAM, 0, &sv[0]) == 0
+	fds[1] = int(sv[0])
+	b_cli := int(sv[1])
+	C.fcntl(fds[1], C.F_SETFL, C.O_NONBLOCK)
+	assert C.send(b_cli, rec.data, rec.len, C.MSG_NOSIGNAL) == rec.len
+	mut b := hs13_conn(srv, unsafe { &fds[1] })
+	assert b.hs13_step() == hs_want_read // the flight is out; the client's Finished is next
+	assert b.hs_out.data == srv.flight.data
+	assert srv.flight != sent // fresh randomness and key share
+	// a's client takes the junk, then gets a's own flight
+	mut tmp := []u8{len: 65536}
+	mut got := []u8{}
+	for got.len < filled {
+		m := int(C.recv(a_cli, tmp.data, tmp.len, 0))
+		assert m > 0
+		unsafe { got.push_many(tmp.data, m) }
+	}
+	assert a.hs13_step() == hs_want_read
+	assert a.hs_out.data == srv.flight.data // the copy is gone
+	for got.len < filled + sent.len {
+		m := int(C.recv(a_cli, tmp.data, tmp.len, 0))
+		assert m > 0
+		unsafe { got.push_many(tmp.data, m) }
+	}
+	assert got[filled..] == sent
+	for fd in [fds[0], a_cli, fds[1], b_cli] {
+		C.close(fd)
+	}
+}
+
 // RFC 8448 section 3, the simple 1-RTT handshake
 const r8448_client_pub = '99381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c'
 const r8448_client_hello = '010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001'

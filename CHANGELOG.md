@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.5](https://github.com/Tuntii/viltrum/compare/v1.18.4...v1.18.5) (2026-11-25)
+
+### Performance Improvements
+
+* **tls:** send the hs13 server flight from the worker's buffer ([#143](https://github.com/Tuntii/viltrum/issues/143)) ([aff749f](https://github.com/Tuntii/viltrum/commit/aff749f562c51be99ace7a29716b20bd14237401))
+
 ## [1.18.4](https://github.com/Tuntii/viltrum/compare/v1.18.3...v1.18.4) (2026-11-24)
 
 ### Performance Improvements

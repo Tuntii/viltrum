@@ -17,6 +17,9 @@ fn C.epoll_ctl(epfd int, op int, fd int, event &C.epoll_event) int
 fn C.viltrum_epoll_wait(epfd int, events &C.epoll_event, maxevents int, timeout_ns i64) int
 fn C.accept4(sockfd int, addr voidptr, addrlen voidptr, flags int) int
 fn C.sendfile(out_fd int, in_fd int, offset &i64, count u64) i64
+fn C.GC_expand_hp(n usize) int
+fn C.GC_get_heap_size() usize
+fn C.GC_get_free_bytes() usize
 
 @[typedef]
 union C.epoll_data_t {
@@ -64,6 +67,7 @@ mut:
 	hs         []int           // fds whose first handshake step waits, oldest first from hs_head
 	hs_head    int
 	peers      []&Peer // connections to upstreams (client_linux.c.v), indexed by fd
+	made       int     // Conns this worker allocated (conn_for)
 }
 
 fn run_worker(index int, lfds []int, listeners []Listener, r &router.Router, opts Options, hub &Hub, mut stop Stop, mut count ConnCount) {
@@ -361,9 +365,33 @@ fn (mut l Loop) conn_for(fd int) &Conn {
 	// fd numbers are shared by all workers, so a Conn is pooled per worker rather than
 	// kept per fd: a worker holds as many as it ever had open at once.
 	// without buffers: lend gives them when there is something to read or write
-	mut c := if l.free.len > 0 { l.free.pop() } else { &Conn{} } // cold: a new Conn only past the worker's peak
+	mut c := if l.free.len > 0 { l.free.pop() } else { l.new_conn() }
 	l.conns[fd] = c
 	return c
+}
+
+// new_conn allocates a Conn past the worker's peak. cold: once per Conn ever pooled.
+fn (mut l Loop) new_conn() &Conn {
+	l.made++
+	if l.made % 1024 == 0 {
+		gc_headroom()
+	}
+	return &Conn{}
+}
+
+// gc_headroom grows the GC heap by half when it is three quarters full. Boehm grows it
+// 8 MiB at a time and, with nothing to free, marks the whole heap before each step:
+// pooled connections are all live, so at hundreds of thousands of them every few
+// thousand connects stopped every worker for a mark that grew with the heap, and at
+// ~250K TLS connections (2.6 KB each) it gave up ("Too many retries in GC_allocobj").
+// Grown by half, the collections stay logarithmic in the connection count.
+fn gc_headroom() {
+	$if gcboehm ? {
+		heap := C.GC_get_heap_size()
+		if C.GC_get_free_bytes() < heap / 4 {
+			_ = C.GC_expand_hp(heap / 2)
+		}
+	}
 }
 
 fn (mut l Loop) on_event(fd int, ev u32) {

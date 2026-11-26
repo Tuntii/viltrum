@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.6](https://github.com/Tuntii/viltrum/compare/v1.18.5...v1.18.6) (2026-11-26)
+
+### Bug Fixes
+
+* **engine:** grow the GC heap ahead of pooled connections ([#146](https://github.com/Tuntii/viltrum/issues/146)) ([5abec2f](https://github.com/Tuntii/viltrum/commit/5abec2ff998a674d8f7628bd0d4645fa9ab8a164))
+
 ## [1.18.5](https://github.com/Tuntii/viltrum/compare/v1.18.4...v1.18.5) (2026-11-25)
 
 ### Performance Improvements

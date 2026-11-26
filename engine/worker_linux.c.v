@@ -18,6 +18,8 @@ fn C.viltrum_epoll_wait(epfd int, events &C.epoll_event, maxevents int, timeout_
 fn C.accept4(sockfd int, addr voidptr, addrlen voidptr, flags int) int
 fn C.sendfile(out_fd int, in_fd int, offset &i64, count u64) i64
 fn C.GC_expand_hp(n usize) int
+fn C.GC_get_heap_size() usize
+fn C.GC_get_free_bytes() usize
 
 @[typedef]
 union C.epoll_data_t {
@@ -385,9 +387,9 @@ fn (mut l Loop) new_conn() &Conn {
 // Grown by half, the collections stay logarithmic in the connection count.
 fn gc_headroom() {
 	$if gcboehm ? {
-		u := gc_heap_usage()
-		if u.free_bytes < u.heap_size / 4 {
-			C.GC_expand_hp(u.heap_size / 2)
+		heap := C.GC_get_heap_size()
+		if C.GC_get_free_bytes() < heap / 4 {
+			_ = C.GC_expand_hp(heap / 2)
 		}
 	}
 }
